@@ -1,0 +1,15 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+auth_info*/
+sessions/
+*.session
+*.log
+*.pem
+*.key
+backups/
+imports/
+.DS_Store
