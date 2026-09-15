@@ -11,9 +11,8 @@ jobs:
         env:
           # Ephemeral CI-only database, no real credentials or production data.
           POSTGRES_HOST_AUTH_METHOD: trust
-        ports:
-          - 127.0.0.1:5432:5432
         options: >-
+          --publish 127.0.0.1:5432:5432
           --health-cmd pg_isready
           --health-interval 5s
           --health-timeout 5s
