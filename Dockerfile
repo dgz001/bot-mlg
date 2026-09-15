@@ -21,4 +21,5 @@ COPY --from=verify --chown=node:node /app/src ./src
 COPY --from=verify --chown=node:node /app/scripts ./scripts
 COPY --from=verify --chown=node:node /app/migrations ./migrations
 USER node
+RUN mkdir -p /home/node/.ssh && chmod 0700 /home/node/.ssh
 CMD ["node", "src/worker.ts"]

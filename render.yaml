@@ -1,0 +1,21 @@
+services:
+  - type: worker
+    name: mlg-bot
+    runtime: docker
+    repo: https://github.com/dgz001/bot-mlg
+    branch: main
+    plan: 0.5c-512mb
+    region: virginia
+    numInstances: 1
+    dockerfilePath: ./Dockerfile
+    preDeployCommand: node scripts/migrate.ts
+    maxShutdownDelaySeconds: 30
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: APP_DATABASE_PASSWORD
+        generateValue: true
+      - key: AUTH_ENCRYPTION_KEY
+        generateValue: true

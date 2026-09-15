@@ -14,7 +14,10 @@ const account='secondary';
 const controlPath='/tmp/mlg-bot-control.sock';
 const database=process.env.DATABASE_URL, appPassword=process.env.APP_DATABASE_PASSWORD, master=process.env.AUTH_ENCRYPTION_KEY;
 if(!database || !appPassword || !master) throw new Error('Worker configuration missing');
-const url=new URL(database);url.username='mlg_bot_app';url.password=appPassword;
+const url=new URL(database);
+// Supabase session pooler routes by the project suffix in the login name.
+const tenant=url.hostname.endsWith('.pooler.supabase.com') ? decodeURIComponent(url.username).split('.').slice(1).join('.') : '';
+url.username=tenant ? `mlg_bot_app.${tenant}` : 'mlg_bot_app';url.password=appPassword;
 delete process.env.DATABASE_URL;delete process.env.APP_DATABASE_PASSWORD;delete process.env.AUTH_ENCRYPTION_KEY;
 const key=Buffer.from(master,/^[a-f0-9]{64}$/i.test(master)?'hex':'base64');
 if(key.length!==32) throw new Error('Invalid encryption key length');
