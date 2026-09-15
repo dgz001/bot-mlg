@@ -4,6 +4,8 @@ import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { processEvent, pgDatabase, type Database } from '../src/infra/postgres.ts';
+import { authStore } from '../src/whatsapp/auth-store.ts';
+import { randomBytes } from 'node:crypto';
 
 const migration = await readFile(new URL('../migrations/001_initial.sql',import.meta.url),'utf8');
 const integration = { skip: !process.env.MLG_TEST_DATABASE_URL };
@@ -25,6 +27,7 @@ async function fixture() {
 }
 async function setup(db: Pool) {
   await db.query(migration);
+  await db.query(await readFile(new URL('../migrations/002_worker.sql',import.meta.url),'utf8'));
   await db.query("INSERT INTO mlg_bot.users VALUES ('admin','Admin'); INSERT INTO mlg_bot.groups VALUES ('g',true); INSERT INTO mlg_bot.admins VALUES ('g','admin','owner');");
   for (let i=0;i<16;i++) await db.query('INSERT INTO mlg_bot.club_pool VALUES ($1,$2)',['g',`Club ${i}`]);
 }
@@ -51,6 +54,21 @@ test('PostgreSQL real: copa completa, estado relacional, reconexão de cliente e
     assert.equal((await db.query('SELECT DISTINCT club FROM mlg_bot.cup_participants')).rows.length,4);
     assert.ok((await send('u0','!campeoes')).notices.join('').includes('Campeão'));
   } finally { await f.close(); }
+});
+
+test('sessão: gravação cifrada, recuperação de chaves e remoção', integration, async () => {
+  const f=await fixture(); const db=f.pool;
+  try {
+    await setup(db);const key=randomBytes(32);
+    const first=await authStore(db,'test',key);await first.save();
+    await first.state.keys.set({'lid-mapping':{'test-lid':'test-pn'}});
+    const second=await authStore(db,'test',key);
+    assert.ok(Buffer.from(first.state.creds.noiseKey.private).equals(Buffer.from(second.state.creds.noiseKey.private)));
+    assert.equal((await second.state.keys.get('lid-mapping',['test-lid']))['test-lid'],'test-pn');
+    await assert.rejects(authStore(db,'test',randomBytes(32)));
+    await second.state.keys.set({'lid-mapping':{'test-lid':null}});
+    assert.equal((await second.state.keys.get('lid-mapping',['test-lid']))['test-lid'],undefined);
+  }finally {await f.close();}
 });
 
 test('rollback antes de outbox: nada é marcado processado nem inscrito', integration, async () => {

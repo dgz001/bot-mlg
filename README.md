@@ -1,7 +1,9 @@
 # MLG BOT
 
-Minicamp e resenha para WhatsApp. Node 24.
+Bot independente para Minicamp e resenha. Node 24, PostgreSQL e Baileys.
 
-Validacao: npm ci; npm test; npm run typecheck. Testes SQL: npm run test:integration, com MLG_TEST_DATABASE_URL de banco descartavel.
+Veja docs/OPERATIONS.md para implantação e pareamento privado.
 
-Worker WhatsApp em desenvolvimento. Nunca publicar credenciais, sessoes ou dados pessoais.
+Validação: npm ci; npm test; npm run typecheck. Docker executa testes SQL em banco descartável antes do build final.
+
+Nunca publicar credenciais, sessões ou dados pessoais.
