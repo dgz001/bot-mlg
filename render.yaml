@@ -1,16 +1,17 @@
 services:
-  - type: worker
-    name: mlg-bot
-    runtime: docker
+  - type: web
+    name: mlg-bot-runtime
+    runtime: node
     repo: https://github.com/dgz001/bot-mlg
     branch: main
-    plan: 0.5c-512mb
+    plan: free
     region: virginia
-    numInstances: 1
-    dockerfilePath: ./Dockerfile
-    preDeployCommand: node scripts/migrate.ts
-    maxShutdownDelaySeconds: 30
+    buildCommand: npm ci --include=dev --ignore-scripts && npm test && npm run typecheck
+    startCommand: node scripts/migrate.ts && node src/worker.ts
+    healthCheckPath: /livez
     envVars:
+      - key: NODE_VERSION
+        value: 24.19.0
       - key: NODE_ENV
         value: production
       - key: DATABASE_URL
@@ -19,3 +20,7 @@ services:
         generateValue: true
       - key: AUTH_ENCRYPTION_KEY
         generateValue: true
+      - key: CONTROL_PASSWORD
+        generateValue: true
+      - key: CONTROL_ORIGIN
+        value: https://mlg-bot-runtime.onrender.com

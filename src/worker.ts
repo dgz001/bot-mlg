@@ -8,6 +8,7 @@ import { randomUUID, randomInt } from 'node:crypto';
 import { authStore } from './whatsapp/auth-store.ts';
 import { processEvent, pgDatabase } from './infra/postgres.ts';
 import { reconnect } from './infra/security.ts';
+import { privateControl } from './infra/private-control.ts';
 
 process.umask(0o077);
 const account='secondary';
@@ -215,8 +216,12 @@ const controls=createServer(client=>{
     })().then(result=>client.end(JSON.stringify(result)+'\n')).catch(()=>client.end(JSON.stringify({error:'Operação recusada. Confira conexão, seleção e formato.'})+'\n'));
   });
 });
+const portal=process.env.CONTROL_PASSWORD && process.env.CONTROL_ORIGIN ? privateControl({secret:process.env.CONTROL_PASSWORD,origin:process.env.CONTROL_ORIGIN,socketPath:controlPath}) : undefined;
+delete process.env.CONTROL_PASSWORD;
 const health=httpServer((req,res)=>{
-  if(req.url!=='/livez' && req.url!=='/readyz'){res.writeHead(404).end();return;}
+  if(req.url!=='/livez' && req.url!=='/readyz'){
+    if(portal)void portal(req,res).catch(()=>{if(!res.headersSent)res.writeHead(500);res.end();});else res.writeHead(404).end();return;
+  }
   const ok=!stopping && Date.now()-lastTick<45000 && (req.url==='/livez' || phase==='CONNECTED');
   res.writeHead(ok?200:503,{'Content-Type':'text/plain','Cache-Control':'no-store'}).end(ok?'OK':'UNAVAILABLE');
 });
