@@ -61,7 +61,11 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  if(req.action==='pair'){
  if(auth.state.creds.registered||phase==='CONNECTED'||phase==='STOPPED')throw new Error('Pairing unavailable');
  if(!/^\d{10,15}$/.test(req.phone??''))throw new Error('Invalid phone');
- if(timer)clearTimeout(timer);if(!socket)await connect();const pairingSocket=socket!;log('PAIRING_REQUEST_STARTED');
+ if(timer)clearTimeout(timer);
+ // A failed code request sets creds.me before registration. Clear only that
+ // incomplete login marker on an explicit retry, never a registered session.
+ if(!socket){delete auth.state.creds.me;delete auth.state.creds.pairingCode;await auth.save();await connect();}
+ const pairingSocket=socket!;log('PAIRING_REQUEST_STARTED');
  try{const code=await requestReadyPairing(pairingSocket,req.phone,pairingReady.has(pairingSocket),()=>socket===pairingSocket&&!stopping);log('PAIRING_CODE_READY');return {code};}
  catch{log('PAIRING_REQUEST_FAILED');return {error:'Não foi possível preparar a conexão com o WhatsApp. Aguarde 60 segundos e tente novamente.',phase};}
  }
