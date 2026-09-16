@@ -2,6 +2,10 @@ import { Pool } from 'pg';
 import { readFile } from 'node:fs/promises';
 
 export async function migrate() {
+  if(process.env.BOT_MODE==='resenha') {
+    if(!process.env.SESSION_VAULT_URL || !process.env.SESSION_VAULT_TOKEN) throw new Error('Session vault missing');
+    return;
+  }
   const url=process.env.DATABASE_URL;
   const appPassword=process.env.APP_DATABASE_PASSWORD;
   if(!url || !appPassword || appPassword.length<32) throw new Error('Migration configuration missing');

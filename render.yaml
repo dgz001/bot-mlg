@@ -14,7 +14,11 @@ services:
         value: 24.19.0
       - key: NODE_ENV
         value: production
-      - key: DATABASE_URL
+      - key: BOT_MODE
+        value: resenha
+      - key: SESSION_VAULT_URL
+        sync: false
+      - key: SESSION_VAULT_TOKEN
         sync: false
       - key: APP_DATABASE_PASSWORD
         generateValue: true
