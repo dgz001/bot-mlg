@@ -1,5 +1,6 @@
 import makeWASocket,{DisconnectReason,jidNormalizedUser,extractMessageContent} from '@whiskeysockets/baileys';
 import pino from 'pino';
+import {requestReadyPairing} from './whatsapp/pairing.ts';
 import {createServer as httpServer} from 'node:http';
 import {createServer} from 'node:net';
 import {chmod,unlink} from 'node:fs/promises';
@@ -18,6 +19,7 @@ for(const name of ['AUTH_ENCRYPTION_KEY','CONTROL_PASSWORD','SESSION_VAULT_TOKEN
 const log=(event:string)=>console.log(JSON.stringify({event,at:new Date().toISOString()}));
 let phase='STARTING',stopping=false,attempt=0,timer:ReturnType<typeof setTimeout>|undefined,stable:ReturnType<typeof setTimeout>|undefined;
 let auth:Awaited<ReturnType<typeof vaultAuth>>,socket:ReturnType<typeof makeWASocket>|undefined;
+const pairingReady=new WeakSet<object>();
 let queue=Promise.resolve();const cooldown=new Map<string,number>();
 const phrases=['Hoje o VAR vai precisar de café. 😂','O controle descarrega antes das desculpas. 🎮','A coletiva depois do jogo promete mais que a partida. 🍿','Treino fechado ou ninguém achou o botão de marcar? 😂','Aqui até o gol contra pede replay. ⚽','Bola no chão, porque a desculpa já foi para a arquibancada. 😂','Quem pediu futebol? Hoje o cardápio é entretenimento. 🍿','O placar eu não invento. A resenha, essa vem pronta! 😂'];
 async function connect(){
@@ -26,10 +28,12 @@ async function connect(){
  current.ev.on('creds.update',()=>{if(socket===current)void auth.save().catch(()=>fail('SESSION_SAVE_FAILED'));});
  current.ev.on('connection.update',u=>{
  if(socket!==current||stopping)return;
+ if(u.qr){pairingReady.add(current);log('PAIRING_TRANSPORT_READY');}
  if(u.connection==='open'){phase='CONNECTED';log(phase);stable=setTimeout(()=>{attempt=0;},60000);}
  if(u.connection==='close'){
  if(stable)clearTimeout(stable);socket=undefined;
  const status=(u.lastDisconnect?.error as {output?:{statusCode?:number}}|undefined)?.output?.statusCode;
+ log('WA_CLOSE_'+(Number.isInteger(status)?status:'UNKNOWN'));
  if(status===DisconnectReason.restartRequired){timer=setTimeout(()=>{void connect().catch(()=>fail('CONNECT_FAILED'));},1500);return;}
  const decision=reconnect(status===DisconnectReason.loggedOut?'logged-out':status===DisconnectReason.connectionReplaced?'connection-replaced':'transient',attempt++,Math.random());phase=decision.state;log(phase);
  if(decision.delayMs)timer=setTimeout(()=>{void connect().catch(()=>fail('CONNECT_FAILED'));},decision.delayMs);
@@ -57,7 +61,9 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  if(req.action==='pair'){
  if(auth.state.creds.registered||phase==='CONNECTED'||phase==='STOPPED')throw new Error('Pairing unavailable');
  if(!/^\d{10,15}$/.test(req.phone??''))throw new Error('Invalid phone');
- if(timer)clearTimeout(timer);if(!socket)await connect();await new Promise(r=>setTimeout(r,1500));return {code:await socket!.requestPairingCode(req.phone)};
+ if(timer)clearTimeout(timer);if(!socket)await connect();const pairingSocket=socket!;log('PAIRING_REQUEST_STARTED');
+ try{const code=await requestReadyPairing(pairingSocket,req.phone,pairingReady.has(pairingSocket),()=>socket===pairingSocket&&!stopping);log('PAIRING_CODE_READY');return {code};}
+ catch{log('PAIRING_REQUEST_FAILED');return {error:'Não foi possível preparar a conexão com o WhatsApp. Aguarde 60 segundos e tente novamente.',phase};}
  }
  if(phase!=='CONNECTED'||!socket)throw new Error('Not connected');
  if(req.action==='groups')return {groups:Object.values(await socket.groupFetchAllParticipating()).map(g=>({id:g.id,name:g.subject}))};
