@@ -4,7 +4,7 @@ BOT_MODE=resenha seleciona o worker social. Minicamp permanece preservado e desa
 
 A sessão Baileys e a lista de grupos autorizados são cifradas com AES-256-GCM no processo Node e persistidas em um bucket privado Supabase Storage. Uma Edge Function curta autentica um token forte pelo digest SHA-256 e acessa somente o objeto fixo dessa sessão. Ela não hospeda a conexão WhatsApp e não retorna credenciais do projeto. A chave de cifragem existe somente no Render. A função recebe o digest durante provisionamento, nunca o token no código. Não redeployar deploy/session-vault.ts com o marcador __DIGEST__ sem provisionamento.
 
-O worker responde a !resenha, menção ou resposta dirigida ao bot apenas em grupos autorizados pelo painel privado. Intervalo mínimo de 60 segundos por grupo. Não há IA nesta versão: respostas são frases futebolísticas variadas predefinidas. Não armazena texto das conversas. Mantém apenas até 1000 identificadores para evitar resposta duplicada; IDs antigos podem sair dessa janela.
+O worker responde a !bot mensagem, !resenha, menção ou resposta dirigida ao bot apenas em grupos autorizados pelo painel privado. Sem intervalo obrigatório entre respostas; comandos distintos são processados em sequência. Eventos repetidos continuam filtrados. Não há IA nesta versão: respostas são frases futebolísticas variadas predefinidas. Não armazena texto das conversas. Mantém apenas até 1000 identificadores para evitar resposta duplicada; IDs antigos podem sair dessa janela.
 
 Use somente UMA instância para a conta. Não iniciar outro bot com a mesma sessão. Em conexão substituída, o worker para de reconectar; em revogação real, uma nova sessão exigirá recuperação administrativa (não apagar a sessão automaticamente).
 

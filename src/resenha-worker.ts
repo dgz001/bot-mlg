@@ -1,5 +1,6 @@
 import makeWASocket,{DisconnectReason,jidNormalizedUser,extractMessageContent} from '@whiskeysockets/baileys';
 import pino from 'pino';
+import {banterRequest} from './resenha/trigger.ts';
 import {requestReadyPairing} from './whatsapp/pairing.ts';
 import {createServer as httpServer} from 'node:http';
 import {createServer} from 'node:net';
@@ -20,7 +21,7 @@ const log=(event:string)=>console.log(JSON.stringify({event,at:new Date().toISOS
 let phase='STARTING',stopping=false,attempt=0,timer:ReturnType<typeof setTimeout>|undefined,stable:ReturnType<typeof setTimeout>|undefined;
 let auth:Awaited<ReturnType<typeof vaultAuth>>,socket:ReturnType<typeof makeWASocket>|undefined;
 const pairingReady=new WeakSet<object>();
-let queue=Promise.resolve();const cooldown=new Map<string,number>();
+let queue=Promise.resolve();
 const phrases=['Hoje o VAR vai precisar de café. 😂','O controle descarrega antes das desculpas. 🎮','A coletiva depois do jogo promete mais que a partida. 🍿','Treino fechado ou ninguém achou o botão de marcar? 😂','Aqui até o gol contra pede replay. ⚽','Bola no chão, porque a desculpa já foi para a arquibancada. 😂','Quem pediu futebol? Hoje o cardápio é entretenimento. 🍿','O placar eu não invento. A resenha, essa vem pronta! 😂'];
 async function connect(){
  if(stopping)return;phase='CONNECTING';
@@ -42,22 +43,22 @@ async function connect(){
  current.ev.on('messages.upsert',event=>{
  if(event.type!=='notify'||socket!==current)return;
  for(const message of event.messages){queue=queue.then(async()=>{
- const group=message.key.remoteJid,id=message.key.id;if(stopping||!group?.endsWith('@g.us')||!id||message.key.fromMe||!auth.data.groups.includes(group))return;
+ const group=message.key.remoteJid,id=message.key.id;if(stopping||!group?.endsWith('@g.us')||!id||message.key.fromMe)return;
  const body=extractMessageContent(message.message);const text=body?.conversation??body?.extendedTextMessage?.text??'';const context=body?.extendedTextMessage?.contextInfo;
  const self=[current.user?.id,current.user?.lid].filter(Boolean).map(v=>jidNormalizedUser(v!));
  const mention=context?.mentionedJid?.some(j=>self.includes(jidNormalizedUser(j)));
  const reply=context?.participant&&self.includes(jidNormalizedUser(context.participant));
- if(text.trim().toLowerCase()!=='!resenha'&&!mention&&!reply)return;
+ if(banterRequest(text,Boolean(mention),Boolean(reply))===null)return;
+ if(!auth.data.groups.includes(group)){log('RESENHA_GROUP_NOT_AUTHORIZED');return;}
  const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
  auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);
- if(Date.now()-(cooldown.get(group)??0)<60000)return;
- cooldown.set(group,Date.now());await auth.save();
- if(socket===current&&!stopping)await current.sendMessage(group,{text:phrases[randomInt(phrases.length)]!});
+ await auth.save();
+ if(socket===current&&!stopping){await current.sendMessage(group,{text:phrases[randomInt(phrases.length)]!});log('RESENHA_SENT');}
  }).catch(()=>fail('MESSAGE_PROCESSING_FAILED'));}
  });
 }
 const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>client.destroy());client.on('data',chunk=>{buffer+=chunk.toString();if(buffer.length>8192){client.destroy();return;}if(!buffer.includes('\n'))return;client.pause();void(async()=>{
- const req=JSON.parse(buffer.trim());if(req.action==='status')return {phase};
+ const req=JSON.parse(buffer.trim());if(req.action==='status')return {phase,authorizedGroups:auth.data.groups.length};
  if(req.action==='pair'){
  if(auth.state.creds.registered||phase==='CONNECTED'||phase==='STOPPED')throw new Error('Pairing unavailable');
  if(!/^\d{10,15}$/.test(req.phone??''))throw new Error('Invalid phone');
