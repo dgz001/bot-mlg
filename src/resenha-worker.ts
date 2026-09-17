@@ -5,7 +5,7 @@ import {requestReadyPairing} from './whatsapp/pairing.ts';
 import {createServer as httpServer} from 'node:http';
 import {createServer} from 'node:net';
 import {chmod,unlink} from 'node:fs/promises';
-import {randomInt} from 'node:crypto';
+import {createBanterReply} from './resenha/reply.ts';
 import {vaultAuth} from './whatsapp/vault-auth.ts';
 import {privateControl} from './infra/private-control.ts';
 import {reconnect} from './infra/security.ts';
@@ -22,7 +22,7 @@ let phase='STARTING',stopping=false,attempt=0,timer:ReturnType<typeof setTimeout
 let auth:Awaited<ReturnType<typeof vaultAuth>>,socket:ReturnType<typeof makeWASocket>|undefined;
 const pairingReady=new WeakSet<object>();
 let queue=Promise.resolve();
-const phrases=['Hoje o VAR vai precisar de café. 😂','O controle descarrega antes das desculpas. 🎮','A coletiva depois do jogo promete mais que a partida. 🍿','Treino fechado ou ninguém achou o botão de marcar? 😂','Aqui até o gol contra pede replay. ⚽','Bola no chão, porque a desculpa já foi para a arquibancada. 😂','Quem pediu futebol? Hoje o cardápio é entretenimento. 🍿','O placar eu não invento. A resenha, essa vem pronta! 😂'];
+const banterReply=createBanterReply();
 async function connect(){
  if(stopping)return;phase='CONNECTING';
  const current=makeWASocket({auth:auth.state,logger:pino({level:'silent'}),syncFullHistory:false,markOnlineOnConnect:false,shouldSyncHistoryMessage:()=>false});socket=current;
@@ -48,12 +48,12 @@ async function connect(){
  const self=[current.user?.id,current.user?.lid].filter(Boolean).map(v=>jidNormalizedUser(v!));
  const mention=context?.mentionedJid?.some(j=>self.includes(jidNormalizedUser(j)));
  const reply=context?.participant&&self.includes(jidNormalizedUser(context.participant));
- if(banterRequest(text,Boolean(mention),Boolean(reply))===null)return;
+ const request=banterRequest(text,Boolean(mention),Boolean(reply));if(request===null)return;
  if(!auth.data.groups.includes(group)){log('RESENHA_GROUP_NOT_AUTHORIZED');return;}
  const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
  auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);
  await auth.save();
- if(socket===current&&!stopping){await current.sendMessage(group,{text:phrases[randomInt(phrases.length)]!});log('RESENHA_SENT');}
+ if(socket===current&&!stopping){await current.sendMessage(group,{text:banterReply(group,request)});log('RESENHA_SENT');}
  }).catch(()=>fail('MESSAGE_PROCESSING_FAILED'));}
  });
 }
