@@ -13,7 +13,7 @@ test('names, clubs, accent handling and ambiguous first names',()=>{
  assert.equal(matchupReply('oi',roster,'g'),null);
 });
 test('predictions are explicit guesses stable under reversed sides',()=>{
- const a=matchupReply('Porto x Juventus quem ganha',roster,'g')!.split('Meu chute de resenha: ')[1]!.split('!')[0];
- const b=matchupReply('Juventus x Porto quem ganha',roster,'g')!.split('Meu chute de resenha: ')[1]!.split('!')[0];assert.equal(a,b);
+ const a=matchupReply('Porto x Juventus quem ganha',roster,'g',options=>options[0]!)!.split('Meu chute de resenha: ')[1]!.split('!')[0];
+ const b=matchupReply('Juventus x Porto quem ganha',roster,'g',options=>options[0]!)!.split('Meu chute de resenha: ')[1]!.split('!')[0];assert.equal(a,b);
  assert.deepEqual(loadRoster(undefined),[]);assert.throws(()=>loadRoster('{}'));
 });
