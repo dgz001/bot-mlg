@@ -1,3 +1,4 @@
+import {loadRoster,matchupReply} from './matchup.ts';
 import {randomInt} from 'node:crypto';
 const banks = {
  defeat: ['Nem começou e tu já tá preparando a coletiva de desculpas 😂','Entra em campo primeiro, a entrevista do eliminado é depois 😂','Calma, ainda dá tempo de surpreender até essa tua previsão 🎮'],
@@ -19,8 +20,10 @@ export function topicFor(text:string):Topic {
 }
 // Only transient reply selection; no claims about people or stored factual memory.
 export function createBanterReply(){
+ const roster=loadRoster(process.env.MLG_ROSTER_JSON);
  const previous=new Map<string,string>();
  return (group:string,text:string)=>{
+  const matchup=matchupReply(text,roster,group);if(matchup)return matchup;
   const options=banks[topicFor(text)].filter(x=>x!==previous.get(group));
   const answer=options[randomInt(options.length)]!;
   if(previous.size>=1000&&!previous.has(group))previous.delete(previous.keys().next().value!);
