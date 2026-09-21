@@ -15,7 +15,7 @@ export function resolveCoach(input:string,roster:Coach[]):Coach[]{
 }
 export function matchupReply(text:string,roster:Coach[],group:string,choose:(options:string[])=>string=options=>options[randomInt(options.length)]!):string|null {
  const q=norm(text);
- if(!/\bquem (ganha|vence|leva)\b/.test(q))return null;
+ if(!/\bquem (ganha|vence|leva)\b/.test(q)&&! /\s+(?:x|vs|versus|contra)\s+/.test(q))return null;
  if(!roster.length)return 'Ainda não tenho a lista de técnicos configurada. 🎮';
  const cleaned=q.replace(/\bquem (ganha|vence|leva)\b/g,' ').replace(/\bentre\b/g,' ').trim();
  const sides=cleaned.split(/\s+(?:x|vs|versus|ou|contra)\s+/);

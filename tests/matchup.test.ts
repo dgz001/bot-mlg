@@ -17,3 +17,13 @@ test('predictions are explicit guesses stable under reversed sides',()=>{
  const b=matchupReply('Juventus x Porto quem ganha',roster,'g',options=>options[0]!)!.split('Meu chute de resenha: ')[1]!.split('!')[0];assert.equal(a,b);
  assert.deepEqual(loadRoster(undefined),[]);assert.throws(()=>loadRoster('{}'));
 });
+
+test('bare matchup from WhatsApp screenshot works without asking who wins',()=>{
+ const people=[{name:'GS',club:'Inter',aliases:['gs']},{name:'Amério',club:'Juventus',aliases:['amerio']}];
+ for(const text of ['gs x amerio','GS X AMÉRIO','gs vs amerio','gs contra amerio']) {
+  const reply=matchupReply(text,people,'group',options=>options[0]!);
+  assert.match(reply!,/GS \(Inter\) x Amério \(Juventus\)/);
+  assert.match(reply!,/Meu chute de resenha/);
+ }
+ assert.equal(matchupReply('oi pessoal',people,'group'),null);
+});

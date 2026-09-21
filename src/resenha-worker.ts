@@ -1,3 +1,5 @@
+import {minicampClient,minicampCommand,type PendingCupEvent} from './minicamp/client.ts';
+import {loadRoster} from './resenha/matchup.ts';
 import makeWASocket,{DisconnectReason,jidNormalizedUser,extractMessageContent} from '@whiskeysockets/baileys';
 import pino from 'pino';
 import {banterRequest} from './resenha/trigger.ts';
@@ -14,6 +16,11 @@ const endpoint=process.env.SESSION_VAULT_URL,token=process.env.SESSION_VAULT_TOK
 if(!endpoint||!token||!master||!process.env.CONTROL_PASSWORD||!process.env.CONTROL_ORIGIN)throw new Error('Resenha configuration missing');
 const key=Buffer.from(master,/^[a-f0-9]{64}$/i.test(master)?'hex':'base64');
 if(key.length!==32)throw new Error('Invalid session key');
+const cupApi=process.env.MINICAMP_URL&&process.env.MINICAMP_TOKEN?minicampClient(process.env.MINICAMP_URL,process.env.MINICAMP_TOKEN):undefined;
+delete process.env.MINICAMP_TOKEN;
+const cupClubs=loadRoster(process.env.MLG_ROSTER_JSON).map(c=>c.club);
+const configuredCups=new Set<string>();
+let cupBusy=false,lastCupTick=Date.now(),cupHealthy=!cupApi,cupTimer:ReturnType<typeof setInterval>|undefined;
 const controlPath='/tmp/mlg-bot-control.sock';
 const portal=privateControl({secret:process.env.CONTROL_PASSWORD,origin:process.env.CONTROL_ORIGIN,socketPath:controlPath,resenha:true});
 for(const name of ['AUTH_ENCRYPTION_KEY','CONTROL_PASSWORD','SESSION_VAULT_TOKEN','DATABASE_URL','APP_DATABASE_PASSWORD'])delete process.env[name];
@@ -48,6 +55,16 @@ async function connect(){
  const self=[current.user?.id,current.user?.lid].filter(Boolean).map(v=>jidNormalizedUser(v!));
  const mention=context?.mentionedJid?.some(j=>self.includes(jidNormalizedUser(j)));
  const reply=context?.participant&&self.includes(jidNormalizedUser(context.participant));
+ if(cupApi&&minicampCommand(text.trim())){
+  if(!auth.data.groups.includes(group)||!message.key.participant||text.length>1000)return;
+  const aliases=await cupAliases(message.key.participant,current);
+  auth.data.cupInbox??=[];
+  if(!auth.data.cupInbox.some(e=>e.group===group&&e.id===id&&e.aliases.some(a=>aliases.includes(a)))){
+   if(auth.data.cupInbox.length>=100){log('MINICAMP_QUEUE_FULL');return;}
+   auth.data.cupInbox.push({group,aliases,id,name:message.pushName??'Participante',text:text.trim()});await auth.save();
+  }
+  void cupTick();return;
+ }
  const request=banterRequest(text,Boolean(mention),Boolean(reply));if(request===null)return;
  if(!auth.data.groups.includes(group)){log('RESENHA_GROUP_NOT_AUTHORIZED');return;}
  const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
@@ -58,8 +75,38 @@ async function connect(){
  }).catch(()=>fail('MESSAGE_PROCESSING_FAILED'));}
  });
 }
+async function cupAliases(jid:string,current:ReturnType<typeof makeWASocket>):Promise<string[]>{
+ const n=jidNormalizedUser(jid);if(!/^[0-9]+@(lid|s\.whatsapp\.net)$/.test(n))throw Error('Unsupported identity');
+ const other=n.endsWith('@lid')?await current.signalRepository.lidMapping.getPNForLID(n):await current.signalRepository.lidMapping.getLIDForPN(n);
+ return [...new Set([n,...(other?[jidNormalizedUser(other)]:[])])];
+}
+async function configureCup(group:string,current:ReturnType<typeof makeWASocket>){
+ if(configuredCups.has(group))return;
+ const metadata=await current.groupMetadata(group);
+ const admins=await Promise.all(metadata.participants.filter(p=>p.admin==='admin'||p.admin==='superadmin').map(p=>cupAliases(p.id,current)));
+ if(!admins.length||cupClubs.length<16)throw Error('Minicamp setup unavailable');
+ await cupApi!({action:'configure',group,admins,clubs:cupClubs});configuredCups.add(group);
+}
+async function cupTick(){
+ if(!cupApi||cupBusy||stopping||phase!=='CONNECTED'||!socket)return;cupBusy=true;
+ const current=socket;
+ try{
+  for(const event of (auth.data.cupInbox??[]).slice(0,5)){
+   if(!auth.data.groups.includes(event.group))continue;
+   await configureCup(event.group,current);await cupApi({action:'event',event});
+   auth.data.cupInbox=auth.data.cupInbox!.filter(e=>e!==event);await auth.save();
+  }
+  const batch=await cupApi<{messages:{id:string;group_id:string;body:string;wa_message_id:string;lease:string}[]}>({action:'poll'});
+  for(const m of batch.messages){
+   if(!auth.data.groups.includes(m.group_id)||socket!==current||stopping){await cupApi({action:'ack',id:m.id,lease:m.lease,sent:false});continue;}
+   let sent=false;try{await current.sendMessage(m.group_id,{text:m.body},{messageId:m.wa_message_id});sent=true;}catch{log('MINICAMP_SEND_RETRY');}
+   await cupApi({action:'ack',id:m.id,lease:m.lease,sent});
+  }
+  cupHealthy=true;lastCupTick=Date.now();
+ }catch{cupHealthy=false;log('MINICAMP_RETRY');}finally{cupBusy=false;}
+}
 const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>client.destroy());client.on('data',chunk=>{buffer+=chunk.toString();if(buffer.length>8192){client.destroy();return;}if(!buffer.includes('\n'))return;client.pause();void(async()=>{
- const req=JSON.parse(buffer.trim());if(req.action==='status')return {phase,authorizedGroups:auth.data.groups.length};
+ const req=JSON.parse(buffer.trim());if(req.action==='status')return {phase,authorizedGroups:auth.data.groups.length,minicamp:cupApi?(cupHealthy?'READY':'RETRYING'):'DISABLED'};
  if(req.action==='pair'){
  if(auth.state.creds.registered||phase==='CONNECTED'||phase==='STOPPED')throw new Error('Pairing unavailable');
  if(!/^\d{10,15}$/.test(req.phone??''))throw new Error('Invalid phone');
@@ -81,9 +128,9 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  if(!auth.data.groups.includes(req.group))auth.data.groups.push(req.group);await auth.save();log('GROUP_AUTHORIZED');return {authorized:true};
  }throw new Error('Unknown operation');
  })().then(r=>client.end(JSON.stringify(r)+'\n')).catch(()=>client.end(JSON.stringify({error:'Operação recusada. Confira conexão, número e seleção.'})+'\n'));});});
-const health=httpServer((req,res)=>{if(req.url==='/livez'||req.url==='/readyz'){const ok=!stopping&&(req.url==='/livez'||phase==='CONNECTED');res.writeHead(ok?200:503,{'Cache-Control':'no-store'}).end(ok?'OK':'UNAVAILABLE');return;}void portal(req,res).catch(()=>{if(!res.headersSent)res.writeHead(500);res.end();});});
+const health=httpServer((req,res)=>{if(req.url==='/livez'||req.url==='/readyz'){const ok=!stopping&&(req.url==='/livez'||(phase==='CONNECTED'&&(!cupApi||(cupHealthy&&Date.now()-lastCupTick<120000))));res.writeHead(ok?200:503,{'Cache-Control':'no-store'}).end(ok?'OK':'UNAVAILABLE');return;}void portal(req,res).catch(()=>{if(!res.headersSent)res.writeHead(500);res.end();});});
 function fail(event:string){log(event);void shutdown(1);}
-async function shutdown(code:number){if(stopping)return;stopping=true;if(timer)clearTimeout(timer);if(stable)clearTimeout(stable);const deadline=setTimeout(()=>process.exit(code),12000);deadline.unref();controls.close();health.close();socket?.end(undefined);await queue;await auth?.flush();key.fill(0);process.exit(code);}
+async function shutdown(code:number){if(stopping)return;stopping=true;if(cupTimer)clearInterval(cupTimer);if(timer)clearTimeout(timer);if(stable)clearTimeout(stable);const deadline=setTimeout(()=>process.exit(code),12000);deadline.unref();controls.close();health.close();socket?.end(undefined);await queue;while(cupBusy)await new Promise(r=>setTimeout(r,50));await auth?.flush();key.fill(0);process.exit(code);}
 process.on('SIGTERM',()=>{void shutdown(0);});process.on('SIGINT',()=>{void shutdown(0);});process.on('uncaughtException',()=>fail('UNCAUGHT_ERROR'));process.on('unhandledRejection',()=>fail('UNHANDLED_REJECTION'));
-async function main(){auth=await vaultAuth(endpoint!,token!,key);auth.data.replyHistory??={};banterReply=createBanterReply(auth.data.replyHistory);await auth.save();await unlink(controlPath).catch(()=>undefined);controls.listen(controlPath,()=>{void chmod(controlPath,0o600).catch(()=>fail('CONTROL_PERMISSIONS_FAILED'));});health.listen(Number(process.env.PORT??3000),'0.0.0.0');if(auth.state.creds.registered)await connect();else {phase='NEEDS_PAIRING';log(phase);}}
+async function main(){auth=await vaultAuth(endpoint!,token!,key);auth.data.replyHistory??={};auth.data.cupInbox??=[];if(cupApi){try{await cupApi({action:'health'});cupHealthy=true;}catch{cupHealthy=false;log('MINICAMP_RETRY');}cupTimer=setInterval(()=>{void cupTick();},15000);}banterReply=createBanterReply(auth.data.replyHistory);await auth.save();await unlink(controlPath).catch(()=>undefined);controls.listen(controlPath,()=>{void chmod(controlPath,0o600).catch(()=>fail('CONTROL_PERMISSIONS_FAILED'));});health.listen(Number(process.env.PORT??3000),'0.0.0.0');if(auth.state.creds.registered)await connect();else {phase='NEEDS_PAIRING';log(phase);}}
 void main().catch(()=>fail('SESSION_STORAGE_UNAVAILABLE'));

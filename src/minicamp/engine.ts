@@ -135,7 +135,8 @@ export function apply(input: State, event: Event, env: Environment = environment
   const audit = (action: string, cup: Cup, before: string, matchCode?: number) => {
     s.audit.push({ actor: event.userId, groupId: event.groupId, cupId: cup.id, matchCode, at: event.at, action, before, after: JSON.stringify(cup), outcome: 'accepted' });
   };
-  const parts = event.text.trim().split(/\s+/);
+  const normalized = event.text.trim().replace(/^!formato\s+(4|8|16)$/i, (_, n) => (({ '4':'1','8':'2','16':'3' } as Record<string,string>)[n]!));
+  const parts = normalized.split(/\s+/);
   const cmd = parts[0]!.toLowerCase();
   let notices: string[] = [];
   if (cmd === '!novacopa') {
@@ -214,6 +215,19 @@ export function apply(input: State, event: Event, env: Environment = environment
     const cup = active(); requireThat(cup, 'Nenhuma Copa ativa.');
     const before = JSON.stringify(cup); cup.status = 'cancelled'; cup.cancellationReason = parts.slice(1).join(' ');
     audit('cancel', cup, before); notices.push('Copa cancelada. Histórico preservado.');
+  } else if (cmd === '!ajuda' || cmd === '!minicamp') {
+    notices.push('🏆 MINICAMP MLG\nADM: !novacopa → !formato 4, 8 ou 16\nJogadores: !entrar\nPlacar: !resultado código 3x2 (mandante x visitante)\nOutra pessoa autorizada: !confirmar código\nDiscordou: !contestar código\nADM distinto do proponente: !resolver código 3x2 motivo\nConsultas: !copa, !jogo código, !stats, !ranking, !campeoes, !historico, !minhascopas\n!stats Nome completo consulta alguém; nomes repetidos: cada jogador consulta sua conta com !stats.\nADM: !cancelar motivo\nClubes sorteados valem só para esta Copa.');
+  } else if (cmd === '!stats') {
+    const cups = Object.values(s.cups).filter(c=>c.groupId===event.groupId&&c.status!=='cancelled');
+    const search=parts.slice(1).join(' ').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+    const named=new Map<string,string>();for(const c of cups)for(const p of c.participants)named.set(p.userId,p.name);
+    const candidates=search?[...named].filter(([,name])=>name.normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase()===search).map(([id])=>id):[event.userId];
+    requireThat(candidates.length===1,'Nome não encontrado ou ambíguo. Cada jogador pode consultar a própria conta com !stats.');
+    const target=candidates[0]!;let wins=0,losses=0,gf=0,ga=0,titles=0,runnerUp=0,streak=0,record=0;
+    const played=cups.flatMap(c=>c.matches.filter(m=>m.status==='confirmed'&&[m.home,m.away].includes(target))).sort((a,b)=>score(a).at-score(b).at||a.code-b.code);
+    for(const m of played){const r=score(m);const home=m.home===target;gf+=home?r.home:r.away;ga+=home?r.away:r.home;if(m.winner===target){wins++;streak++;record=Math.max(record,streak);}else{losses++;streak=0;}}
+    for(const c of cups.filter(c=>c.status==='completed')){titles+=Number(c.champion===target);const final=c.matches.find(m=>m.round===Math.log2(c.size)-1);if(final&&[final.home,final.away].includes(target)&&c.champion!==target)runnerUp++;}
+    notices.push(`👤 ESTATÍSTICAS DO TREINADOR\n${named.get(target)??cleanName(event.name)}\n🏆 Títulos: ${titles}\n🥈 Vices: ${runnerUp}\n🎮 Jogos: ${played.length}\n✅ Vitórias: ${wins}\n❌ Derrotas: ${losses}\n⚽ Gols pró: ${gf}\n🥅 Gols contra: ${ga}\n🔥 Vitórias seguidas: ${streak}\n🏅 Recorde: ${record}\nSomente partidas confirmadas neste bot; Copas canceladas não contam.`);
   } else if (cmd === '!jogo') {
     const { cup, match } = getMatch(parts[1]);
     const result = match.results.at(-1);

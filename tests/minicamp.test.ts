@@ -143,3 +143,20 @@ test('cancelamento preserva registros e exige motivo', () => {
   assert.equal(Object.values(h.state.cups)[0]!.participants.length, 4);
   assert.ok(h.state.audit.some(a => a.action === 'cancel'));
 });
+
+test('formato command and statistics follow confirmed matches and preserve history',()=>{
+ const h=harness();h.send('admin','!novacopa');h.send('admin','!formato 4');
+ for(let i=0;i<4;i++)h.send(`u${i}`,'!entrar');
+ const id=Object.keys(h.state.cups)[0]!;
+ while(h.state.cups[id]!.status!=='completed'){
+  const m=h.state.cups[id]!.matches.find(m=>m.status==='scheduled')!;
+  h.send(m.home,`!resultado ${m.code} 3x1`);
+  const before=h.send(m.home,'!stats').notices[0]!;assert.ok(before.includes('ESTATÍSTICAS'));
+  h.send(m.away,`!confirmar ${m.code}`);
+ }
+ const champion=h.state.cups[id]!.champion!;
+ const stats=h.send(champion,'!stats').notices[0]!;
+ assert.match(stats,/Títulos: 1/);assert.match(stats,/Vitórias: 2/);assert.match(stats,/Gols pró: 6/);assert.match(stats,/Gols contra: 2/);
+ assert.match(h.send('admin',`!stats ${champion}`).notices[0]!,/Títulos: 1/);
+ assert.throws(()=>h.send('admin','!titulo qualquer pessoa'),/desconhecido/);
+});
