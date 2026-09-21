@@ -135,7 +135,7 @@ export function apply(input: State, event: Event, env: Environment = environment
   const audit = (action: string, cup: Cup, before: string, matchCode?: number) => {
     s.audit.push({ actor: event.userId, groupId: event.groupId, cupId: cup.id, matchCode, at: event.at, action, before, after: JSON.stringify(cup), outcome: 'accepted' });
   };
-  const normalized = event.text.trim().replace(/^!formato\s+(4|8|16)$/i, (_, n) => (({ '4':'1','8':'2','16':'3' } as Record<string,string>)[n]!));
+  const normalized = event.text.trim().replace(/(\d)\s*[xX×]\s*(\d)/g,'$1x$2').replace(/^!formato\s+(4|8|16)$/i, (_, n) => (({ '4':'1','8':'2','16':'3' } as Record<string,string>)[n]!));
   const parts = normalized.split(/\s+/);
   const cmd = parts[0]!.toLowerCase();
   let notices: string[] = [];
@@ -180,17 +180,26 @@ export function apply(input: State, event: Event, env: Environment = environment
     }
     audit('join', cup, before);
   } else if (['!resultado', '!confirmar', '!contestar', '!resolver'].includes(cmd)) {
-    const { cup, match } = getMatch(parts[1]);
+    const shorthand=(cmd==='!resultado'&&parts.length===2&&/^\d+x\d+$/.test(parts[1]!))||(['!confirmar','!contestar'].includes(cmd)&&parts.length===1);
+    let inferred: {cup:Cup;match:Match}|undefined;
+    if(shorthand){
+      const candidates=Object.values(s.cups).filter(c=>c.groupId===event.groupId&&c.status==='playing').flatMap(c=>c.matches.filter(m=>m.status===(cmd==='!resultado'?'scheduled':'pending')&&([m.home,m.away].includes(event.userId)||(admin&&cmd!=='!resultado'))).map(match=>({cup:c,match})));
+      requireThat(candidates.length>0,'Nenhuma partida disponível para este comando.');
+      requireThat(candidates.length===1,'Informe o código: há mais de uma partida possível. Use !copa.');
+      inferred=candidates[0];
+    }
+    const { cup, match } = inferred??getMatch(parts[1]);
     requireThat(cup.status === 'playing', 'Copa não está em andamento.');
     const participant = [match.home, match.away].includes(event.userId);
     requireThat(admin || participant, 'Somente jogadores do confronto ou ADM.');
     const before = JSON.stringify(cup);
     if (cmd === '!resultado') {
       requireThat(match.status === 'scheduled', 'Partida já possui resultado; use o fluxo de contestação.');
-      requireThat(parts.length === 3, 'Formato: !resultado código 3x2');
-      const result: Result = { ...parseScore(parts[2]), author: event.userId, at: event.at, status: 'pending' };
+      requireThat(participant, 'Somente jogadores do confronto podem registrar resultado.');
+      requireThat(shorthand || parts.length === 3, 'Formato: !resultado 3x2 ou !resultado código 3x2');
+      const result: Result = { ...parseScore(parts[shorthand?1:2]), author: event.userId, at: event.at, status: 'pending' };
       match.results.push(result); match.status = 'pending';
-      notices.push(`⚠️ CONFIRMAÇÃO DE RESULTADO\nPartida #${match.code}\n${player(cup, match.home).name} ${result.home} x ${result.away} ${player(cup, match.away).name}\nVencedor provisório: ${player(cup, result.home > result.away ? match.home : match.away).name}\nAguardando confirmação de outra pessoa autorizada.\n!confirmar ${match.code}\n!contestar ${match.code}`);
+      notices.push(`📝 RESULTADO ANOTADO\nPartida #${match.code}\n${player(cup, match.home).name} ${result.home} x ${result.away} ${player(cup, match.away).name}\nVencedor provisório: ${player(cup, result.home > result.away ? match.home : match.away).name}\nAguardando confirmação de outra pessoa autorizada.\n!confirmar ${match.code}\n!contestar ${match.code}`);
     } else if (cmd === '!contestar') {
       requireThat(match.status === 'pending', 'Nenhum resultado pendente para contestar.');
       match.status = 'disputed'; score(match).status = 'disputed'; score(match).disputedBy = event.userId;
@@ -216,7 +225,7 @@ export function apply(input: State, event: Event, env: Environment = environment
     const before = JSON.stringify(cup); cup.status = 'cancelled'; cup.cancellationReason = parts.slice(1).join(' ');
     audit('cancel', cup, before); notices.push('Copa cancelada. Histórico preservado.');
   } else if (cmd === '!ajuda' || cmd === '!minicamp') {
-    notices.push('🏆 MINICAMP MLG\nADM: !novacopa → !formato 4, 8 ou 16\nJogadores: !entrar\nPlacar: !resultado código 3x2 (mandante x visitante)\nOutra pessoa autorizada: !confirmar código\nDiscordou: !contestar código\nADM distinto do proponente: !resolver código 3x2 motivo\nConsultas: !copa, !jogo código, !stats, !ranking, !campeoes, !historico, !minhascopas\n!stats Nome completo consulta alguém; nomes repetidos: cada jogador consulta sua conta com !stats.\nADM: !cancelar motivo\nClubes sorteados valem só para esta Copa.');
+    notices.push('🏆 MINICAMP MLG\nADM: !novacopa → !formato 4, 8 ou 16\nJogadores: !entrar\nPlacar: !resultado 3x2 (mandante x visitante)\nOutra pessoa autorizada: !confirmar (com código se houver dúvida)\nDiscordou: !contestar código\nADM distinto do proponente: !resolver código 3x2 motivo\nConsultas: !copa, !jogo código, !stats, !ranking, !campeoes, !historico, !minhascopas\n!stats Nome completo consulta alguém; nomes repetidos: cada jogador consulta sua conta com !stats.\nADM: !cancelar motivo\nClubes sorteados valem só para esta Copa.');
   } else if (cmd === '!stats') {
     const cups = Object.values(s.cups).filter(c=>c.groupId===event.groupId&&c.status!=='cancelled');
     const search=parts.slice(1).join(' ').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase();

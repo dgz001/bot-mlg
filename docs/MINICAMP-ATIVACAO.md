@@ -43,3 +43,11 @@ Sem integração de IA generativa ou busca completa dos históricos. Resenha con
 - Gateway implantado + PostgreSQL real: Copas sintéticas de 4, 8 e 16 participantes concluídas com respectivamente 3, 7 e 15 partidas confirmadas e campeão persistido.
 - Reenvio de inscrição e tentativa de autoconfirmação exercitados; autoconfirmação recusada. Registros sintéticos de Copas e filas removidos antes da ativação no WhatsApp.
 - Estes testes não equivalem a uma Copa disputada pelos membros no grupo. A validação final de entrega no WhatsApp depende da primeira utilização real.
+
+## Controles e comandos simplificados
+
+O painel privado permite ligar/desligar respostas, pausar Resenha e Minicamp separadamente e desautorizar grupos. Configurações persistem cifradas após reinício. Desligar não derruba o servidor nem encerra a sessão: o painel permanece acessível. Mensagem já em transporte pode terminar. Comandos enviados durante a pausa são ignorados; fila anterior fica preservada e retoma ao ligar.
+
+Somente os jogadores do confronto registram `!resultado 4x3` (também aceita espaços em `4 x 3`). Placar sempre mandante x visitante, inclusive se o visitante enviar. O bot anota e aguarda `!confirmar` do adversário ou de ADM diferente do autor. Se houver várias partidas possíveis, pede o código. Formatos explícitos continuam disponíveis. Nomes de jogadores de futebol que marcaram gols não são informados no placar; gols pró/contra são estatísticas do treinador.
+
+O painel opera sem ChatGPT Plus. Alteração de código e deploy continuam via GitHub/Render; não há execução arbitrária de código pelo painel. Os históricos não são consultados integralmente por IA, nem usados para atribuir traços pessoais automaticamente.

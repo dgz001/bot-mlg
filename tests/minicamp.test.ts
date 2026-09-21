@@ -93,10 +93,11 @@ test('permissões e validação de resultado/contestação', () => {
 test('ADM proponente não confirma nem resolve sozinho sua proposta', () => {
   const h = harness();
   const m = h.start(4).matches[0]!;
-  h.send('admin', `!resultado ${m.code} 2x0`);
-  assert.throws(() => h.send('admin', `!confirmar ${m.code}`), /próprio/);
+  h.state.groups.g!.admins.push(m.home);
+  h.send(m.home, `!resultado ${m.code} 2x0`);
+  assert.throws(() => h.send(m.home, `!confirmar ${m.code}`), /próprio/);
   h.send(m.away, `!contestar ${m.code}`);
-  assert.throws(() => h.send('admin', `!resolver ${m.code} 2x0 conferido novamente`), /próprio/);
+  assert.throws(() => h.send(m.home, `!resolver ${m.code} 2x0 conferido novamente`), /próprio/);
   h.send('admin2', `!resolver ${m.code} 2x0 conferido novamente`);
 });
 
@@ -159,4 +160,18 @@ test('formato command and statistics follow confirmed matches and preserve histo
  assert.match(stats,/Títulos: 1/);assert.match(stats,/Vitórias: 2/);assert.match(stats,/Gols pró: 6/);assert.match(stats,/Gols contra: 2/);
  assert.match(h.send('admin',`!stats ${champion}`).notices[0]!,/Títulos: 1/);
  assert.throws(()=>h.send('admin','!titulo qualquer pessoa'),/desconhecido/);
+});
+
+test('placar sem código, visitante, confirmação e ambiguidade de ADM', () => {
+ const h=harness();const cup=h.start(4),[a,b]=cup.matches;
+ assert.throws(()=>h.send('admin',`!resultado ${a!.code} 4x3`),/jogadores/);
+ h.send(a!.away,'!resultado 4 x 3');
+ assert.throws(()=>h.send(a!.away,'!confirmar'),/próprio/);
+ h.send(b!.home,'!resultado 2x1');
+ assert.throws(()=>h.send('admin','!confirmar'),/código/);
+ h.send(a!.home,'!confirmar');
+ assert.equal(h.state.cups[cup.id]!.matches[0]!.winner,a!.home);
+ h.send('admin','!confirmar');
+ assert.equal(h.state.cups[cup.id]!.matches[1]!.winner,b!.home);
+ assert.throws(()=>h.send('stranger','!resultado 1x0'),/partida/);
 });

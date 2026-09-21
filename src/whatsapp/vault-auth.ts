@@ -1,7 +1,7 @@
 import type {PendingCupEvent} from '../minicamp/client.ts';
 import {initAuthCreds,BufferJSON,proto,type AuthenticationState,type SignalDataTypeMap} from '@whiskeysockets/baileys';
 import {seal,unseal,type Sealed} from '../infra/security.ts';
-export type VaultData={creds:AuthenticationState['creds'];keys:Record<string,Record<string,unknown>>;groups:string[];seen:string[];cupInbox?:PendingCupEvent[];replyHistory?:Record<string,string[]>};
+export type VaultData={creds:AuthenticationState['creds'];keys:Record<string,Record<string,unknown>>;groups:string[];seen:string[];controls?:{enabled:boolean;resenha:boolean;minicamp:boolean};cupInbox?:PendingCupEvent[];replyHistory?:Record<string,string[]>};
 export async function vaultAuth(url:string,token:string,key:Buffer){
  async function remote(method:string,body?:unknown){const r=await fetch(url,{method,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(20000)});if(!r.ok)throw new Error('Session storage unavailable');return r.json();}
  const initial=await remote('GET') as {value:Sealed|null};
