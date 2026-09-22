@@ -4,4 +4,6 @@ export const minicampClubs:readonly string[]=Object.freeze([
  'Paris Saint-Germain','Porto','Benfica','Lyon','Atalanta','Internazionale','Milan','Sporting CP',
  'Boca Juniors','River Plate','Vasco','Fluminense','Santos','RB Bragantino','Náutico','Cuiabá',
  'Goiás','Vitória','Sport','Ceará',
+ // Confirmed: Konami official license list, 2026-09-22.
+ 'São Paulo','Club América','CD Guadalajara',
 ]);

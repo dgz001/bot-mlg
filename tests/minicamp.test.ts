@@ -220,9 +220,9 @@ test('sorteio preserva pool e retrospecto rejeita homônimos',()=>{
  assert.throws(()=>h.send('visitante',`!confrontoids ${a} ${b}`,'another','other'),/registrado/);
 });
 
-test('lista aprovada de 28 clubes é usada no sorteio e preservada no restart',async()=>{
+test('lista ampliada de 31 clubes é usada no sorteio e preservada no restart',async()=>{
  const {minicampClubs}=await import('../src/minicamp/clubs.ts');
- assert.equal(minicampClubs.length,28);assert.equal(new Set(minicampClubs).size,28);
+ assert.equal(minicampClubs.length,31);assert.equal(new Set(minicampClubs).size,31);
  for(const size of [4,8,16]){
   const h=harness();h.state.groups.g!.clubs=[...minicampClubs];
   assert.match(h.send('visitante','!clubes').notices[0]!,/Náutico/);
@@ -303,4 +303,20 @@ test('sair libera vaga antes do sorteio e propõe WO confirmado por outra pessoa
  h.restart();h.send(m.away,'!confirmar 0x3');
  assert.equal(h.state.cups[cup.id]!.matches[0]!.winner,m.away);
  assert.throws(()=>h.send(m.home,'!sair'),/não tem partida/);
+});
+
+test('correção antiga não reordena sequência e anulação não exibe placar obsoleto',()=>{
+ const h=harness();const cup=h.start(4);
+ const semi=cup.matches[0]!;
+ for(const m of cup.matches){h.send(m.home,`!resultado ${m.code} 3x1`);h.send(m.away,`!confirmar ${m.code}`);}
+ const final=h.state.cups[cup.id]!.matches.at(-1)!;
+ h.send(final.home,`!resultado ${final.code} 0x2`);h.send(final.away,`!confirmar ${final.code}`);
+ h.send('admin',`!forcarresultado ${semi.code} 2x0 ajuste de placar`);
+ const stats=h.send(semi.home,'!stats').notices[0]!;
+ assert.match(stats,/Vitórias seguidas: 0/);assert.match(stats,/Jogos: 2/);
+ assert.match(stats,/Vitórias: 1/);assert.match(stats,/Derrotas: 1/);
+ assert.match(stats,/Gols pró: 2/);assert.match(stats,/Gols contra: 2/);
+ h.send('admin',`!deletar ${final.code}`);
+ assert.doesNotMatch(h.send(final.home,`!jogo ${final.code}`).notices[0]!,/Placar:/);
+ assert.match(h.send(final.home,`!jogo ${final.code}`).notices[0]!,/Sem placar/);
 });
