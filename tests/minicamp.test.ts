@@ -219,3 +219,15 @@ test('sorteio preserva pool e retrospecto rejeita homônimos',()=>{
  h.state.groups.other={authorized:true,admins:[],clubs};
  assert.throws(()=>h.send('visitante',`!confrontoids ${a} ${b}`,'another','other'),/registrado/);
 });
+
+test('lista aprovada de 28 clubes é usada no sorteio e preservada no restart',async()=>{
+ const {minicampClubs}=await import('../src/minicamp/clubs.ts');
+ assert.equal(minicampClubs.length,28);assert.equal(new Set(minicampClubs).size,28);
+ for(const size of [4,8,16]){
+  const h=harness();h.state.groups.g!.clubs=[...minicampClubs];
+  assert.match(h.send('visitante','!clubes').notices[0]!,/Náutico/);
+  const c=h.start(size);assert.equal(new Set(c.participants.map(p=>p.club)).size,size);
+  assert.ok(c.participants.every(p=>minicampClubs.includes(p.club!)));
+  const assignments=JSON.stringify(c.participants);h.restart();assert.equal(JSON.stringify(h.state.cups[c.id]!.participants),assignments);
+ }
+});

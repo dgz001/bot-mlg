@@ -76,3 +76,12 @@ Qualquer participante de grupo autorizado usa `!comandos`. Com o bot ligado, o m
 - Retrospecto usa somente última revisão de cada jogo confirmado; exclui Copas canceladas. Não infere vitórias a partir dos backups.
 
 No painel, ADMs são marcados por conta, com busca por número e seleção atual carregada. Ao salvar, há comparação da revisão da lista; uma tela antiga não sobrescreve mudanças de outra sessão. Contas sem mapeamento de telefone disponível aparecem pelo identificador WhatsApp: não adivinhar identidade por nome.
+
+
+## Lista de clubes aprovada e painel
+
+A lista exclusiva do Minicamp tem os 28 clubes fornecidos pelo dono em `src/minicamp/clubs.ts`; não deriva dos clubes dos técnicos da Master Liga. A migration 005 atualiza o pool dos grupos existentes sem alterar clubes já atribuídos em Copas. Grupos novos recebem o mesmo catálogo no gateway. `!clubes` consulta o pool efetivamente salvo no PostgreSQL.
+
+O painel organiza operação global, autorização de grupos, seleção de ADMs, guia do Minicamp e revisão de memória em cartões. O grupo selecionado fica destacado. Testes e comunidade conservam históricos independentes; autorize a comunidade e selecione seus ADMs antes da primeira Copa real.
+
+Validação: sorteios de 4, 8 e 16 com a lista aprovada, sem clubes repetidos e sem alteração após restauração do estado. 34 testes passaram, quatro SQL locais ignorados; typecheck passou.

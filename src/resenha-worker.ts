@@ -1,3 +1,4 @@
+import {minicampClubs} from './minicamp/clubs.ts';
 import {commandMenu} from './minicamp/engine.ts';
 import {moduleEnabled,parseControls} from './infra/bot-controls.ts';
 import {minicampClient,minicampCommand,type PendingCupEvent} from './minicamp/client.ts';
@@ -20,7 +21,7 @@ const key=Buffer.from(master,/^[a-f0-9]{64}$/i.test(master)?'hex':'base64');
 if(key.length!==32)throw new Error('Invalid session key');
 const cupApi=process.env.MINICAMP_URL&&process.env.MINICAMP_TOKEN?minicampClient(process.env.MINICAMP_URL,process.env.MINICAMP_TOKEN):undefined;
 delete process.env.MINICAMP_TOKEN;
-const cupClubs=loadRoster(process.env.MLG_ROSTER_JSON).map(c=>c.club);
+const cupClubs=[...minicampClubs];
 const configuredCups=new Set<string>();
 let cupBusy=false,lastCupTick=Date.now(),cupHealthy=!cupApi,cupTimer:ReturnType<typeof setInterval>|undefined;
 const controlPath='/tmp/mlg-bot-control.sock';

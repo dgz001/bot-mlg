@@ -1,3 +1,4 @@
+import {minicampClubs} from './clubs.ts';
 // Private server-to-server gateway. Inject only a token digest during deployment.
 import {Pool} from 'npm:pg@8.23.0';
 import {randomUUID} from 'node:crypto';
@@ -50,7 +51,7 @@ Deno.serve(async req=>{
    const inserted=await q.query('INSERT INTO mlg_bot.groups(id,authorized) VALUES($1,true) ON CONFLICT DO NOTHING RETURNING id',[body.group]);
    if(!inserted.rows.length)return {configured:true,existing:true};
    
-   for(const club of body.clubs)await q.query('INSERT INTO mlg_bot.club_pool(group_id,name) VALUES($1,$2)',[body.group,club]);
+   for(const club of minicampClubs)await q.query('INSERT INTO mlg_bot.club_pool(group_id,name) VALUES($1,$2)',[body.group,club]);
    await q.query("INSERT INTO mlg_bot.control_audit(action,group_id) VALUES('bootstrap-verified-whatsapp-admins',$1)",[body.group]);
    return {configured:true};
   });

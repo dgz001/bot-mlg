@@ -3,7 +3,7 @@ import { randomInt, randomUUID } from 'node:crypto';
 // Pure domain boundary. The production adapter MUST resolve identities, load
 // permissions and commit state + inbox + audit + outbox in one DB transaction.
 // This module does not provide a database, transport or operational durability.
-export const commandMenu='📋🎮 COMANDOS MLG\n\n😂 RESENHA\n!bot mensagem — entra na conversa\n!palpite Arthur x Lucas — palpite de brincadeira\n!tecnicos — nomes e clubes para os palpites\n\n⚔️ RETROSPECTO REAL\n!confronto Arthur x Lucas\nOu marque as duas contas: !confronto @Arthur x @Lucas\n!stats — seus números\n!stats Nome completo — outro participante\n!ranking • !campeoes • !historico • !minhascopas\n\n🏆 MINICAMP\n!entrar — inscrição\n!copa — chaveamento\n!jogo código — partida\n!resultado 4x3 — mandante x visitante\n!confirmar • !contestar — confronto único\nSe houver dúvida, acrescente o código da partida.\n\n🔐 SOMENTE ADMs SELECIONADOS NO PAINEL\n!novacopa → !formato 4, 8 ou 16\n!cancelar copa\n!forcarresultado código 4x3 motivo\n!resolver código 4x3 motivo\n!config\n\n📊 Retrospectos usam partidas confirmadas neste bot. Palpites não alteram resultados.';
+export const commandMenu='📋🎮 COMANDOS MLG\n\n😂 RESENHA\n!bot mensagem — entra na conversa\n!palpite Arthur x Lucas — palpite de brincadeira\n!tecnicos — nomes e clubes para os palpites\n\n⚔️ RETROSPECTO REAL\n!confronto Arthur x Lucas\nOu marque as duas contas: !confronto @Arthur x @Lucas\n!stats — seus números\n!stats Nome completo — outro participante\n!ranking • !campeoes • !historico • !minhascopas\n\n🏆 MINICAMP\n!clubes — os 28 clubes disponíveis para sorteio\n!entrar — inscrição\n!copa — chaveamento\n!jogo código — partida\n!resultado 4x3 — mandante x visitante\n!confirmar • !contestar — confronto único\nSe houver dúvida, acrescente o código da partida.\n\n🔐 SOMENTE ADMs SELECIONADOS NO PAINEL\n!novacopa → !formato 4, 8 ou 16\n!cancelar copa\n!forcarresultado código 4x3 motivo\n!resolver código 4x3 motivo\n!config\n\n📊 Retrospectos usam partidas confirmadas neste bot. Palpites não alteram resultados.';
 export type Participant = { userId: string; name: string; club?: string };
 export type Result = {
   home: number; away: number; author: string; at: number;
@@ -85,6 +85,7 @@ function addRound(s: State, cup: Cup, ids: string[], round: number): string {
     cup.matches.push(match);
     output.push(describe(cup, match));
   }
+  output.push('🎮 Mandante aparece primeiro em cada confronto.\n🤝 Combinem a sala e bora pro eFootball! Boa sorte aos dois lados!\n📝 Depois do jogo: !resultado 4x3 (mandante x visitante).\n✅ O adversário ou ADM confirma com !confirmar.\n🍿 Joguem bonito que a resenha fica por nossa conta!');
   return output.join('\n\n');
 }
 function advance(s: State, cup: Cup, match: Match, at: number): string[] {
@@ -141,7 +142,9 @@ export function apply(input: State, event: Event, env: Environment = environment
   const cmd = parts[0]!.toLowerCase();
   let notices: string[] = [];
   const cheer=['🔥 Chegou pra disputar a taça ou pra render resenha?','🎮 Agora é no controle! A torcida já está de olho.','🍿 Mais um nome na disputa. Vai faltar cadeira nessa arquibancada!','⚽ Tá dentro! O discurso de campeão a gente deixa pra final.','🏆 Vaga garantida. Agora chama aquele rival que fala muito!','📣 A lista está esquentando! Essa Copa promete.'][[...event.id].reduce((n,c)=>n+c.charCodeAt(0),0)%6];
-  if(cmd==='!comandos'){
+  if(cmd==='!clubes'){
+    notices.push('🎲 CLUBES DO MINICAMP\n'+group.clubs.map((club,i)=>(i+1)+'. '+club).join('\n')+'\nCada inscrito recebe um clube sorteado, sem repetição na Copa. Use esse clube no eFootball.');
+  } else if(cmd==='!comandos'){
     notices.push(commandMenu);
   } else if(cmd==='!confronto'||cmd==='!confrontoids'){
     const cups=Object.values(s.cups).filter(c=>c.groupId===event.groupId&&c.status!=='cancelled');
