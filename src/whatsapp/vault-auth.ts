@@ -3,7 +3,19 @@ import {initAuthCreds,BufferJSON,proto,type AuthenticationState,type SignalDataT
 import {seal,unseal,type Sealed} from '../infra/security.ts';
 export type VaultData={creds:AuthenticationState['creds'];keys:Record<string,Record<string,unknown>>;groups:string[];seen:string[];controls?:{enabled:boolean;resenha:boolean;minicamp:boolean};cupInbox?:PendingCupEvent[];replyHistory?:Record<string,string[]>};
 export async function vaultAuth(url:string,token:string,key:Buffer){
- async function remote(method:string,body?:unknown){const r=await fetch(url,{method,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(20000)});if(!r.ok)throw new Error('Session storage unavailable');return r.json();}
+ async function remote(method:string,body?:unknown){
+  const attempts=method==='GET'?3:1;
+  for(let attempt=0;attempt<attempts;attempt++){
+   let r:Response;
+   try{r=await fetch(url,{method,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(20000)});}
+   catch{if(attempt+1===attempts)throw new Error('Session storage unavailable');await new Promise(resolve=>setTimeout(resolve,1000*2**attempt));continue;}
+   if(r.ok)return r.json();
+   await r.body?.cancel();
+   if(r.status<500||attempt+1===attempts)throw new Error('Session storage unavailable');
+   await new Promise(resolve=>setTimeout(resolve,1000*2**attempt));
+  }
+  throw new Error('Session storage unavailable');
+ }
  const initial=await remote('GET') as {value:Sealed|null};
  const data:VaultData=initial.value?JSON.parse(unseal(initial.value,key,'mlg-bot-resenha-v1'),BufferJSON.reviver):{creds:initAuthCreds(),keys:{},groups:[],seen:[]};
  let writes=Promise.resolve();let failed=false;
