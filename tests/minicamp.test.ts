@@ -175,3 +175,20 @@ test('placar sem código, visitante, confirmação e ambiguidade de ADM', () => 
  assert.equal(h.state.cups[cup.id]!.matches[1]!.winner,b!.home);
  assert.throws(()=>h.send('stranger','!resultado 1x0'),/partida/);
 });
+
+test('ADM corrige estatísticas sem duplicar título e cancela rascunho',()=>{
+ const h=harness();h.send('admin','!novacopa');h.send('admin','!cancelar copa');
+ const c=h.start(4),a=c.matches[0]!,b=c.matches[1]!;
+ assert.throws(()=>h.send(a.home,`!forcarresultado ${a.code} 4x3`),/ADM/);
+ h.send('admin',`!forcarresultado ${a.code} 4x3`);
+ h.send('admin',`!forcarresultado ${b.code} 2x1`);
+ h.send('admin',`!forcarresultado ${a.code} 0x1`);
+ let final=h.state.cups[c.id]!.matches.at(-1)!;
+ assert.equal(final.home,a.away);
+ h.send(final.home,'!resultado 3x1');h.send(final.away,'!confirmar');
+ assert.throws(()=>h.send('admin',`!forcarresultado ${a.code} 2x0`),/próxima/);
+ h.send('admin',`!forcarresultado ${final.code} 0x2`);
+ assert.equal(h.state.cups[c.id]!.champion,final.away);
+ assert.match(h.send(final.away,'!stats').notices[0]!,/Títulos: 1/);
+ assert.match(h.send(final.home,'!stats').notices[0]!,/Títulos: 0/);
+});

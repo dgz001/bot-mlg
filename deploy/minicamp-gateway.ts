@@ -49,10 +49,68 @@ Deno.serve(async req=>{
    await q.query('SELECT pg_advisory_xact_lock(71012027)');
    const inserted=await q.query('INSERT INTO mlg_bot.groups(id,authorized) VALUES($1,true) ON CONFLICT DO NOTHING RETURNING id',[body.group]);
    if(!inserted.rows.length)return {configured:true,existing:true};
-   for(const aliases of body.admins){const id=await identity(q,aliases);await q.query("INSERT INTO mlg_bot.admins(group_id,user_id,role) VALUES($1,$2,'owner') ON CONFLICT DO NOTHING",[body.group,id]);}
+   
    for(const club of body.clubs)await q.query('INSERT INTO mlg_bot.club_pool(group_id,name) VALUES($1,$2)',[body.group,club]);
    await q.query("INSERT INTO mlg_bot.control_audit(action,group_id) VALUES('bootstrap-verified-whatsapp-admins',$1)",[body.group]);
    return {configured:true};
+  });
+ }
+
+ else if(body.action==='setadmins'){
+  if(!groupId.test(body.group)||!Array.isArray(body.admins)||body.admins.length<1||body.admins.length>10||!body.admins.every(validAliases))throw Error('Invalid admins');
+  result=await db.transaction(async q=>{
+   await q.query('SELECT id FROM mlg_bot.groups WHERE id=$1 FOR UPDATE',[body.group]);
+   await q.query('DELETE FROM mlg_bot.admins WHERE group_id=$1',[body.group]);
+   for(const aliases of body.admins){const id=await identity(q,aliases);await q.query("INSERT INTO mlg_bot.admins(group_id,user_id,role) VALUES($1,$2,'admin') ON CONFLICT DO NOTHING",[body.group,id]);}
+   await q.query('UPDATE mlg_bot.groups SET admins_configured=true WHERE id=$1',[body.group]);
+   await q.query("INSERT INTO mlg_bot.control_audit(action,group_id) VALUES('panel-replace-admins',$1)",[body.group]);return {updated:true};
+  });
+ }
+ else if(body.action==='config'){
+  const e=body.event;if(!e||!groupId.test(e.group)||!validAliases(e.aliases)||typeof e.text!=='string'||typeof e.id!=='string')throw Error('Invalid config');
+  result=await db.transaction(async q=>{
+   await q.query('SELECT id FROM mlg_bot.groups WHERE id=$1 FOR UPDATE',[e.group]);
+   const id=await identity(q,e.aliases,e.name??'ADM');
+   const adm=await q.query('SELECT 1 FROM mlg_bot.admins a JOIN mlg_bot.groups g ON g.id=a.group_id WHERE g.id=$1 AND a.user_id=$2 AND g.admins_configured AND g.authorized',[e.group,id]);
+   if(!adm.rows.length)return {text:'🔒 Somente ADMs selecionados pelo dono no painel podem configurar.'};
+   const claimed=await q.query('INSERT INTO mlg_bot.processed_messages VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING message_id',[e.group,id,e.id,Date.now()]);
+   if(!claimed.rows.length)return {text:null};
+   await q.query('INSERT INTO mlg_bot.bot_settings(group_id) VALUES($1) ON CONFLICT DO NOTHING',[e.group]);
+   const parts=e.text.trim().toLowerCase().split(/\s+/);
+   if(parts.length===3&&['resenha','historico'].includes(parts[1])&&['ligar','desligar'].includes(parts[2])){
+    const column=parts[1]==='resenha'?'resenha_enabled':'history_enabled';
+    await q.query('UPDATE mlg_bot.bot_settings SET '+column+'=$2 WHERE group_id=$1',[e.group,parts[2]==='ligar']);
+    await q.query('INSERT INTO mlg_bot.control_audit(action,group_id,user_id) VALUES($1,$2,$3)',['config-'+parts[1]+'-'+parts[2],e.group,id]);
+   }else if(parts.length!==1)return {text:'⚙️ Use !config, !config resenha ligar/desligar ou !config historico ligar/desligar.'};
+   const settings=await q.query('SELECT resenha_enabled,history_enabled FROM mlg_bot.bot_settings WHERE group_id=$1',[e.group]);
+   const v=settings.rows[0];return {text:'⚙️ CONFIGURAÇÕES DO GRUPO\n😂 Resenha: '+(v.resenha_enabled?'ligada':'desligada')+'\n📚 Histórico aprovado: '+(v.history_enabled?'ligado':'desligado')+'\n!config resenha ligar/desligar\n!config historico ligar/desligar'};
+  });
+ }
+ else if(body.action==='history-import'){
+  if(!Array.isArray(body.entries)||body.entries.length>100)throw Error('Invalid import');
+  result=await db.transaction(async q=>{for(const e of body.entries){
+   if(!/^[a-f0-9]{64}$/.test(e.id)||typeof e.body!=='string'||e.body.length<20||e.body.length>500||typeof e.source!=='string'||typeof e.date!=='string')throw Error('Invalid entry');
+   await q.query('INSERT INTO mlg_bot.history_entries(id,source,message_date,body) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING',[e.id,e.source.slice(0,60),e.date.slice(0,20),e.body]);
+  }return {imported:body.entries.length};});
+ }
+ else if(body.action==='history-review'){
+  if(!groupId.test(body.group)||typeof body.approved!=='boolean'||!Array.isArray(body.ids)||body.ids.length>20)throw Error('Invalid review');
+  result=await db.transaction(async q=>{for(const id of body.ids)await q.query('INSERT INTO mlg_bot.history_reviews(group_id,entry_id,approved) VALUES($1,$2,$3) ON CONFLICT(group_id,entry_id) DO UPDATE SET approved=excluded.approved,reviewed_at=now()',[body.group,id,body.approved]);
+   await q.query("INSERT INTO mlg_bot.control_audit(action,group_id) VALUES('panel-review-history',$1)",[body.group]);return {updated:true};});
+ }
+ else if(body.action==='history-candidates'){
+  if(!groupId.test(body.group))throw Error('Invalid group');
+  result=await db.transaction(async q=>{const filter=body.approved===true?'EXISTS(SELECT 1 FROM mlg_bot.history_reviews r WHERE r.entry_id=e.id AND r.group_id=$1 AND r.approved)':'NOT EXISTS(SELECT 1 FROM mlg_bot.history_reviews r WHERE r.entry_id=e.id AND r.group_id=$1)';
+   const rows=await q.query('SELECT id,source,message_date,body FROM mlg_bot.history_entries e WHERE '+filter+' ORDER BY id LIMIT 10',[body.group]);return {entries:rows.rows};});
+ }
+ else if(body.action==='banter-context'){
+  if(!groupId.test(body.group)||typeof body.query!=='string'||body.query.length>1000)throw Error('Invalid query');
+  result=await db.transaction(async q=>{
+   const g=await q.query('SELECT authorized FROM mlg_bot.groups WHERE id=$1',[body.group]);if(!g.rows[0]?.authorized)throw Error('Unauthorized group');
+   const settings=await q.query('SELECT resenha_enabled,history_enabled FROM mlg_bot.bot_settings WHERE group_id=$1',[body.group]);const v=settings.rows[0]??{resenha_enabled:true,history_enabled:true};
+   if(!v.resenha_enabled||!v.history_enabled)return {enabled:v.resenha_enabled,entries:[]};
+   const rows=await q.query("SELECT e.id,e.source,e.message_date,e.body FROM mlg_bot.history_entries e JOIN mlg_bot.history_reviews r ON r.entry_id=e.id WHERE r.group_id=$1 AND r.approved AND e.search @@ plainto_tsquery('portuguese',$2) ORDER BY ts_rank(e.search,plainto_tsquery('portuguese',$2)) DESC,e.id LIMIT 3",[body.group,body.query]);
+   return {enabled:true,entries:rows.rows};
   });
  }
  else if(body.action==='event'||body.action==='events'){

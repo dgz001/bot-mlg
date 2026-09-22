@@ -61,6 +61,11 @@ async function connect(){
   if(!enabled('minicamp'))return;
   if(!auth.data.groups.includes(group)||!message.key.participant||text.length>1000)return;
   const aliases=await cupAliases(message.key.participant,current);
+  if(/^!config(?:\s|$)/i.test(text.trim())){
+   await configureCup(group,current);
+   const answer=await cupApi<{text:string|null}>({action:'config',event:{group,aliases,id,name:message.pushName??'ADM',text}});
+   if(answer.text&&socket===current&&enabled())await current.sendMessage(group,{text:answer.text});return;
+  }
   auth.data.cupInbox??=[];
   if(!auth.data.cupInbox.some(e=>e.group===group&&e.id===id&&e.aliases.some(a=>aliases.includes(a)))){
    if(auth.data.cupInbox.length>=100){log('MINICAMP_QUEUE_FULL');return;}
@@ -73,9 +78,19 @@ async function connect(){
  if(!auth.data.groups.includes(group)){log('RESENHA_GROUP_NOT_AUTHORIZED');return;}
  const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
  auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);
- const response=banterReply(group,request);
+ let archive='';
+ if(cupApi){
+  try{
+   await configureCup(group,current);
+   const query=request.replace(/\b(quem|ganha|vence|leva|melhor|pior|bot|contra|versus|vs|x|fala|sobre|resenha|historico|histórico)\b/gi,' ').trim();
+   const context=await cupApi<{enabled:boolean;entries:{body:string;message_date:string;source:string}[]}>({action:'banter-context',group,query:query.slice(0,1000)});
+   if(!context.enabled)return;
+   const entry=context.entries[0];if(entry)archive='\n\n📚 Do arquivo da resenha ('+entry.message_date+'):\n“'+entry.body+'”\n🍿 Lembrança do chat; não é resultado oficial.';
+  }catch{log('HISTORY_LOOKUP_RETRY');return;}
+ }
+ const response=banterReply(group,request)+archive;
  await auth.save();
- if(socket===current&&!stopping&&enabled('resenha')){await current.sendMessage(group,{text:response});log('RESENHA_SENT');}
+ if(socket===current&&!stopping&&auth.data.groups.includes(group)&&enabled('resenha')){await current.sendMessage(group,{text:response});log('RESENHA_SENT');}
  }).catch(()=>fail('MESSAGE_PROCESSING_FAILED'));}
  });
 }
@@ -120,6 +135,17 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  if(typeof req.group!=='string'||!auth.data.groups.includes(req.group))throw Error('Invalid group');
  auth.data.groups=auth.data.groups.filter(g=>g!==req.group);await auth.save();log('GROUP_REVOKED');return {revoked:true};
  }
+ if(['setadmins','history-candidates','history-review'].includes(req.action)){
+ if(!cupApi||!socket||!auth.data.groups.includes(req.group))throw Error('Group unavailable');
+ await configureCup(req.group,socket);
+ if(req.action==='setadmins'){
+  const metadata=await socket.groupMetadata(req.group);
+  if(!Array.isArray(req.admins)||req.admins.length<1||req.admins.length>10||!req.admins.every((id:string)=>metadata.participants.some(p=>p.id===id)))throw Error('Invalid admins');
+  const admins=await Promise.all(req.admins.map((id:string)=>cupAliases(id,socket!)));
+  return cupApi({action:'setadmins',group:req.group,admins});
+ }
+ return cupApi({action:req.action,group:req.group,ids:req.ids,approved:req.approved});
+ }
  if(req.action==='pair'){
  if(auth.state.creds.registered||phase==='CONNECTED'||phase==='STOPPED')throw new Error('Pairing unavailable');
  if(!/^\d{10,15}$/.test(req.phone??''))throw new Error('Invalid phone');
@@ -135,7 +161,10 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  if(req.action==='groups')return {groups:Object.values(await socket.groupFetchAllParticipating()).map(g=>({id:g.id,name:g.subject,authorized:auth.data.groups.includes(g.id)}))};
  if(typeof req.group!=='string'||!req.group.endsWith('@g.us'))throw new Error('Invalid group');
  const group=await socket.groupMetadata(req.group);
- if(req.action==='participants')return {participants:group.participants.map(p=>({id:p.id,phone:p.id}))};
+ if(req.action==='participants')return {participants:await Promise.all(group.participants.map(async p=>{
+ const aliases=await cupAliases(p.id,socket!);const phone=aliases.find(a=>a.endsWith('@s.whatsapp.net'))?.split('@')[0];
+ return {id:p.id,phone:phone?'+'+phone:p.id};
+ }))};
  if(req.action==='authorize'){
  if(!group.participants.some(p=>p.id===req.admin))throw new Error('Invalid participant');
  if(!auth.data.groups.includes(req.group))auth.data.groups.push(req.group);await auth.save();log('GROUP_AUTHORIZED');return {authorized:true};

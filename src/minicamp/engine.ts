@@ -104,7 +104,7 @@ function advance(s: State, cup: Cup, match: Match, at: number): string[] {
         const result = score(m);
         return `${roundName(cup.size / 2 ** m.round)}: ${m.home === cup.champion ? result.home : result.away}x${m.home === cup.champion ? result.away : result.home}`;
       });
-    notices.push(`🏆 MINICAMP — CAMPEÃO 🏆\n${winner.name.toUpperCase()}\n🎮 Clube: ${winner.club}\nCAMPEÃO DA EDIÇÃO!\n\nCAMPANHA:\n${campaign.join('\n')}`);
+    notices.push(`🏆 MINICAMP — CAMPEÃO 🏆\n${winner.name.toUpperCase()}\n🎮 Clube: ${winner.club}\nCAMPEÃO DA EDIÇÃO! 🎉\n🏅 Títulos no grupo: ${Object.values(s.cups).filter(c=>c.groupId===cup.groupId&&c.status==='completed'&&c.champion===cup.champion).length}\n${Object.values(s.cups).filter(c=>c.groupId===cup.groupId&&c.status==='completed'&&c.champion===cup.champion).length===1?'🌟 PRIMEIRO TÍTULO! A história começou — pode soltar o grito!':'👑 Mais uma taça na estante! Hoje a resenha tem dono!'}\n\n📊 CAMPANHA:\n${campaign.join('\n')}`);
   } else {
     requireThat(!cup.matches.some(m => m.round === match.round + 1), 'Rodada já existe.');
     notices.push(addRound(s, cup, current.map(m => m.winner!), match.round + 1));
@@ -135,16 +135,17 @@ export function apply(input: State, event: Event, env: Environment = environment
   const audit = (action: string, cup: Cup, before: string, matchCode?: number) => {
     s.audit.push({ actor: event.userId, groupId: event.groupId, cupId: cup.id, matchCode, at: event.at, action, before, after: JSON.stringify(cup), outcome: 'accepted' });
   };
-  const normalized = event.text.trim().replace(/(\d)\s*[xX×]\s*(\d)/g,'$1x$2').replace(/^!formato\s+(4|8|16)$/i, (_, n) => (({ '4':'1','8':'2','16':'3' } as Record<string,string>)[n]!));
+  const normalized = event.text.trim().replace(/^!forçar\s+resultado/i,'!forcarresultado').replace(/^!forcar\s+resultado/i,'!forcarresultado').replace(/^!cancelar\s+copa$/i,'!cancelarcopa').replace(/(\d)\s*[xX×]\s*(\d)/g,'$1x$2').replace(/^!formato\s+(4|8|16)$/i, (_, n) => (({ '4':'1','8':'2','16':'3' } as Record<string,string>)[n]!));
   const parts = normalized.split(/\s+/);
   const cmd = parts[0]!.toLowerCase();
   let notices: string[] = [];
+  const cheer=['🔥 Chegou pra disputar a taça ou pra render resenha?','🎮 Agora é no controle! A torcida já está de olho.','🍿 Mais um nome na disputa. Vai faltar cadeira nessa arquibancada!','⚽ Tá dentro! O discurso de campeão a gente deixa pra final.','🏆 Vaga garantida. Agora chama aquele rival que fala muito!','📣 A lista está esquentando! Essa Copa promete.'][[...event.id].reduce((n,c)=>n+c.charCodeAt(0),0)%6];
   if (cmd === '!novacopa') {
     needAdmin(); requireThat(!active(), 'Já existe Copa ativa.');
     const draft = s.drafts[event.groupId];
     requireThat(!draft || draft.expiresAt <= event.at, 'Escolha de formato já está em andamento.');
     s.drafts[event.groupId] = { ownerId: event.userId, expiresAt: event.at + 300_000 };
-    notices.push('🏆 MINICAMP\nEscolha:\n1 — Semifinal (4)\n2 — Quartas (8)\n3 — Oitavas (16)');
+    notices.push('🏆🔥 MINICAMP MLG — BORA PRA COPA!\n\n🎮 O campo é no eFootball. A resenha começa aqui!\n\n1️⃣ Semifinal — 4 jogadores\n2️⃣ Quartas — 8 jogadores\n3️⃣ Oitavas — 16 jogadores\n\n👑 ADM, escolha 1, 2 ou 3, ou use !formato 4, 8 ou 16.\n🍿 Quem vai levantar a taça dessa vez?');
   } else if (/^[123]$/.test(cmd)) {
     needAdmin(); const draft = s.drafts[event.groupId];
     requireThat(draft && draft.expiresAt > event.at, 'Escolha de formato expirada. Use !novacopa.');
@@ -158,14 +159,14 @@ export function apply(input: State, event: Event, env: Environment = environment
     const cup: Cup = { id, groupId: event.groupId, createdBy: event.userId, createdAt: event.at, size, status: 'open', participants: [], matches: [] };
     s.cups[id] = cup; delete s.drafts[event.groupId];
     audit('create', cup, 'null');
-    notices.push(`🏆 MINICAMP MLG\nNova Copa criada!\nFormato: ${roundName(size)}\n👥 Vagas: 0/${size}\nInscrições abertas.\nPara participar: !entrar`);
+    notices.push(`🏆 MINICAMP MLG\nNova Copa criada!\nFormato: ${roundName(size)}\n👥 Vagas: 0/${size}\n📣 INSCRIÇÕES ABERTAS!\n🎮 Controle carregado? Coragem em dia?\n👉 Mande !entrar e garanta sua vaga!\n🔥 Chama a rapaziada: lotou, sorteou, começou!`);
   } else if (cmd === '!entrar') {
     const cup = active(); requireThat(cup?.status === 'open', 'Nenhuma Copa com inscrições abertas.');
     requireThat(!cup.participants.some(p => p.userId === event.userId), 'Você já está inscrito nesta Copa.');
     requireThat(cup.participants.length < cup.size, 'Inscrições encerradas.');
     const before = JSON.stringify(cup);
     cup.participants.push({ userId: event.userId, name: cleanName(event.name) });
-    notices.push(`✅ ENTRADA APROVADA\n${cleanName(event.name)} entrou no Minicamp!\n👥 Participantes: ${cup.participants.length}/${cup.size}`);
+    notices.push(`✅ ENTRADA APROVADA\n${cleanName(event.name)} entrou no Minicamp!\n👥 Participantes: ${cup.participants.length}/${cup.size}\n${cheer}`);
     if (cup.participants.length === cup.size) {
       const pool = [...new Set(group.clubs.map(c => c.trim()).filter(Boolean))];
       requireThat(pool.length >= cup.size, 'Não há clubes suficientes no pool.');
@@ -219,13 +220,43 @@ export function apply(input: State, event: Event, env: Environment = environment
       notices.push(...advance(s, cup, match, event.at));
     }
     audit(cmd.slice(1), cup, before, match.code);
+  } else if (cmd === '!forcarresultado') {
+    needAdmin();
+    const {cup,match}=getMatch(parts[1]);
+    requireThat(cup.status!=='cancelled','Copa cancelada não pode ser corrigida.');
+    const corrected=parseScore(parts[2]);
+    requireThat(parts.length>=3,'Formato: !forcarresultado código 4x3 motivo opcional');
+    const winner=corrected.home>corrected.away?match.home:match.away;
+    const before=JSON.stringify(cup);
+    if(match.status==='confirmed'){
+      if(winner!==match.winner){
+        const next=cup.matches.find(m=>m.round===match.round+1&&m.position===Math.floor(match.position/2));
+        requireThat(!next||next.status==='scheduled','Não é possível trocar o classificado: a próxima partida já tem resultado. Resolva a sequência antes.');
+        if(next){if(match.position%2===0)next.home=winner;else next.away=winner;}
+      }
+      match.results.push({...corrected,author:event.userId,at:event.at,status:'confirmed',confirmedBy:event.userId,reason:parts.slice(3).join(' ')||'Correção administrativa explícita'});
+      match.winner=winner;
+      if(match.round===Math.log2(cup.size)-1){cup.champion=winner;cup.completedAt=event.at;}
+      notices.push('🛠️ RESULTADO CORRIGIDO PELO ADM\n'+describe(cup,match)+'\n✅ '+corrected.home+' x '+corrected.away+'\n📊 Estatísticas e títulos passam a refletir esta correção.');
+    }else{
+      match.results.push({...corrected,author:event.userId,at:event.at,status:'confirmed',confirmedBy:event.userId,reason:parts.slice(3).join(' ')||'Resultado imposto por ADM autorizado'});
+      notices.push('🛠️ ADM confirmou o placar por intervenção administrativa.');
+      notices.push(...advance(s,cup,match,event.at));
+    }
+    audit('force-result',cup,before,match.code);
+  } else if (cmd === '!cancelarcopa') {
+    needAdmin();const cup=active();
+    if(cup){const before=JSON.stringify(cup);cup.status='cancelled';cup.cancellationReason='Cancelamento explícito pelo ADM';audit('cancel',cup,before);}
+    else requireThat(s.drafts[event.groupId],'Nenhuma Copa ativa.');
+    delete s.drafts[event.groupId];
+    notices.push('🚫 Copa cancelada pelo ADM. Histórico preservado.\n🏆 Quando a rapaziada estiver pronta, mande !novacopa!');
   } else if (cmd === '!cancelar') {
     needAdmin(); requireThat(parts.slice(1).join(' ').length >= 8, 'Informe um motivo para cancelar.');
     const cup = active(); requireThat(cup, 'Nenhuma Copa ativa.');
     const before = JSON.stringify(cup); cup.status = 'cancelled'; cup.cancellationReason = parts.slice(1).join(' ');
     audit('cancel', cup, before); notices.push('Copa cancelada. Histórico preservado.');
   } else if (cmd === '!ajuda' || cmd === '!minicamp') {
-    notices.push('🏆 MINICAMP MLG\nADM: !novacopa → !formato 4, 8 ou 16\nJogadores: !entrar\nPlacar: !resultado 3x2 (mandante x visitante)\nOutra pessoa autorizada: !confirmar (com código se houver dúvida)\nDiscordou: !contestar código\nADM distinto do proponente: !resolver código 3x2 motivo\nConsultas: !copa, !jogo código, !stats, !ranking, !campeoes, !historico, !minhascopas\n!stats Nome completo consulta alguém; nomes repetidos: cada jogador consulta sua conta com !stats.\nADM: !cancelar motivo\nClubes sorteados valem só para esta Copa.');
+    notices.push('🏆 MINICAMP MLG\nADM: !novacopa → !formato 4, 8 ou 16\nJogadores: !entrar\nPlacar: !resultado 3x2 (mandante x visitante)\nOutra pessoa autorizada: !confirmar (com código se houver dúvida)\nDiscordou: !contestar código\nADM distinto do proponente: !resolver código 3x2 motivo\nConsultas: !copa, !jogo código, !stats, !ranking, !campeoes, !historico, !minhascopas\n!stats Nome completo consulta alguém; nomes repetidos: cada jogador consulta sua conta com !stats.\nADM: !cancelar copa • !forcarresultado código 4x3 • !config\nClubes sorteados valem só para esta Copa.');
   } else if (cmd === '!stats') {
     const cups = Object.values(s.cups).filter(c=>c.groupId===event.groupId&&c.status!=='cancelled');
     const search=parts.slice(1).join(' ').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase();

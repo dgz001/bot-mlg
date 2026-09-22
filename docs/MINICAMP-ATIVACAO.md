@@ -18,7 +18,7 @@ No grupo já autorizado no painel privado:
 Consultas: `!ajuda`, `!copa`, `!jogo 100`, `!stats`, `!stats Nome completo`, `!ranking`, `!campeoes`, `!historico`, `!minhascopas`.
 Cancelamento: `!cancelar motivo detalhado`, com histórico preservado.
 
-Na primeira utilização em um grupo autorizado, os administradores reais do WhatsApp são verificados por metadata e cadastrados como ADMs do Minicamp. Cadastro persiste e não acompanha automaticamente futuras mudanças nos ADMs do WhatsApp. Não usa nomes da lista de técnicos para conceder acesso. JIDs PN/LID são associados por mapeamento autenticado da sessão; conflitos são recusados.
+O dono seleciona explicitamente os ADMs no painel. A lista de administradores do WhatsApp não concede permissões no Minicamp. Não usa nomes da lista de técnicos para conceder acesso. JIDs PN/LID são associados por mapeamento autenticado da sessão; conflitos são recusados.
 
 Os clubes do sorteio vêm da lista configurada no servidor e representam apenas a Copa. Estatísticas e títulos contam exclusivamente partidas confirmadas neste sistema. Não há comando para somar títulos arbitrariamente ou importar títulos a partir dos prints. Nome repetido não une identidades: cada participante consulta sua própria conta com `!stats`.
 
@@ -35,7 +35,7 @@ Os clubes do sorteio vêm da lista configurada no servidor e representam apenas 
 
 ## Limites atuais
 
-Sem integração de IA generativa ou busca completa dos históricos. Resenha continua com banco de frases por tema e palpites explicitamente lúdicos. Sem correção arbitrária de resultado já confirmado; fluxo de contestação ocorre antes do avanço. Backups operacionais adicionais ainda não configurados; não afirmar que uma política de backups foi implementada.
+Sem integração de IA generativa; a busca cobre somente trechos importados e aprovados por grupo. Resenha continua com banco de frases por tema e palpites explicitamente lúdicos. Correções administrativas de resultados seguem as regras de dependência descritas abaixo. Backups operacionais adicionais ainda não configurados; não afirmar que uma política de backups foi implementada.
 
 ## Evidência de validação — 21/09/2026
 
@@ -51,3 +51,17 @@ O painel privado permite ligar/desligar respostas, pausar Resenha e Minicamp sep
 Somente os jogadores do confronto registram `!resultado 4x3` (também aceita espaços em `4 x 3`). Placar sempre mandante x visitante, inclusive se o visitante enviar. O bot anota e aguarda `!confirmar` do adversário ou de ADM diferente do autor. Se houver várias partidas possíveis, pede o código. Formatos explícitos continuam disponíveis. Nomes de jogadores de futebol que marcaram gols não são informados no placar; gols pró/contra são estatísticas do treinador.
 
 O painel opera sem ChatGPT Plus. Alteração de código e deploy continuam via GitHub/Render; não há execução arbitrária de código pelo painel. Os históricos não são consultados integralmente por IA, nem usados para atribuir traços pessoais automaticamente.
+
+
+## Administração explícita e arquivo da resenha
+
+O dono do painel carrega o grupo e participantes, seleciona as contas em “ADMs do Minicamp” e salva. Isso substitui a lista anterior. ADMs do WhatsApp não recebem permissão automaticamente. Grupos antigos também precisam desta seleção explícita. A lista vale por grupo.
+
+- `!forcarresultado 123 4x3 motivo opcional` (ou `!forçar resultado 123 4x3`): somente ADM; grava revisão, motivo e auditoria. Estatísticas usam a última revisão. Se trocar o vencedor afetar próxima partida já informada, recusa; não apaga resultados posteriores.
+- `!cancelar copa`: cancela Copa ativa ou seleção de formato, preservando o histórico.
+- `!config`: consulta configuração. `!config resenha ligar/desligar` e `!config historico ligar/desligar` alteram opções permitidas no banco. Não aceita SQL nem código.
+- “Memória da resenha”: aprovar/rejeitar trechos candidatos por grupo. Só aprovados entram na busca textual do PostgreSQL em chamadas de resenha. Trechos aparecem como citações do arquivo, sem virar estatística ou perfil pessoal. Não é IA generativa.
+- Foram preparados 6.152 candidatos a partir de 56.282 registros das três exportações, após filtros de tamanho, assunto, contatos, links e termos sensíveis. A filtragem não substitui revisão humana. Mídias não foram importadas.
+- Nenhuma memória foi aprovada automaticamente. O dono precisa selecionar os ADMs e revisar os primeiros trechos pelo painel para ativar esses conteúdos.
+
+Validação desta etapa (22/09/2026): 31 testes automatizados passaram e typecheck passou; 4 SQL locais ignorados. No gateway com PostgreSQL real: seleção explícita de ADM, rejeição de configuração por estranho, exclusão de memória não aprovada, recuperação de aprovada e desligamento de busca foram verificados. Copa sintética: correção de semifinal atualizou final ainda sem resultado; correção da final trocou campeão com duas revisões preservadas; alteração que invalidaria final concluída foi bloqueada. Dados sintéticos de grupos, partidas e filas removidos após os testes.

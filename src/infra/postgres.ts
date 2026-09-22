@@ -46,7 +46,7 @@ export async function processEvent(database: Database, event: Event, env: Enviro
     const counter = await q.query<{ next: string }>("SELECT next_code::text AS next FROM mlg_bot.counters WHERE id='match' FOR UPDATE");
     if (!counter.rows[0]) throw new Error('Migration required: missing match counter');
     const state = emptyState(); state.nextCode = Number(counter.rows[0].next);
-    const admins = await q.query<{ id: string }>('SELECT user_id AS id FROM mlg_bot.admins WHERE group_id=$1', [event.groupId]);
+    const admins = await q.query<{ id: string }>('SELECT user_id AS id FROM mlg_bot.admins WHERE group_id=$1 AND EXISTS(SELECT 1 FROM mlg_bot.groups WHERE id=$1 AND admins_configured)', [event.groupId]);
     const clubs = await q.query<{ name: string }>('SELECT name FROM mlg_bot.club_pool WHERE group_id=$1 ORDER BY name', [event.groupId]);
     state.groups[event.groupId] = { authorized: true, admins: admins.rows.map(r => r.id), clubs: clubs.rows.map(r => r.name) };
     const drafts = await q.query<{ ownerId: string; expiresAt: number }>('SELECT owner_id AS "ownerId",expires_at::float8 AS "expiresAt" FROM mlg_bot.command_drafts WHERE group_id=$1', [event.groupId]);
@@ -76,7 +76,7 @@ export async function processEvent(database: Database, event: Event, env: Enviro
       }
       for (const m of cup.matches) {
         await q.query(`INSERT INTO mlg_bot.matches(code,cup_id,round,position,home,away,winner,status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-          ON CONFLICT(code) DO UPDATE SET winner=excluded.winner,status=excluded.status`, [m.code,cup.id,m.round,m.position,m.home,m.away,m.winner ?? null,m.status]);
+          ON CONFLICT(code) DO UPDATE SET winner=excluded.winner,status=excluded.status,home=excluded.home,away=excluded.away`, [m.code,cup.id,m.round,m.position,m.home,m.away,m.winner ?? null,m.status]);
         for (const [index,r] of m.results.entries()) {
           await q.query(`INSERT INTO mlg_bot.match_results(match_code,revision,home,away,author,created_at,status,confirmed_by,disputed_by,reason)
             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(match_code,revision) DO UPDATE SET status=excluded.status,confirmed_by=excluded.confirmed_by,disputed_by=excluded.disputed_by`,
