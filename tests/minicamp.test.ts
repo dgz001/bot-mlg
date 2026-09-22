@@ -159,7 +159,7 @@ test('formato command and statistics follow confirmed matches and preserve histo
  const stats=h.send(champion,'!stats').notices[0]!;
  assert.match(stats,/Títulos: 1/);assert.match(stats,/Vitórias: 2/);assert.match(stats,/Gols pró: 6/);assert.match(stats,/Gols contra: 2/);
  assert.match(h.send('admin',`!stats ${champion}`).notices[0]!,/Títulos: 1/);
- assert.throws(()=>h.send('admin','!titulo qualquer pessoa'),/desconhecido/);
+ assert.throws(()=>h.send('admin','!titulo qualquer pessoa'),/não encontrado/);
 });
 
 test('placar sem código, visitante, confirmação e ambiguidade de ADM', () => {
@@ -319,4 +319,28 @@ test('correção antiga não reordena sequência e anulação não exibe placar 
  h.send('admin',`!deletar ${final.code}`);
  assert.doesNotMatch(h.send(final.home,`!jogo ${final.code}`).notices[0]!,/Placar:/);
  assert.match(h.send(final.home,`!jogo ${final.code}`).notices[0]!,/Sem placar/);
+});
+
+test('titulo consulta conquistas reais, não concede títulos e respeita anulações',()=>{
+ const h=harness();const cup=h.start(4);
+ assert.match(h.send('u0','!titulo').notices[0]!,/Total neste grupo: 0/);
+ while(h.state.cups[cup.id]!.status!=='completed'){
+  const m=h.state.cups[cup.id]!.matches.find(m=>m.status==='scheduled')!;
+  h.send(m.home,`!resultado ${m.code} 2x1`);h.send(m.away,`!confirmar ${m.code}`);
+ }
+ const champion=h.state.cups[cup.id]!.champion!;
+ const before=JSON.stringify(h.state.cups);
+ assert.match(h.send('outsider',`!titulo ${champion}`).notices[0]!,/Total neste grupo: 1/);
+ assert.equal(JSON.stringify(h.state.cups),before);
+ h.restart();assert.match(h.send(champion,'!título').notices[0]!,/Total neste grupo: 1/);
+ assert.throws(()=>h.send('u0','!titulo desconhecido'),/não encontrado/);
+ h.send('admin',`!anularcopa ${cup.id}`);
+ assert.match(h.send(champion,'!titulo').notices[0]!,/Total neste grupo: 0/);
+});
+
+test('titulo distingue homônimos e aceita acentos no nome',()=>{
+ const h=harness();const cup=h.start(4);
+ h.state.cups[cup.id]!.participants[0]!.name='André Silva';h.state.cups[cup.id]!.participants[1]!.name='André Souza';
+ assert.throws(()=>h.send('u0','!titulo Andre'),/mais de uma/);
+ assert.match(h.send('u0','!titulo ANDRE SILVA').notices[0]!,/André Silva/);
 });
