@@ -70,8 +70,8 @@ Validação desta etapa (22/09/2026): 31 testes automatizados passaram e typeche
 ## Menu e retrospectos
 
 Qualquer participante de grupo autorizado usa `!comandos`. Com o bot ligado, o menu funciona mesmo que o módulo Minicamp esteja pausado.
-- `!confronto Arthur x Lucas`: retrospecto por nomes registrados nas Copas do grupo. Primeiro nome só é aceito quando não houver ambiguidade. Duas marcações @ são resolvidas pelos identificadores autenticados do WhatsApp.
-- `!palpite Arthur x Lucas`: brincadeira baseada na lista de técnicos, sem alterar resultados.
+- `!confronto jogador A x jogador B`: retrospecto por nomes registrados nas Copas do grupo. Primeiro nome só é aceito quando não houver ambiguidade. Duas marcações @ são resolvidas pelos identificadores autenticados do WhatsApp.
+- `!palpite jogador A x jogador B`: brincadeira baseada na lista de técnicos, sem alterar resultados.
 - `!tecnicos`: mostra nomes e clubes da lista de técnicos para facilitar os palpites.
 - Retrospecto usa somente última revisão de cada jogo confirmado; exclui Copas canceladas. Não infere vitórias a partir dos backups.
 

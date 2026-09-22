@@ -231,3 +231,39 @@ test('lista aprovada de 28 clubes é usada no sorteio e preservada no restart',a
   const assignments=JSON.stringify(c.participants);h.restart();assert.equal(JSON.stringify(h.state.cups[c.id]!.participants),assignments);
  }
 });
+
+test('mensagens variam sem spam, sobrevivem a restart e final distingue campeão de vice', () => {
+  const cheers = new Set<string>();
+  const titles = new Set<string>();
+  for (let offset = 0; offset < 8; offset++) {
+    const h = harness(); h.state.nextCode += offset;
+    const cup = h.start(4);
+    for (const match of cup.matches) {
+      h.send(match.home, `!resultado ${match.code} 2x1`);
+      const event = { id: `confirm-${match.code}`, groupId: 'g', userId: match.away, name: match.away, text: `!confirmar ${match.code}`, at: 9999 };
+      const expected = apply(h.state, event);
+      assert.deepEqual(apply(JSON.parse(JSON.stringify(h.state)), event).notices, expected.notices);
+      const reply = h.send(match.away, event.text);
+      assert.ok(reply.notices.length <= 2);
+      cheers.add(reply.notices[0]!.split('\n')[4]!);
+    }
+    const final = h.state.cups[cup.id]!.matches.at(-1)!;
+    h.send(final.home, `!resultado ${final.code} 4x3`);
+    const reply = h.send(final.away, `!confirmar ${final.code}`);
+    assert.equal(reply.notices.length, 2);
+    assert.match(reply.notices[0]!, /é campeão/);
+    assert.match(reply.notices[0]!, /fica com o vice/);
+    assert.doesNotMatch(reply.notices[0]!, /classificado|eliminado/);
+    assert.match(reply.notices[1]!, /Títulos no grupo: 1/);
+    titles.add(reply.notices[1]!.split('\n')[4]!);
+  }
+  assert.equal(cheers.size, 8);
+  assert.equal(titles.size, 8);
+});
+
+test('menu usa exemplos genéricos sem nomes da comunidade', () => {
+  const h = harness();
+  const menu = h.send('u0', '!comandos').notices.join('\n');
+  assert.doesNotMatch(menu, /Arthur|Lucas|Lukas/);
+  assert.match(menu, /jogador A x jogador B/);
+});

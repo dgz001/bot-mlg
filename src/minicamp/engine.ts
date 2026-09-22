@@ -3,7 +3,7 @@ import { randomInt, randomUUID } from 'node:crypto';
 // Pure domain boundary. The production adapter MUST resolve identities, load
 // permissions and commit state + inbox + audit + outbox in one DB transaction.
 // This module does not provide a database, transport or operational durability.
-export const commandMenu='📋🎮 COMANDOS MLG\n\n😂 RESENHA\n!bot mensagem — entra na conversa\n!palpite Arthur x Lucas — palpite de brincadeira\n!tecnicos — nomes e clubes para os palpites\n\n⚔️ RETROSPECTO REAL\n!confronto Arthur x Lucas\nOu marque as duas contas: !confronto @Arthur x @Lucas\n!stats — seus números\n!stats Nome completo — outro participante\n!ranking • !campeoes • !historico • !minhascopas\n\n🏆 MINICAMP\n!clubes — os 28 clubes disponíveis para sorteio\n!entrar — inscrição\n!copa — chaveamento\n!jogo código — partida\n!resultado 4x3 — mandante x visitante\n!confirmar • !contestar — confronto único\nSe houver dúvida, acrescente o código da partida.\n\n🔐 SOMENTE ADMs SELECIONADOS NO PAINEL\n!novacopa → !formato 4, 8 ou 16\n!cancelar copa\n!forcarresultado código 4x3 motivo\n!resolver código 4x3 motivo\n!config\n\n📊 Retrospectos usam partidas confirmadas neste bot. Palpites não alteram resultados.';
+export const commandMenu='📋🎮 COMANDOS MLG\n\n😂 RESENHA\n!bot mensagem — entra na conversa\n!palpite jogador A x jogador B — palpite de brincadeira\n!tecnicos — nomes e clubes para os palpites\n\n⚔️ RETROSPECTO REAL\n!confronto jogador A x jogador B\nOu marque as duas contas: !confronto @jogador1 x @jogador2\n!stats — seus números\n!stats Nome completo — outro participante\n!ranking • !campeoes • !historico • !minhascopas\n\n🏆 MINICAMP\n!clubes — os 28 clubes disponíveis para sorteio\n!entrar — inscrição\n!copa — chaveamento\n!jogo código — partida\n!resultado 4x3 — mandante x visitante\n!confirmar • !contestar — confronto único\nSe houver dúvida, acrescente o código da partida.\n\n🔐 SOMENTE ADMs SELECIONADOS NO PAINEL\n!novacopa → !formato 4, 8 ou 16\n!cancelar copa\n!forcarresultado código 4x3 motivo\n!resolver código 4x3 motivo\n!config\n\n📊 Retrospectos usam partidas confirmadas neste bot. Palpites não alteram resultados.';
 export type Participant = { userId: string; name: string; club?: string };
 export type Result = {
   home: number; away: number; author: string; at: number;
@@ -88,13 +88,45 @@ function addRound(s: State, cup: Cup, ids: string[], round: number): string {
   output.push('🎮 Mandante aparece primeiro em cada confronto.\n🤝 Combinem a sala e bora pro eFootball! Boa sorte aos dois lados!\n📝 Depois do jogo: !resultado 4x3 (mandante x visitante).\n✅ O adversário ou ADM confirma com !confirmar.\n🍿 Joguem bonito que a resenha fica por nossa conta!');
   return output.join('\n\n');
 }
+// Stable choices survive retries/restarts without changing sporting decisions.
+const classifiedCheers = [
+  '🔥 Passagem carimbada! O próximo desafio já está no radar.',
+  '🎮 Segue vivo na briga pela taça. Respira e prepara o controle!',
+  '🚀 Mais um passo! A torcida já pode marcar presença na próxima fase.',
+  '🍿 Continua no campeonato e no assunto do grupo!',
+  '⚽ A caminhada segue. Guarda um pouco desse futebol pra próxima!',
+  '📣 Pode comemorar! Depois tem mais disputa pela frente.',
+  '🏆 A taça ficou um pouquinho mais perto!',
+  '😎 Classificação no bolso. Agora é foco no próximo jogo!',
+];
+const eliminatedCheers = [
+  '🤝 Valeu pela disputa! Na próxima Copa tem revanche.',
+  '💪 Hoje acabou a caminhada, mas a próxima inscrição já merece teu nome!',
+  '🍿 Agora é arquibancada e resenha. Volta pra buscar a taça na próxima!',
+  '🎮 Guarda o controle com carinho: ainda tem muita Copa pela frente!',
+  '⚽ Cabeça erguida! Obrigado por fazer parte dessa edição.',
+  '🔥 A próxima chance começa com outro !entrar. Te esperamos!',
+  '👏 Valeu pelo jogo! A comunidade ganha com a participação de todo mundo.',
+  '😄 A taça escapou dessa vez. A vaga na resenha continua garantida!',
+];
+const championCheers = [
+  '🎉 Solta o grito! Essa edição tem dono e a festa está liberada!',
+  '👑 Pode levantar a taça! Hoje o destaque do grupo é você!',
+  '🏆 Fecha a edição com chave de ouro! Parabéns pela conquista!',
+  '📣 A arquibancada pode fazer barulho: temos campeão!',
+  '🔥 Do primeiro jogo até a taça. Que final de caminhada!',
+  '🥳 Pode comemorar com a rapaziada! O título já está no histórico.',
+  '😎 Controle na mão, taça na estante. Parabéns, campeão!',
+  '🎊 A Copa terminou e a celebração começou. Aproveita esse título!',
+];
 function advance(s: State, cup: Cup, match: Match, at: number): string[] {
   const r = score(match);
   match.winner = r.home > r.away ? match.home : match.away;
   match.status = 'confirmed';
   const winner = player(cup, match.winner);
   const loser = player(cup, match.winner === match.home ? match.away : match.home);
-  const notices = [`✅ RESULTADO CONFIRMADO\n#${match.code}\n${player(cup, match.home).name} ${r.home} x ${r.away} ${player(cup, match.away).name}\n🏆 ${winner.name} está classificado!\n${loser.name} está eliminado.`];
+  const isFinal = cup.size / 2 ** match.round === 2;
+  const notices = [`✅ RESULTADO CONFIRMADO\n#${match.code}\n${player(cup, match.home).name} ${r.home} x ${r.away} ${player(cup, match.away).name}\n${isFinal ? `🏆 ${winner.name} é campeão!\n🥈 ${loser.name} fica com o vice. Valeu pela disputa até a final!` : `🏆 ${winner.name} está classificado!\n${classifiedCheers[match.code % classifiedCheers.length]}\n\n${loser.name} está eliminado.\n${eliminatedCheers[match.code % eliminatedCheers.length]}`}`];
   const current = cup.matches.filter(m => m.round === match.round).sort((a, b) => a.position - b.position);
   if (!current.every(m => m.status === 'confirmed')) return notices;
   if (current.length === 1) {
@@ -106,7 +138,7 @@ function advance(s: State, cup: Cup, match: Match, at: number): string[] {
         const result = score(m);
         return `${roundName(cup.size / 2 ** m.round)}: ${m.home === cup.champion ? result.home : result.away}x${m.home === cup.champion ? result.away : result.home}`;
       });
-    notices.push(`🏆 MINICAMP — CAMPEÃO 🏆\n${winner.name.toUpperCase()}\n🎮 Clube: ${winner.club}\nCAMPEÃO DA EDIÇÃO! 🎉\n🏅 Títulos no grupo: ${Object.values(s.cups).filter(c=>c.groupId===cup.groupId&&c.status==='completed'&&c.champion===cup.champion).length}\n${Object.values(s.cups).filter(c=>c.groupId===cup.groupId&&c.status==='completed'&&c.champion===cup.champion).length===1?'🌟 PRIMEIRO TÍTULO! A história começou — pode soltar o grito!':'👑 Mais uma taça na estante! Hoje a resenha tem dono!'}\n\n📊 CAMPANHA:\n${campaign.join('\n')}`);
+    notices.push(`🏆 MINICAMP — CAMPEÃO 🏆\n${winner.name.toUpperCase()}\n🎮 Clube: ${winner.club}\nCAMPEÃO DA EDIÇÃO! 🎉\n${championCheers[match.code % championCheers.length]}\n🏅 Títulos no grupo: ${Object.values(s.cups).filter(c=>c.groupId===cup.groupId&&c.status==='completed'&&c.champion===cup.champion).length}\n${Object.values(s.cups).filter(c=>c.groupId===cup.groupId&&c.status==='completed'&&c.champion===cup.champion).length===1?'🌟 PRIMEIRO TÍTULO! A história começou — pode soltar o grito!':'👑 Mais uma taça na estante! Hoje a resenha tem dono!'}\n\n📊 CAMPANHA:\n${campaign.join('\n')}`);
   } else {
     requireThat(!cup.matches.some(m => m.round === match.round + 1), 'Rodada já existe.');
     notices.push(addRound(s, cup, current.map(m => m.winner!), match.round + 1));
