@@ -344,3 +344,18 @@ test('titulo distingue homônimos e aceita acentos no nome',()=>{
  assert.throws(()=>h.send('u0','!titulo Andre'),/mais de uma/);
  assert.match(h.send('u0','!titulo ANDRE SILVA').notices[0]!,/André Silva/);
 });
+
+test('teste é diagnóstico sem mutação de Copa e não declara banco verificado no domínio',()=>{
+ const h=harness();
+ const empty=h.send('admin','!teste').notices[0]!;
+ assert.match(empty,/Nenhuma Copa ativa/);assert.doesNotMatch(empty,/PostgreSQL:/);
+ const cup=h.start(4);const before=JSON.stringify(h.state.cups);
+ const reply=h.send('u0','!teste','diagnostic');
+ assert.match(reply.notices[0]!,/Copa em andamento/);
+ assert.equal(JSON.stringify(h.state.cups),before);
+ assert.deepEqual(h.send('u0','!teste','diagnostic').notices,[]);
+ h.state.groups.g!.clubs=['Clube'];h.state.groups.g!.admins=[];
+ const warning=h.send('u0','!teste').notices[0]!;
+ assert.match(warning,/⚠️ ADMs cadastrados: 0/);assert.match(warning,/⚠️ Clubes distintos: 1/);
+ assert.equal(h.state.cups[cup.id]!.status,'playing');
+});

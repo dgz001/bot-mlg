@@ -33,6 +33,7 @@ export function pgDatabase(pool: Pool): Database {
 // All identifiers here are canonical IDs resolved by a trusted WhatsApp adapter.
 // The authenticated DB role is private backend-only, never available to members.
 export async function processEvent(database: Database, event: Event, env: Environment = environment): Promise<{ duplicate: boolean; notices: string[] }> {
+  const startedAt=Date.now();
   return database.transaction(async q => {
     const groups = await q.query<{ id: string; authorized: boolean }>('SELECT id,authorized FROM mlg_bot.groups WHERE id=$1 FOR UPDATE', [event.groupId]);
     if (!groups.rows[0]?.authorized) throw new Error('Grupo não autorizado.');
@@ -97,6 +98,11 @@ export async function processEvent(database: Database, event: Event, env: Enviro
     for (const a of output.state.audit) {
       await q.query(`INSERT INTO mlg_bot.audit_logs(actor,group_id,cup_id,match_code,occurred_at,action,before_state,after_state,outcome)
         VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9)`,[a.actor,a.groupId,a.cupId,a.matchCode ?? null,a.at,a.action,a.before,a.after,a.outcome]);
+    }
+    if(event.text.trim().toLowerCase()==='!teste'){
+      const check=await q.query<{message_id:string}>('SELECT message_id FROM mlg_bot.processed_messages WHERE group_id=$1 AND user_id=$2 AND message_id=$3',[event.groupId,event.userId,event.id]);
+      if(check.rows.length!==1)throw new Error('Database diagnostic failed');
+      output.notices[0]+=`\n✅ PostgreSQL: leitura e gravação do diagnóstico verificadas.\n⏱️ Processamento no banco: ${Math.max(0,Date.now()-startedAt)} ms (não é o tempo total do WhatsApp).\n📨 Se você está lendo esta resposta, o caminho de ida e volta funcionou neste momento. Isso não garante disponibilidade futura.\nSe o bot parar de responder, consulte o painel; ausência de resposta não significa teste aprovado.`;
     }
     for (const [ordinal,body] of output.notices.entries()) {
       await q.query('INSERT INTO mlg_bot.outbox(group_id,user_id,message_id,ordinal,body) VALUES($1,$2,$3,$4,$5)',[event.groupId,event.userId,event.id,ordinal,body]);
