@@ -99,7 +99,7 @@ export async function processEvent(database: Database, event: Event, env: Enviro
       await q.query(`INSERT INTO mlg_bot.audit_logs(actor,group_id,cup_id,match_code,occurred_at,action,before_state,after_state,outcome)
         VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9)`,[a.actor,a.groupId,a.cupId,a.matchCode ?? null,a.at,a.action,a.before,a.after,a.outcome]);
     }
-    if(event.text.trim().toLowerCase()==='!teste'){
+    if(event.text.trim().toLowerCase()==='!supabase'){
       const check=await q.query<{message_id:string}>('SELECT message_id FROM mlg_bot.processed_messages WHERE group_id=$1 AND user_id=$2 AND message_id=$3',[event.groupId,event.userId,event.id]);
       if(check.rows.length!==1)throw new Error('Database diagnostic failed');
       output.notices[0]+=`\n✅ PostgreSQL: leitura e gravação do diagnóstico verificadas.\n⏱️ Processamento no banco: ${Math.max(0,Date.now()-startedAt)} ms (não é o tempo total do WhatsApp).\n📨 Se você está lendo esta resposta, o caminho de ida e volta funcionou neste momento. Isso não garante disponibilidade futura.\nSe o bot parar de responder, consulte o painel; ausência de resposta não significa teste aprovado.`;

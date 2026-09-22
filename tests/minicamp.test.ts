@@ -220,9 +220,9 @@ test('sorteio preserva pool e retrospecto rejeita homônimos',()=>{
  assert.throws(()=>h.send('visitante',`!confrontoids ${a} ${b}`,'another','other'),/registrado/);
 });
 
-test('lista ampliada de 31 clubes é usada no sorteio e preservada no restart',async()=>{
+test('lista ampliada de 133 clubes é usada no sorteio e preservada no restart',async()=>{
  const {minicampClubs}=await import('../src/minicamp/clubs.ts');
- assert.equal(minicampClubs.length,31);assert.equal(new Set(minicampClubs).size,31);
+ assert.equal(minicampClubs.length,133);assert.equal(new Set(minicampClubs).size,133);
  for(const size of [4,8,16]){
   const h=harness();h.state.groups.g!.clubs=[...minicampClubs];
   assert.match(h.send('visitante','!clubes').notices[0]!,/Náutico/);
@@ -359,3 +359,12 @@ test('teste é diagnóstico sem mutação de Copa e não declara banco verificad
  assert.match(warning,/⚠️ ADMs cadastrados: 0/);assert.match(warning,/⚠️ Clubes distintos: 1/);
  assert.equal(h.state.cups[cup.id]!.status,'playing');
 });
+
+ test('supabase não muda Copa, valida sintaxe e só adaptador pode atestar banco',()=>{
+ const h=harness(); const cup=h.start(4);const before=JSON.stringify(cup);
+ const reply=h.send('u0','!supabase','db-check').notices[0]!;
+ assert.match(reply,/DIAGNÓSTICO SUPABASE/);assert.doesNotMatch(reply,/gravação.*verificadas/);
+ assert.equal(JSON.stringify(h.state.cups[cup.id]),before);
+ assert.deepEqual(h.send('u0','!supabase','db-check').notices,[]);
+ assert.throws(()=>h.send('u0','!supabase extra'),/Formato/);
+ });

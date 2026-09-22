@@ -3,7 +3,7 @@ import { randomInt, randomUUID } from 'node:crypto';
 // Pure domain boundary. The production adapter MUST resolve identities, load
 // permissions and commit state + inbox + audit + outbox in one DB transaction.
 // This module does not provide a database, transport or operational durability.
-export const commandMenu='📋🎮 COMANDOS MLG\n\n😂 RESENHA\n!bot mensagem — entra na conversa\n!palpite jogador A x jogador B — palpite de brincadeira\n!tecnicos — nomes e clubes para os palpites\n\n⚔️ RETROSPECTO REAL\n!confronto jogador A x jogador B\nOu marque as duas contas: !confronto @jogador1 x @jogador2\n!titulo nome — títulos e conquistas; sem nome, consulta sua conta\n!stats — seus números\n!stats Nome completo — outro participante\n!ranking • !campeoes • !historico • !minhascopas\n\n🏆 MINICAMP\n!teste — verifica banco, configuração e situação da Copa\n!clubes — os clubes disponíveis para sorteio\n!entrar — inscrição\n!sair — libera vaga; após sorteio, propõe W.O. 3x0 para confirmação\n!copa — chaveamento\n!jogo código — partida\n!resultado 4x3 — mandante x visitante\n!confirmar 4x3 • !contestar — confronto único\nSe houver dúvida, acrescente o código da partida.\n\n🔐 SOMENTE ADMs SELECIONADOS NO PAINEL\n!novacopa → !formato 4, 8 ou 16\n!cancelar copa\n!forcarresultado código 4x3 motivo\n!resolver código 4x3 motivo\n!deletar código — anular resultado sem fase posterior\n!deletar título código-da-final — retirar título e reabrir final\n!anularcopa ID-da-Copa — retirar todos os dados de teste das estatísticas\n!config\n\n📊 Retrospectos usam partidas confirmadas neste bot. Palpites não alteram resultados.';
+export const commandMenu='📋🎮 COMANDOS MLG\n\n😂 RESENHA\n!bot mensagem — entra na conversa\n!palpite jogador A x jogador B — palpite de brincadeira\n!tecnicos — nomes e clubes para os palpites\n\n⚔️ RETROSPECTO REAL\n!confronto jogador A x jogador B\nOu marque as duas contas: !confronto @jogador1 x @jogador2\n!titulo nome — títulos e conquistas; sem nome, consulta sua conta\n!stats — seus números\n!stats Nome completo — outro participante\n!ranking • !campeoes • !historico • !minhascopas\n\n🏆 MINICAMP\n!teste — configuração e situação da Copa\n!supabase — comunicação e leitura/gravação no banco\n!clubes — os clubes disponíveis para sorteio\n!entrar — inscrição\n!sair — libera vaga; após sorteio, propõe W.O. 3x0 para confirmação\n!copa — chaveamento\n!jogo código — partida\n!resultado 4x3 — mandante x visitante\n!confirmar 4x3 • !contestar — confronto único\nSe houver dúvida, acrescente o código da partida.\n\n🔐 SOMENTE ADMs SELECIONADOS NO PAINEL\n!novacopa → !formato 4, 8 ou 16\n!cancelar copa\n!forcarresultado código 4x3 motivo\n!resolver código 4x3 motivo\n!deletar código — anular resultado sem fase posterior\n!deletar título código-da-final — retirar título e reabrir final\n!anularcopa ID-da-Copa — retirar todos os dados de teste das estatísticas\n!config\n\n📊 Retrospectos usam partidas confirmadas neste bot. Palpites não alteram resultados.';
 export type Participant = { userId: string; name: string; club?: string };
 export type Result = {
   home: number; away: number; author: string; at: number;
@@ -174,7 +174,10 @@ export function apply(input: State, event: Event, env: Environment = environment
   const cmd = parts[0]!.toLowerCase();
   let notices: string[] = [];
   const cheer=['🔥 Chegou pra disputar a taça ou pra render resenha?','🎮 Agora é no controle! A torcida já está de olho.','🍿 Mais um nome na disputa. Vai faltar cadeira nessa arquibancada!','⚽ Tá dentro! O discurso de campeão a gente deixa pra final.','🏆 Vaga garantida. Agora chama aquele rival que fala muito!','📣 A lista está esquentando! Essa Copa promete.'][[...event.id].reduce((n,c)=>n+c.charCodeAt(0),0)%6];
-  if(cmd==='!teste'){
+  if(cmd==='!supabase'){
+    requireThat(parts.length===1,'Formato: !supabase');
+    notices.push('🗄️ DIAGNÓSTICO SUPABASE\n✅ Comando reconhecido em grupo autorizado.');
+  } else if(cmd==='!teste'){
     requireThat(parts.length===1,'Formato: !teste');
     const count=new Set(group.clubs.map(c=>c.trim()).filter(Boolean)).size;
     const cup=active();

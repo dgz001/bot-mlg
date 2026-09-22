@@ -45,7 +45,7 @@ Deno.serve(async req=>{
  const body=JSON.parse(raw);let result={};
  if(body.action==='health'){await db.transaction(q=>q.query('SELECT 1'));result={database:true};}
  else if(body.action==='configure'){
-  if(!groupId.test(body.group)||!Array.isArray(body.admins)||body.admins.length<1||body.admins.length>100||!body.admins.every(validAliases)||!Array.isArray(body.clubs)||body.clubs.length<16||body.clubs.length>100||body.clubs.some(c=>typeof c!=='string'||c.length<2||c.length>60)||new Set(body.clubs).size!==body.clubs.length)throw Error('Invalid configuration');
+  if(!groupId.test(body.group)||!Array.isArray(body.admins)||body.admins.length<1||body.admins.length>100||!body.admins.every(validAliases)||!Array.isArray(body.clubs)||body.clubs.length<16||body.clubs.length>256||body.clubs.some(c=>typeof c!=='string'||c.length<2||c.length>60)||new Set(body.clubs).size!==body.clubs.length)throw Error('Invalid configuration');
   result=await db.transaction(async q=>{
    await q.query('SELECT pg_advisory_xact_lock(71012027)');
    const inserted=await q.query('INSERT INTO mlg_bot.groups(id,authorized) VALUES($1,true) ON CONFLICT DO NOTHING RETURNING id',[body.group]);
