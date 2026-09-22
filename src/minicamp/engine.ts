@@ -3,7 +3,7 @@ import { randomInt, randomUUID } from 'node:crypto';
 // Pure domain boundary. The production adapter MUST resolve identities, load
 // permissions and commit state + inbox + audit + outbox in one DB transaction.
 // This module does not provide a database, transport or operational durability.
-export const commandMenu='📋🎮 COMANDOS MLG\n\n😂 RESENHA\n!bot mensagem — entra na conversa\n!palpite jogador A x jogador B — palpite de brincadeira\n!tecnicos — nomes e clubes para os palpites\n\n⚔️ RETROSPECTO REAL\n!confronto jogador A x jogador B\nOu marque as duas contas: !confronto @jogador1 x @jogador2\n!stats — seus números\n!stats Nome completo — outro participante\n!ranking • !campeoes • !historico • !minhascopas\n\n🏆 MINICAMP\n!clubes — os 28 clubes disponíveis para sorteio\n!entrar — inscrição\n!copa — chaveamento\n!jogo código — partida\n!resultado 4x3 — mandante x visitante\n!confirmar 4x3 • !contestar — confronto único\nSe houver dúvida, acrescente o código da partida.\n\n🔐 SOMENTE ADMs SELECIONADOS NO PAINEL\n!novacopa → !formato 4, 8 ou 16\n!cancelar copa\n!forcarresultado código 4x3 motivo\n!resolver código 4x3 motivo\n!deletar código — anular resultado sem fase posterior\n!deletar título código-da-final — retirar título e reabrir final\n!anularcopa ID-da-Copa — retirar todos os dados de teste das estatísticas\n!config\n\n📊 Retrospectos usam partidas confirmadas neste bot. Palpites não alteram resultados.';
+export const commandMenu='📋🎮 COMANDOS MLG\n\n😂 RESENHA\n!bot mensagem — entra na conversa\n!palpite jogador A x jogador B — palpite de brincadeira\n!tecnicos — nomes e clubes para os palpites\n\n⚔️ RETROSPECTO REAL\n!confronto jogador A x jogador B\nOu marque as duas contas: !confronto @jogador1 x @jogador2\n!stats — seus números\n!stats Nome completo — outro participante\n!ranking • !campeoes • !historico • !minhascopas\n\n🏆 MINICAMP\n!clubes — os 28 clubes disponíveis para sorteio\n!entrar — inscrição\n!sair — libera vaga; após sorteio, propõe W.O. 3x0 para confirmação\n!copa — chaveamento\n!jogo código — partida\n!resultado 4x3 — mandante x visitante\n!confirmar 4x3 • !contestar — confronto único\nSe houver dúvida, acrescente o código da partida.\n\n🔐 SOMENTE ADMs SELECIONADOS NO PAINEL\n!novacopa → !formato 4, 8 ou 16\n!cancelar copa\n!forcarresultado código 4x3 motivo\n!resolver código 4x3 motivo\n!deletar código — anular resultado sem fase posterior\n!deletar título código-da-final — retirar título e reabrir final\n!anularcopa ID-da-Copa — retirar todos os dados de teste das estatísticas\n!config\n\n📊 Retrospectos usam partidas confirmadas neste bot. Palpites não alteram resultados.';
 export type Participant = { userId: string; name: string; club?: string };
 export type Result = {
   home: number; away: number; author: string; at: number;
@@ -239,6 +239,23 @@ export function apply(input: State, event: Event, env: Environment = environment
       notices.push(addRound(s, cup, ids, 0));
     }
     audit('join', cup, before);
+  } else if (cmd === '!sair') {
+    requireThat(parts.length===1,'Use !sair sem argumentos.');
+    const cup=active();requireThat(cup,'Nenhuma Copa ativa.');
+    requireThat(cup.participants.some(p=>p.userId===event.userId),'Você não está inscrito nesta Copa.');
+    const before=JSON.stringify(cup);
+    if(cup.status==='open'){
+      cup.participants=cup.participants.filter(p=>p.userId!==event.userId);
+      notices.push(`👋 Inscrição retirada! Vaga liberada.\n👥 ${cup.participants.length}/${cup.size} inscritos.\nSe mudar de ideia antes do sorteio, use !entrar.`);
+    }else{
+      const games=cup.matches.filter(m=>[m.home,m.away].includes(event.userId)&&m.status!=='confirmed');
+      requireThat(games.length===1,'Você não tem partida aberta; aguarde a próxima fase ou consulte !copa.');
+      const match=games[0]!;requireThat(match.status==='scheduled','Já existe resultado ou contestação. Peça ao ADM para resolver antes de sair.');
+      const home=match.home===event.userId?0:3,away=match.away===event.userId?0:3;
+      match.results.push({home,away,author:event.userId,at:event.at,status:'pending',reason:'Desistência voluntária: proposta de W.O. 3x0'});match.status='pending';
+      notices.push(`🏳️ DESISTÊNCIA REGISTRADA\n${describe(cup,match)}\nW.O. proposto: ${home}x${away} (mandante x visitante).\nAdversário ou ADM: !confirmar ${home}x${away}\nAinda não houve classificação. O W.O. confirmado conta como 3x0 nas estatísticas.`);
+    }
+    audit('withdraw',cup,before);
   } else if (['!resultado', '!confirmar', '!contestar', '!resolver'].includes(cmd)) {
     const confirmationScore=cmd==='!confirmar'&&parts.length===2&&/^\d+x\d+$/i.test(parts[1]!);
     const shorthand=confirmationScore||(cmd==='!resultado'&&parts.length===2&&/^\d+x\d+$/.test(parts[1]!))||(['!confirmar','!contestar'].includes(cmd)&&parts.length===1);

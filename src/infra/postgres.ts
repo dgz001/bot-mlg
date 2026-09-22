@@ -70,6 +70,11 @@ export async function processEvent(database: Database, event: Event, env: Enviro
       await q.query(`INSERT INTO mlg_bot.cups(id,group_id,created_by,created_at,size,status,champion,completed_at,cancellation_reason)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(id) DO UPDATE SET status=excluded.status,champion=excluded.champion,completed_at=excluded.completed_at,cancellation_reason=excluded.cancellation_reason`,
       [cup.id,cup.groupId,cup.createdBy,cup.createdAt,cup.size,cup.status,cup.champion ?? null,cup.completedAt ?? null,cup.cancellationReason ?? null]);
+      // Withdrawal is allowed only before the draw, so no match references exist.
+      if(cup.status==='open'){
+        await q.query('DELETE FROM mlg_bot.cup_participants WHERE cup_id=$1',[cup.id]);
+        // Reinsert in current order; there are no matches or champion references yet.
+      }
       for (const [position,p] of cup.participants.entries()) {
         await q.query(`INSERT INTO mlg_bot.cup_participants(cup_id,user_id,display_name,position,club) VALUES ($1,$2,$3,$4,$5)
           ON CONFLICT(cup_id,user_id) DO UPDATE SET club=excluded.club`, [cup.id,p.userId,p.name,position,p.club ?? null]);

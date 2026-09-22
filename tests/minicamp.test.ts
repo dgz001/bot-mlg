@@ -290,3 +290,17 @@ test('confirmação por placar, anulação e limpeza de Copa preservam estatíst
  assert.match(h.send(final.away,'!campeoes').notices[0]!,/Nenhum registro/);
  assert.throws(()=>h.send('admin',`!anularcopa ${cup.id}`),/já anulada/);
 });
+
+test('sair libera vaga antes do sorteio e propõe WO confirmado por outra pessoa depois',()=>{
+ const h=harness();h.send('admin','!novacopa');h.send('admin','1');
+ h.send('u0','!entrar');h.send('u1','!entrar');h.send('u0','!sair');h.restart();
+ assert.equal(Object.values(h.state.cups)[0]!.participants.length,1);
+ h.send('u0','!entrar');h.send('u2','!entrar');h.send('u3','!entrar');
+ const cup=Object.values(h.state.cups)[0]!;const m=cup.matches[0]!;
+ h.send(m.home,'!sair','withdraw');assert.deepEqual(h.send(m.home,'!sair','withdraw').notices,[]);
+ assert.equal(h.state.cups[cup.id]!.matches[0]!.winner,undefined);
+ assert.throws(()=>h.send(m.home,'!confirmar 0x3'),/próprio/);
+ h.restart();h.send(m.away,'!confirmar 0x3');
+ assert.equal(h.state.cups[cup.id]!.matches[0]!.winner,m.away);
+ assert.throws(()=>h.send(m.home,'!sair'),/não tem partida/);
+});
