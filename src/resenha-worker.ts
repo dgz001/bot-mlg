@@ -1,3 +1,4 @@
+import {commandMenu} from './minicamp/engine.ts';
 import {moduleEnabled,parseControls} from './infra/bot-controls.ts';
 import {minicampClient,minicampCommand,type PendingCupEvent} from './minicamp/client.ts';
 import {loadRoster} from './resenha/matchup.ts';
@@ -57,6 +58,11 @@ async function connect(){
  const self=[current.user?.id,current.user?.lid].filter(Boolean).map(v=>jidNormalizedUser(v!));
  const mention=context?.mentionedJid?.some(j=>self.includes(jidNormalizedUser(j)));
  const reply=context?.participant&&self.includes(jidNormalizedUser(context.participant));
+ if(/^!comandos\s*$/i.test(text)&&auth.data.groups.includes(group)){
+  const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
+  auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);await auth.save();
+  if(socket===current&&enabled()&&auth.data.groups.includes(group))await current.sendMessage(group,{text:commandMenu});return;
+ }
  if(cupApi&&minicampCommand(text.trim())){
   if(!enabled('minicamp'))return;
   if(!auth.data.groups.includes(group)||!message.key.participant||text.length>1000)return;
@@ -69,12 +75,13 @@ async function connect(){
   auth.data.cupInbox??=[];
   if(!auth.data.cupInbox.some(e=>e.group===group&&e.id===id&&e.aliases.some(a=>aliases.includes(a)))){
    if(auth.data.cupInbox.length>=100){log('MINICAMP_QUEUE_FULL');return;}
-   auth.data.cupInbox.push({group,aliases,id,name:message.pushName??'Participante',text:text.trim()});await auth.save();
+   const targets=/^!confronto\s/i.test(text)&&(context?.mentionedJid?.length===2)?await Promise.all(context.mentionedJid.map(j=>cupAliases(j,current))):undefined;
+   auth.data.cupInbox.push({group,aliases,targets,id,name:message.pushName??'Participante',text:text.trim()});await auth.save();
   }
   void cupTick();return;
  }
  if(!enabled('resenha'))return;
- const request=banterRequest(text,Boolean(mention),Boolean(reply));if(request===null)return;
+ const request=/^!palpite(?:\s|$)/i.test(text)?text.replace(/^!palpite\s*/i,'')+' quem ganha':/^!tecnicos\s*$/i.test(text)?'__LIST_COACHES__':banterRequest(text,Boolean(mention),Boolean(reply));if(request===null)return;
  if(!auth.data.groups.includes(group)){log('RESENHA_GROUP_NOT_AUTHORIZED');return;}
  const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
  auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);
@@ -88,7 +95,7 @@ async function connect(){
    const entry=context.entries[0];if(entry)archive='\n\n📚 Do arquivo da resenha ('+entry.message_date+'):\n“'+entry.body+'”\n🍿 Lembrança do chat; não é resultado oficial.';
   }catch{log('HISTORY_LOOKUP_RETRY');return;}
  }
- const response=banterReply(group,request)+archive;
+ const response=request==='__LIST_COACHES__'?'🎮 TÉCNICOS DA MASTER LIGA\n'+loadRoster(process.env.MLG_ROSTER_JSON).map(c=>c.name+' — '+c.club).join('\n')+'\nUse nomes completos ou clubes nos palpites.':banterReply(group,request)+archive;
  await auth.save();
  if(socket===current&&!stopping&&auth.data.groups.includes(group)&&enabled('resenha')){await current.sendMessage(group,{text:response});log('RESENHA_SENT');}
  }).catch(()=>fail('MESSAGE_PROCESSING_FAILED'));}
@@ -142,7 +149,7 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
   const metadata=await socket.groupMetadata(req.group);
   if(!Array.isArray(req.admins)||req.admins.length<1||req.admins.length>10||!req.admins.every((id:string)=>metadata.participants.some(p=>p.id===id)))throw Error('Invalid admins');
   const admins=await Promise.all(req.admins.map((id:string)=>cupAliases(id,socket!)));
-  return cupApi({action:'setadmins',group:req.group,admins});
+  return cupApi({action:'setadmins',group:req.group,admins,revision:req.revision});
  }
  return cupApi({action:req.action,group:req.group,ids:req.ids,approved:req.approved});
  }
@@ -161,10 +168,13 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  if(req.action==='groups')return {groups:Object.values(await socket.groupFetchAllParticipating()).map(g=>({id:g.id,name:g.subject,authorized:auth.data.groups.includes(g.id)}))};
  if(typeof req.group!=='string'||!req.group.endsWith('@g.us'))throw new Error('Invalid group');
  const group=await socket.groupMetadata(req.group);
- if(req.action==='participants')return {participants:await Promise.all(group.participants.map(async p=>{
+ if(req.action==='participants'){
+ let registered:{aliases:string[];revision:string}={aliases:[],revision:''};
+ if(cupApi&&auth.data.groups.includes(req.group)){await configureCup(req.group,socket);registered=await cupApi({action:'getadmins',group:req.group});}
+ return {revision:registered.revision,participants:await Promise.all(group.participants.map(async p=>{
  const aliases=await cupAliases(p.id,socket!);const phone=aliases.find(a=>a.endsWith('@s.whatsapp.net'))?.split('@')[0];
- return {id:p.id,phone:phone?'+'+phone:p.id};
- }))};
+ return {id:p.id,phone:phone?'+'+phone:p.id,selected:aliases.some(a=>registered.aliases.includes(a))};
+ }))};}
  if(req.action==='authorize'){
  if(!group.participants.some(p=>p.id===req.admin))throw new Error('Invalid participant');
  if(!auth.data.groups.includes(req.group))auth.data.groups.push(req.group);await auth.save();log('GROUP_AUTHORIZED');return {authorized:true};

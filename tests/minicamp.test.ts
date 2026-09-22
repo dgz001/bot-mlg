@@ -192,3 +192,30 @@ test('ADM corrige estatísticas sem duplicar título e cancela rascunho',()=>{
  assert.match(h.send(final.away,'!stats').notices[0]!,/Títulos: 1/);
  assert.match(h.send(final.home,'!stats').notices[0]!,/Títulos: 0/);
 });
+
+test('comandos públicos e confronto contam só resultados confirmados e corrigidos',()=>{
+ const h=harness();assert.match(h.send('visitante','!comandos').notices[0]!,/!confronto/);
+ const cup=h.start(4),m=cup.matches[0]!;
+ h.send(m.home,`!resultado ${m.code} 4x3`);
+ assert.match(h.send('visitante',`!confronto ${m.home} x ${m.away}`).notices[0]!,/Jogos: 0/);
+ h.send(m.away,'!confirmar');
+ let text=h.send('visitante',`!confronto ${m.home} x ${m.away}`).notices[0]!;
+ assert.match(text,/Jogos: 1/);assert.match(text,/Gols: 4 x 3/);
+ h.send('admin',`!forcarresultado ${m.code} 1x2`);
+ text=h.send('visitante',`!confronto ${m.home} x ${m.away}`).notices[0]!;
+ assert.match(text,/Gols: 1 x 2/);
+ assert.throws(()=>h.send('visitante','!confronto inexistente x u0'),/Nome/);
+ assert.throws(()=>h.send('visitante',`!confronto ${m.home} x ${m.home}`),/diferentes/);
+});
+
+test('sorteio preserva pool e retrospecto rejeita homônimos',()=>{
+ const pool=['Roma','Real Madrid','Barcelona','Liverpool','Bayern'];
+ for(let i=0;i<30;i++){const shuffled=environment.shuffle(pool);assert.deepEqual([...shuffled].sort(),[...pool].sort());assert.notEqual(shuffled,pool);}
+ assert.deepEqual(pool,['Roma','Real Madrid','Barcelona','Liverpool','Bayern']);
+ const h=harness();const c=h.start(4);h.state.cups[c.id]!.participants[0]!.name='Arthur Silva';h.state.cups[c.id]!.participants[1]!.name='Arthur Souza';
+ assert.throws(()=>h.send('visitante','!confronto Arthur x u2'),/ambíguo/);
+ const a=c.participants[0]!.userId,b=c.participants[1]!.userId;
+ assert.match(h.send('visitante',`!confrontoids ${a} ${b}`).notices[0]!,/Arthur Silva.*Arthur Souza/s);
+ h.state.groups.other={authorized:true,admins:[],clubs};
+ assert.throws(()=>h.send('visitante',`!confrontoids ${a} ${b}`,'another','other'),/registrado/);
+});

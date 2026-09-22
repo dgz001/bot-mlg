@@ -56,10 +56,20 @@ Deno.serve(async req=>{
   });
  }
 
+ else if(body.action==='getadmins'){
+  if(!groupId.test(body.group))throw Error('Invalid group');
+  result=await db.transaction(async q=>{
+   const rev=await q.query("SELECT md5(coalesce(string_agg(user_id,',' ORDER BY user_id),'')) revision FROM mlg_bot.admins WHERE group_id=$1",[body.group]);
+   const rows=await q.query('SELECT w.jid FROM mlg_bot.admins a JOIN mlg_bot.wa_identities w ON w.user_id=a.user_id JOIN mlg_bot.groups g ON g.id=a.group_id WHERE a.group_id=$1 AND g.admins_configured',[body.group]);
+   return {aliases:rows.rows.map(r=>r.jid),revision:rev.rows[0].revision};
+  });
+ }
  else if(body.action==='setadmins'){
   if(!groupId.test(body.group)||!Array.isArray(body.admins)||body.admins.length<1||body.admins.length>10||!body.admins.every(validAliases))throw Error('Invalid admins');
   result=await db.transaction(async q=>{
    await q.query('SELECT id FROM mlg_bot.groups WHERE id=$1 FOR UPDATE',[body.group]);
+   const rev=await q.query("SELECT md5(coalesce(string_agg(user_id,',' ORDER BY user_id),'')) revision FROM mlg_bot.admins WHERE group_id=$1",[body.group]);
+   if(typeof body.revision!=='string'||body.revision!==rev.rows[0].revision)return {error:'A lista de ADMs mudou. Carregue os participantes novamente antes de salvar.'};
    await q.query('DELETE FROM mlg_bot.admins WHERE group_id=$1',[body.group]);
    for(const aliases of body.admins){const id=await identity(q,aliases);await q.query("INSERT INTO mlg_bot.admins(group_id,user_id,role) VALUES($1,$2,'admin') ON CONFLICT DO NOTHING",[body.group,id]);}
    await q.query('UPDATE mlg_bot.groups SET admins_configured=true WHERE id=$1',[body.group]);
@@ -120,7 +130,12 @@ Deno.serve(async req=>{
   result=await db.transaction(async q=>{
    const allowed=await q.query('SELECT 1 FROM mlg_bot.groups WHERE id=$1 AND authorized',[e.group]);if(!allowed.rows.length)throw Error('Group not authorized');
    const id=await identity(q,e.aliases,e.name);
-   const added=await q.query('INSERT INTO mlg_bot.inbox(group_id,user_id,message_id,display_name,body,received_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING RETURNING id',[e.group,id,e.id,e.name.slice(0,60),e.text,Date.now()]);
+   let eventText=e.text;
+   if(/^!confronto\s/i.test(eventText)&&Array.isArray(e.targets)&&e.targets.length===2&&e.targets.every(validAliases)){
+    const targets=[];for(const aliases of e.targets)targets.push(await identity(q,aliases));
+    eventText='!confrontoids '+targets.join(' ');
+   }
+   const added=await q.query('INSERT INTO mlg_bot.inbox(group_id,user_id,message_id,display_name,body,received_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING RETURNING id',[e.group,id,e.id,e.name.slice(0,60),eventText,Date.now()]);
    if(added.rows.length){const rate=await q.query("INSERT INTO mlg_bot.command_rate VALUES($1,$2,now(),1) ON CONFLICT(group_id,user_id) DO UPDATE SET count=CASE WHEN command_rate.window_start<now()-interval '1 minute' THEN 1 ELSE command_rate.count+1 END,window_start=CASE WHEN command_rate.window_start<now()-interval '1 minute' THEN now() ELSE command_rate.window_start END RETURNING count",[e.group,id]);if(rate.rows[0].count>30)await q.query("UPDATE mlg_bot.inbox SET status='rejected',body='' WHERE id=$1",[added.rows[0].id]);}
    return {accepted:true};
   });

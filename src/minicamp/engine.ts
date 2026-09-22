@@ -3,6 +3,7 @@ import { randomInt, randomUUID } from 'node:crypto';
 // Pure domain boundary. The production adapter MUST resolve identities, load
 // permissions and commit state + inbox + audit + outbox in one DB transaction.
 // This module does not provide a database, transport or operational durability.
+export const commandMenu='📋🎮 COMANDOS MLG\n\n😂 RESENHA\n!bot mensagem — entra na conversa\n!palpite Arthur x Lucas — palpite de brincadeira\n!tecnicos — nomes e clubes para os palpites\n\n⚔️ RETROSPECTO REAL\n!confronto Arthur x Lucas\nOu marque as duas contas: !confronto @Arthur x @Lucas\n!stats — seus números\n!stats Nome completo — outro participante\n!ranking • !campeoes • !historico • !minhascopas\n\n🏆 MINICAMP\n!entrar — inscrição\n!copa — chaveamento\n!jogo código — partida\n!resultado 4x3 — mandante x visitante\n!confirmar • !contestar — confronto único\nSe houver dúvida, acrescente o código da partida.\n\n🔐 SOMENTE ADMs SELECIONADOS NO PAINEL\n!novacopa → !formato 4, 8 ou 16\n!cancelar copa\n!forcarresultado código 4x3 motivo\n!resolver código 4x3 motivo\n!config\n\n📊 Retrospectos usam partidas confirmadas neste bot. Palpites não alteram resultados.';
 export type Participant = { userId: string; name: string; club?: string };
 export type Result = {
   home: number; away: number; author: string; at: number;
@@ -140,7 +141,30 @@ export function apply(input: State, event: Event, env: Environment = environment
   const cmd = parts[0]!.toLowerCase();
   let notices: string[] = [];
   const cheer=['🔥 Chegou pra disputar a taça ou pra render resenha?','🎮 Agora é no controle! A torcida já está de olho.','🍿 Mais um nome na disputa. Vai faltar cadeira nessa arquibancada!','⚽ Tá dentro! O discurso de campeão a gente deixa pra final.','🏆 Vaga garantida. Agora chama aquele rival que fala muito!','📣 A lista está esquentando! Essa Copa promete.'][[...event.id].reduce((n,c)=>n+c.charCodeAt(0),0)%6];
-  if (cmd === '!novacopa') {
+  if(cmd==='!comandos'){
+    notices.push(commandMenu);
+  } else if(cmd==='!confronto'||cmd==='!confrontoids'){
+    const cups=Object.values(s.cups).filter(c=>c.groupId===event.groupId&&c.status!=='cancelled');
+    const people=new Map<string,string>();for(const c of cups)for(const p of c.participants)people.set(p.userId,p.name);
+    const normalize=(v:string)=>v.normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim().replace(/\s+/g,' ');
+    let ids:string[];
+    if(cmd==='!confrontoids'){ids=parts.slice(1);requireThat(ids.length===2&&ids.every(id=>people.has(id)),'Nome ainda não registrado em Copas deste grupo. Entre em uma Copa antes de consultar o retrospecto.');}
+    else{
+      const sides=parts.slice(1).join(' ').split(/\s+(?:x|vs|contra)\s+/i);
+      requireThat(sides.length===2,'Formato: !confronto Nome completo x Nome completo, ou marque duas contas.');
+      ids=sides.map(side=>{
+        const q=normalize(side);
+        const matches=[...people].filter(([,name])=>normalize(name)===q||normalize(name).split(' ')[0]===q);
+        requireThat(matches.length===1,'Nome não encontrado ou ambíguo. Use o nome completo registrado na Copa ou marque as duas contas.');
+        return matches[0]![0];
+      });
+    }
+    const [a,b]=ids;requireThat(a!==b,'Escolha dois jogadores diferentes.');
+    const games=cups.flatMap(c=>c.matches.filter(m=>m.status==='confirmed'&&((m.home===a&&m.away===b)||(m.home===b&&m.away===a))));
+    let ga=0,gb=0,wa=0,wb=0;
+    for(const m of games){const r=score(m);ga+=m.home===a?r.home:r.away;gb+=m.home===b?r.home:r.away;wa+=Number(m.winner===a);wb+=Number(m.winner===b);}
+    notices.push('⚔️ RETROSPECTO MLG\n'+people.get(a!)+' 🆚 '+people.get(b!)+'\n🎮 Jogos: '+games.length+'\n🏅 Vitórias: '+wa+' x '+wb+'\n⚽ Gols: '+ga+' x '+gb+'\n'+(games.length?'🍿 O placar está nos registros. A resenha fica por conta de vocês!':'🎮 Nenhum duelo confirmado ainda. Bora estrear esse confronto!')+'\nSomente partidas confirmadas neste bot; correções aplicadas e Copas canceladas excluídas.');
+  } else if (cmd === '!novacopa') {
     needAdmin(); requireThat(!active(), 'Já existe Copa ativa.');
     const draft = s.drafts[event.groupId];
     requireThat(!draft || draft.expiresAt <= event.at, 'Escolha de formato já está em andamento.');

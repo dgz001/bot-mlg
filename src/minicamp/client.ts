@@ -1,6 +1,6 @@
-export type PendingCupEvent={group:string;aliases:string[];id:string;name:string;text:string};
+export type PendingCupEvent={group:string;aliases:string[];targets?:string[][];id:string;name:string;text:string};
 export function minicampCommand(text:string):boolean {
- return /^(?:![a-zç]+(?:\s|$)|[123]$)/i.test(text)&&/^(?:!(?:forcarresultado|forcar|forçar|cancelarcopa|config|novacopa|formato|entrar|resultado|confirmar|contestar|resolver|cancelar|copa|jogo|historico|minhascopas|campeoes|ranking|stats|ajuda|minicamp)(?:\s|$)|[123]$)/i.test(text);
+ return /^(?:![a-zç]+(?:\s|$)|[123]$)/i.test(text)&&/^(?:!(?:comandos|confronto|forcarresultado|forcar|forçar|cancelarcopa|config|novacopa|formato|entrar|resultado|confirmar|contestar|resolver|cancelar|copa|jogo|historico|minhascopas|campeoes|ranking|stats|ajuda|minicamp)(?:\s|$)|[123]$)/i.test(text);
 }
 export function minicampClient(url:string,token:string){
  return async function call<T=Record<string,unknown>>(body:unknown):Promise<T>{

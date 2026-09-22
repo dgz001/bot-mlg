@@ -65,3 +65,14 @@ O dono do painel carrega o grupo e participantes, seleciona as contas em “ADMs
 - Nenhuma memória foi aprovada automaticamente. O dono precisa selecionar os ADMs e revisar os primeiros trechos pelo painel para ativar esses conteúdos.
 
 Validação desta etapa (22/09/2026): 31 testes automatizados passaram e typecheck passou; 4 SQL locais ignorados. No gateway com PostgreSQL real: seleção explícita de ADM, rejeição de configuração por estranho, exclusão de memória não aprovada, recuperação de aprovada e desligamento de busca foram verificados. Copa sintética: correção de semifinal atualizou final ainda sem resultado; correção da final trocou campeão com duas revisões preservadas; alteração que invalidaria final concluída foi bloqueada. Dados sintéticos de grupos, partidas e filas removidos após os testes.
+
+
+## Menu e retrospectos
+
+Qualquer participante de grupo autorizado usa `!comandos`. Com o bot ligado, o menu funciona mesmo que o módulo Minicamp esteja pausado.
+- `!confronto Arthur x Lucas`: retrospecto por nomes registrados nas Copas do grupo. Primeiro nome só é aceito quando não houver ambiguidade. Duas marcações @ são resolvidas pelos identificadores autenticados do WhatsApp.
+- `!palpite Arthur x Lucas`: brincadeira baseada na lista de técnicos, sem alterar resultados.
+- `!tecnicos`: mostra nomes e clubes da lista de técnicos para facilitar os palpites.
+- Retrospecto usa somente última revisão de cada jogo confirmado; exclui Copas canceladas. Não infere vitórias a partir dos backups.
+
+No painel, ADMs são marcados por conta, com busca por número e seleção atual carregada. Ao salvar, há comparação da revisão da lista; uma tela antiga não sobrescreve mudanças de outra sessão. Contas sem mapeamento de telefone disponível aparecem pelo identificador WhatsApp: não adivinhar identidade por nome.
