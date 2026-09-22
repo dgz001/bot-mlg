@@ -267,3 +267,26 @@ test('menu usa exemplos genéricos sem nomes da comunidade', () => {
   assert.doesNotMatch(menu, /Arthur|Lucas|Lukas/);
   assert.match(menu, /jogador A x jogador B/);
 });
+
+test('confirmação por placar, anulação e limpeza de Copa preservam estatísticas', () => {
+ const h=harness();const cup=h.start(4);
+ for(const m of cup.matches){
+  h.send(m.away,`!resultado ${m.code} 4x3`);
+  assert.throws(()=>h.send(m.away,'!confirmar 4x3'),/próprio/);
+  assert.throws(()=>h.send(m.home,'!confirmar 3x4'),/Placar diferente/);
+  h.send(m.home,'!confirmar 4 x 3');
+ }
+ const final=h.state.cups[cup.id]!.matches.at(-1)!;
+ assert.throws(()=>h.send('admin',`!deletar ${cup.matches[0]!.code}`),/outra fase/);
+ h.send(final.home,'!resultado 2x1');h.send(final.away,'!confirmar 2x1');
+ assert.throws(()=>h.send(final.home,`!deletar título ${final.code}`),/ADM/);
+ h.send('admin',`!deletar título ${final.code}`);h.restart();
+ assert.equal(h.state.cups[cup.id]!.champion,undefined);
+ assert.equal(h.state.cups[cup.id]!.matches.at(-1)!.status,'scheduled');
+ h.send(final.away,'!resultado 1x2');h.send(final.home,'!confirmar 1x2');
+ assert.equal(h.state.cups[cup.id]!.champion,final.away);
+ h.send('admin',`!anularcopa ${cup.id}`);
+ assert.equal(h.state.cups[cup.id]!.status,'cancelled');
+ assert.match(h.send(final.away,'!campeoes').notices[0]!,/Nenhum registro/);
+ assert.throws(()=>h.send('admin',`!anularcopa ${cup.id}`),/já anulada/);
+});

@@ -3,7 +3,7 @@ import { randomInt, randomUUID } from 'node:crypto';
 // Pure domain boundary. The production adapter MUST resolve identities, load
 // permissions and commit state + inbox + audit + outbox in one DB transaction.
 // This module does not provide a database, transport or operational durability.
-export const commandMenu='📋🎮 COMANDOS MLG\n\n😂 RESENHA\n!bot mensagem — entra na conversa\n!palpite jogador A x jogador B — palpite de brincadeira\n!tecnicos — nomes e clubes para os palpites\n\n⚔️ RETROSPECTO REAL\n!confronto jogador A x jogador B\nOu marque as duas contas: !confronto @jogador1 x @jogador2\n!stats — seus números\n!stats Nome completo — outro participante\n!ranking • !campeoes • !historico • !minhascopas\n\n🏆 MINICAMP\n!clubes — os 28 clubes disponíveis para sorteio\n!entrar — inscrição\n!copa — chaveamento\n!jogo código — partida\n!resultado 4x3 — mandante x visitante\n!confirmar • !contestar — confronto único\nSe houver dúvida, acrescente o código da partida.\n\n🔐 SOMENTE ADMs SELECIONADOS NO PAINEL\n!novacopa → !formato 4, 8 ou 16\n!cancelar copa\n!forcarresultado código 4x3 motivo\n!resolver código 4x3 motivo\n!config\n\n📊 Retrospectos usam partidas confirmadas neste bot. Palpites não alteram resultados.';
+export const commandMenu='📋🎮 COMANDOS MLG\n\n😂 RESENHA\n!bot mensagem — entra na conversa\n!palpite jogador A x jogador B — palpite de brincadeira\n!tecnicos — nomes e clubes para os palpites\n\n⚔️ RETROSPECTO REAL\n!confronto jogador A x jogador B\nOu marque as duas contas: !confronto @jogador1 x @jogador2\n!stats — seus números\n!stats Nome completo — outro participante\n!ranking • !campeoes • !historico • !minhascopas\n\n🏆 MINICAMP\n!clubes — os 28 clubes disponíveis para sorteio\n!entrar — inscrição\n!copa — chaveamento\n!jogo código — partida\n!resultado 4x3 — mandante x visitante\n!confirmar 4x3 • !contestar — confronto único\nSe houver dúvida, acrescente o código da partida.\n\n🔐 SOMENTE ADMs SELECIONADOS NO PAINEL\n!novacopa → !formato 4, 8 ou 16\n!cancelar copa\n!forcarresultado código 4x3 motivo\n!resolver código 4x3 motivo\n!deletar código — anular resultado sem fase posterior\n!deletar título código-da-final — retirar título e reabrir final\n!anularcopa ID-da-Copa — retirar todos os dados de teste das estatísticas\n!config\n\n📊 Retrospectos usam partidas confirmadas neste bot. Palpites não alteram resultados.';
 export type Participant = { userId: string; name: string; club?: string };
 export type Result = {
   home: number; away: number; author: string; at: number;
@@ -169,7 +169,7 @@ export function apply(input: State, event: Event, env: Environment = environment
   const audit = (action: string, cup: Cup, before: string, matchCode?: number) => {
     s.audit.push({ actor: event.userId, groupId: event.groupId, cupId: cup.id, matchCode, at: event.at, action, before, after: JSON.stringify(cup), outcome: 'accepted' });
   };
-  const normalized = event.text.trim().replace(/^!forçar\s+resultado/i,'!forcarresultado').replace(/^!forcar\s+resultado/i,'!forcarresultado').replace(/^!cancelar\s+copa$/i,'!cancelarcopa').replace(/(\d)\s*[xX×]\s*(\d)/g,'$1x$2').replace(/^!formato\s+(4|8|16)$/i, (_, n) => (({ '4':'1','8':'2','16':'3' } as Record<string,string>)[n]!));
+  const normalized = event.text.trim().replace(/^!forçar\s+resultado/i,'!forcarresultado').replace(/^!forcar\s+resultado/i,'!forcarresultado').replace(/^!deletar\s+t[ií]tulo/i,'!deletartitulo').replace(/^!cancelar\s+copa$/i,'!cancelarcopa').replace(/(\d)\s*[xX×]\s*(\d)/g,'$1x$2').replace(/^!formato\s+(4|8|16)$/i, (_, n) => (({ '4':'1','8':'2','16':'3' } as Record<string,string>)[n]!));
   const parts = normalized.split(/\s+/);
   const cmd = parts[0]!.toLowerCase();
   let notices: string[] = [];
@@ -240,10 +240,12 @@ export function apply(input: State, event: Event, env: Environment = environment
     }
     audit('join', cup, before);
   } else if (['!resultado', '!confirmar', '!contestar', '!resolver'].includes(cmd)) {
-    const shorthand=(cmd==='!resultado'&&parts.length===2&&/^\d+x\d+$/.test(parts[1]!))||(['!confirmar','!contestar'].includes(cmd)&&parts.length===1);
+    const confirmationScore=cmd==='!confirmar'&&parts.length===2&&/^\d+x\d+$/i.test(parts[1]!);
+    const shorthand=confirmationScore||(cmd==='!resultado'&&parts.length===2&&/^\d+x\d+$/.test(parts[1]!))||(['!confirmar','!contestar'].includes(cmd)&&parts.length===1);
     let inferred: {cup:Cup;match:Match}|undefined;
     if(shorthand){
-      const candidates=Object.values(s.cups).filter(c=>c.groupId===event.groupId&&c.status==='playing').flatMap(c=>c.matches.filter(m=>m.status===(cmd==='!resultado'?'scheduled':'pending')&&([m.home,m.away].includes(event.userId)||(admin&&cmd!=='!resultado'))).map(match=>({cup:c,match})));
+      let candidates=Object.values(s.cups).filter(c=>c.groupId===event.groupId&&c.status==='playing').flatMap(c=>c.matches.filter(m=>m.status===(cmd==='!resultado'?'scheduled':'pending')&&([m.home,m.away].includes(event.userId)||(admin&&cmd!=='!resultado'))).map(match=>({cup:c,match})));
+      if(cmd==='!confirmar'){const own=candidates.filter(({match:m})=>[m.home,m.away].includes(event.userId));if(own.length)candidates=own;}
       requireThat(candidates.length>0,'Nenhuma partida disponível para este comando.');
       requireThat(candidates.length===1,'Informe o código: há mais de uma partida possível. Use !copa.');
       inferred=candidates[0];
@@ -259,7 +261,7 @@ export function apply(input: State, event: Event, env: Environment = environment
       requireThat(shorthand || parts.length === 3, 'Formato: !resultado 3x2 ou !resultado código 3x2');
       const result: Result = { ...parseScore(parts[shorthand?1:2]), author: event.userId, at: event.at, status: 'pending' };
       match.results.push(result); match.status = 'pending';
-      notices.push(`📝 RESULTADO ANOTADO\nPartida #${match.code}\n${player(cup, match.home).name} ${result.home} x ${result.away} ${player(cup, match.away).name}\nVencedor provisório: ${player(cup, result.home > result.away ? match.home : match.away).name}\nAguardando confirmação de outra pessoa autorizada.\n!confirmar ${match.code}\n!contestar ${match.code}`);
+      notices.push(`📝 RESULTADO ANOTADO\nPartida #${match.code}\n${player(cup, match.home).name} ${result.home} x ${result.away} ${player(cup, match.away).name}\nVencedor provisório: ${player(cup, result.home > result.away ? match.home : match.away).name}\nAguardando confirmação de outra pessoa autorizada.\n!confirmar ${result.home}x${result.away}\n!contestar ${match.code}`);
     } else if (cmd === '!contestar') {
       requireThat(match.status === 'pending', 'Nenhum resultado pendente para contestar.');
       match.status = 'disputed'; score(match).status = 'disputed'; score(match).disputedBy = event.userId;
@@ -275,6 +277,7 @@ export function apply(input: State, event: Event, env: Environment = environment
       requireThat(match.status !== 'disputed', 'Resultado contestado; ADM deve resolver.');
       requireThat(match.status === 'pending', 'Nenhum resultado pendente.');
       requireThat(score(match).author !== event.userId, 'Não é permitido confirmar o próprio resultado.');
+      if(confirmationScore){const provided=parseScore(parts[1]);requireThat(provided.home===score(match).home&&provided.away===score(match).away,'Placar diferente do informado. Confira mandante x visitante ou use !contestar.');}
       score(match).status = 'confirmed'; score(match).confirmedBy = event.userId;
       notices.push(...advance(s, cup, match, event.at));
     }
@@ -303,6 +306,29 @@ export function apply(input: State, event: Event, env: Environment = environment
       notices.push(...advance(s,cup,match,event.at));
     }
     audit('force-result',cup,before,match.code);
+  } else if (cmd === '!deletar' || cmd === '!deletartitulo') {
+    needAdmin();
+    requireThat(parts.length===2,'Formato: !deletar código ou !deletar título código-da-final');
+    const {cup,match}=getMatch(parts[1]);
+    requireThat(cup.status!=='cancelled','Copa cancelada já está fora das estatísticas.');
+    requireThat(match.status!=='scheduled','A partida não possui resultado válido para anular.');
+    const final=match.round===Math.log2(cup.size)-1;
+    if(cmd==='!deletartitulo') requireThat(final&&cup.status==='completed','Informe o código da final de uma Copa concluída.');
+    requireThat(!cup.matches.some(m=>m.round>match.round),'Anule primeiro a Copa de teste com !anularcopa ID-da-Copa; esta partida já gerou outra fase.');
+    requireThat(!active()||active()!.id===cup.id,'Existe outra Copa ativa. Finalize ou cancele essa Copa antes de reabrir a anterior.');
+    const before=JSON.stringify(cup);
+    match.status='scheduled';delete match.winner;
+    delete cup.champion;delete cup.completedAt;cup.status='playing';
+    audit('void-result',cup,before,match.code);
+    notices.push(`🧹 Resultado #${match.code} anulado pelo ADM.\n📊 Placar e eventual título retirados das estatísticas.\n🎮 Partida reaberta para um novo !resultado. Auditoria preservada.`);
+  } else if (cmd === '!anularcopa') {
+    needAdmin();const cup=s.cups[parts[1]??''];
+    requireThat(cup&&cup.groupId===event.groupId,'Copa não encontrada neste grupo. Consulte !historico.');
+    requireThat(parts.length===2,'Formato: !anularcopa ID-da-Copa');
+    requireThat(cup.status!=='cancelled','Copa já anulada.');
+    const before=JSON.stringify(cup);cup.status='cancelled';cup.cancellationReason='Remoção administrativa de Copa de teste';delete cup.champion;delete cup.completedAt;
+    audit('void-cup',cup,before);
+    notices.push('🧹 Copa anulada. Jogos e títulos dessa edição não contam nas estatísticas. Histórico e auditoria preservados.');
   } else if (cmd === '!cancelarcopa') {
     needAdmin();const cup=active();
     if(cup){const before=JSON.stringify(cup);cup.status='cancelled';cup.cancellationReason='Cancelamento explícito pelo ADM';audit('cancel',cup,before);}
