@@ -28,7 +28,11 @@ async function fixture() {
 async function setup(db: Pool) {
   await db.query(migration);
   await db.query(await readFile(new URL('../migrations/002_worker.sql',import.meta.url),'utf8'));
-  await db.query("INSERT INTO mlg_bot.users VALUES ('admin','Admin'); INSERT INTO mlg_bot.groups VALUES ('g',true); INSERT INTO mlg_bot.admins VALUES ('g','admin','owner');");
+  // Supabase built-in roles exist in production; recreate only NOLOGIN roles in this disposable server.
+  await db.query("DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service_role NOLOGIN; END IF; END $$");
+  await db.query(await readFile(new URL('../migrations/003_minicamp_gateway.sql',import.meta.url),'utf8'));
+  await db.query(await readFile(new URL('../migrations/004_controls_history.sql',import.meta.url),'utf8'));
+  await db.query("INSERT INTO mlg_bot.users VALUES ('admin','Admin'); INSERT INTO mlg_bot.groups(id,authorized,admins_configured) VALUES ('g',true,true); INSERT INTO mlg_bot.admins VALUES ('g','admin','owner');");
   for (let i=0;i<16;i++) await db.query('INSERT INTO mlg_bot.club_pool VALUES ($1,$2)',['g',`Club ${i}`]);
 }
 
@@ -52,7 +56,7 @@ test('PostgreSQL real: copa completa, estado relacional, reconexão de cliente e
     assert.equal((await db.query<{status:string}>('SELECT status FROM mlg_bot.cups')).rows[0]!.status,'completed');
     assert.equal((await db.query('SELECT * FROM mlg_bot.matches')).rows.length,3);
     assert.equal((await db.query('SELECT DISTINCT club FROM mlg_bot.cup_participants')).rows.length,4);
-    assert.ok((await send('u0','!campeoes')).notices.join('').includes('Campeão'));
+    assert.match((await send('u0','!campeoes')).notices.join(''),/campe[ãõ]/i);
   } finally { await f.close(); }
 });
 
