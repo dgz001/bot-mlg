@@ -136,8 +136,8 @@ async function cupTick(){
 const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>client.destroy());client.on('data',chunk=>{buffer+=chunk.toString();if(buffer.length>8192){client.destroy();return;}if(!buffer.includes('\n'))return;client.pause();void(async()=>{
  const req=JSON.parse(buffer.trim());if(req.action==='status')return {controls:auth.data.controls??{enabled:true,resenha:true,minicamp:true},queued:auth.data.cupInbox?.length??0,phase,authorizedGroups:auth.data.groups.length,minicamp:cupApi?(cupHealthy?'READY':'RETRYING'):'DISABLED'};
  if(req.action==='settings'){
- auth.data.controls=parseControls(req.settings);
- await auth.save();log('BOT_CONTROLS_UPDATED');return {controls:auth.data.controls,phase,updated:true};
+ const previous=auth.data.controls;auth.data.controls=parseControls(req.settings);
+ try{await auth.save();}catch{auth.data.controls=previous;throw Error('Settings persistence failed');}log('BOT_CONTROLS_UPDATED');return {controls:auth.data.controls,phase,updated:true};
  }
  if(req.action==='revoke'){
  if(typeof req.group!=='string'||!auth.data.groups.includes(req.group))throw Error('Invalid group');
@@ -185,5 +185,10 @@ const health=httpServer((req,res)=>{if(req.url==='/livez'||req.url==='/readyz'){
 function fail(event:string){log(event);void shutdown(1);}
 async function shutdown(code:number){if(stopping)return;stopping=true;if(cupTimer)clearInterval(cupTimer);if(timer)clearTimeout(timer);if(stable)clearTimeout(stable);const deadline=setTimeout(()=>process.exit(code),12000);deadline.unref();controls.close();health.close();socket?.end(undefined);await queue;while(cupBusy)await new Promise(r=>setTimeout(r,50));await auth?.flush();key.fill(0);process.exit(code);}
 process.on('SIGTERM',()=>{void shutdown(0);});process.on('SIGINT',()=>{void shutdown(0);});process.on('uncaughtException',()=>fail('UNCAUGHT_ERROR'));process.on('unhandledRejection',()=>fail('UNHANDLED_REJECTION'));
-async function main(){auth=await vaultAuth(endpoint!,token!,key);auth.data.replyHistory??={};auth.data.cupInbox??=[];if(cupApi){try{await cupApi({action:'health'});cupHealthy=true;}catch{cupHealthy=false;log('MINICAMP_RETRY');}cupTimer=setInterval(()=>{void cupTick();},15000);}banterReply=createBanterReply(auth.data.replyHistory);await auth.save();await unlink(controlPath).catch(()=>undefined);controls.listen(controlPath,()=>{void chmod(controlPath,0o600).catch(()=>fail('CONTROL_PERMISSIONS_FAILED'));});health.listen(Number(process.env.PORT??3000),'0.0.0.0');if(auth.state.creds.registered)await connect();else {phase='NEEDS_PAIRING';log(phase);}}
+async function main(){auth=await vaultAuth(endpoint!,token!,key);auth.data.replyHistory??={};auth.data.cupInbox??=[];if(cupApi){try{await cupApi({action:'health'});cupHealthy=true;}catch{cupHealthy=false;log('MINICAMP_RETRY');}cupTimer=setInterval(()=>{void cupTick();},15000);}banterReply=createBanterReply(auth.data.replyHistory);await auth.save();await unlink(controlPath).catch(()=>undefined);controls.listen(controlPath,()=>{void chmod(controlPath,0o600).catch(()=>fail('CONTROL_PERMISSIONS_FAILED'));});if(!process.send)health.listen(Number(process.env.PORT??3000),'0.0.0.0');if(auth.state.creds.registered)await connect();else {phase='NEEDS_PAIRING';log(phase);}}
+// Parent owns HTTP while this process owns the WhatsApp session and queues.
+if(process.send){
+ const pulse=setInterval(()=>{if(process.connected)process.send?.({type:'health',phase,ready:!stopping&&phase==='CONNECTED'&&(!enabled('minicamp')||!cupApi||(cupHealthy&&Date.now()-lastCupTick<120000))});},2000);
+ pulse.unref();process.on('disconnect',()=>{void shutdown(0);});
+}
 void main().catch(()=>fail('SESSION_STORAGE_UNAVAILABLE'));

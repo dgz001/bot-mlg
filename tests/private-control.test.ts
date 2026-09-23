@@ -25,3 +25,17 @@ test('painel privado: senha forte, origem e bloqueio de tentativas',async()=>{
  assert.equal((await call('https://bot.example',secret)).status,429);
  }finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));}
 });
+
+test('reinício exige senha e origem corretas, funciona sem socket do bot',async()=>{
+ const secret='r'.repeat(43);let restarted=0;
+ const handler=privateControl({secret,origin:'https://bot.example',socketPath:'/tmp/missing-worker.sock',restart:()=>{restarted++;return {restarting:true,phase:'RESTARTING'};}});
+ const server=createServer((req,res)=>{void handler(req,res);});
+ await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
+ const addr=server.address();assert.ok(addr&&typeof addr==='object');const base='http://127.0.0.1:'+addr.port;
+ const call=(origin:string,token:string)=>fetch(base+'/control',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json','X-MLG-Control':'1',Authorization:'Bearer '+token},body:JSON.stringify({action:'restart'})});
+ try{
+  assert.equal((await call('https://evil.example',secret)).status,403);
+  assert.equal((await call('https://bot.example','wrong')).status,401);assert.equal(restarted,0);
+  const r=await call('https://bot.example',secret);assert.equal(r.status,202);assert.equal((await r.json() as any).restarting,true);assert.equal(restarted,1);
+ }finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));}
+});
