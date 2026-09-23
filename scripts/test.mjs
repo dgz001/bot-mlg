@@ -10,9 +10,9 @@ import { randomBytes } from 'node:crypto';
 const isolated = process.argv.includes('--isolated') || process.env.RENDER === 'true';
 const env = Object.fromEntries(['PATH','HOME','TMPDIR','SystemRoot'].filter(k=>process.env[k]).map(k=>[k,process.env[k]]));
 const files = (await readdir('tests')).filter(p=>p.endsWith('.test.ts')).map(p=>'tests/'+p);
-async function run(args, extra={}) {
+async function run(args, extra={}, cwd=process.cwd()) {
   return new Promise((resolve,reject)=>{
-    const child=spawn(process.execPath,args,{stdio:'inherit',env:{...env,...extra}});
+    const child=spawn(process.execPath,args,{stdio:'inherit',cwd,env:{...env,...extra}});
     const deadline=setTimeout(()=>child.kill('SIGKILL'),180000);
     child.once('error',reject);
     child.once('exit',code=>{clearTimeout(deadline);resolve(code??1);});
@@ -28,7 +28,7 @@ if (!isolated) {
   try {
     // Only this reviewed package needs its symlink installer, not all npm scripts.
     const binary=fileURLToPath(import.meta.resolve('@embedded-postgres/'+process.platform+'-'+process.arch));
-    if(await run([join(dirname(binary),'../scripts/hydrate-symlinks.js')])!==0)throw Error('PostgreSQL binary preparation failed');
+    if(await run([join(dirname(binary),'../scripts/hydrate-symlinks.js')],{},join(dirname(binary),'..'))!==0)throw Error('PostgreSQL binary preparation failed');
     const {default:EmbeddedPostgres}=await import('embedded-postgres');
     const password=randomBytes(24).toString('hex');
     pg=new EmbeddedPostgres({databaseDir:join(root,'data'),port:15432,user:'postgres',password,persistent:false,authMethod:'scram-sha-256',createPostgresUser:false,postgresFlags:['-h','127.0.0.1','-k',root],onLog:()=>{},onError:()=>{}});
