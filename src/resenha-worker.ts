@@ -76,7 +76,16 @@ async function connect(){
   auth.data.cupInbox??=[];
   if(!auth.data.cupInbox.some(e=>e.group===group&&e.id===id&&e.aliases.some(a=>aliases.includes(a)))){
    if(auth.data.cupInbox.length>=100){log('MINICAMP_QUEUE_FULL');return;}
-   const targets=/^!confronto\s/i.test(text)&&(context?.mentionedJid?.length===2)?await Promise.all(context.mentionedJid.map(j=>cupAliases(j,current))):undefined;
+   let targets=/^!(?:confronto|carreira|registrar|associar)\s/i.test(text)&&context?.mentionedJid?.length&&context.mentionedJid.length<=2?await Promise.all(context.mentionedJid.map(j=>cupAliases(j,current))):undefined;
+   if(targets?.length&&/^!(?:registrar|associar)\s/i.test(text)){
+    const metadata=await current.groupMetadata(group);
+    const members=new Set(metadata.participants.map(p=>jidNormalizedUser(p.id)));
+    if(!context?.mentionedJid?.every(j=>members.has(jidNormalizedUser(j))))targets=undefined;
+   }
+   if(/^!sincronizarcontas\s*$/i.test(text)){
+    const metadata=await current.groupMetadata(group);
+    targets=await Promise.all(metadata.participants.slice(0,100).map(p=>cupAliases(p.id,current)));
+   }
    auth.data.cupInbox.push({group,aliases,targets,id,name:message.pushName??'Participante',text:text.trim()});await auth.save();
   }
   void cupTick();return;

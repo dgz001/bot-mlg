@@ -10,13 +10,13 @@ const db={transaction:run=>base.transaction(async q=>{await q.query('SET LOCAL R
 const jid=/^[0-9]+@(lid|s\.whatsapp\.net)$/;
 const groupId=/^[0-9-]+@g\.us$/;
 function validAliases(v){return Array.isArray(v)&&v.length>=1&&v.length<=2&&v.every(x=>typeof x==='string'&&jid.test(x));}
-async function identity(q,aliases,name='Participante'){
+async function identity(q,aliases,name=null){
  if(!validAliases(aliases))throw Error('Invalid identity');
  await q.query('SELECT pg_advisory_xact_lock(71012027)');
  const existing=await q.query('SELECT DISTINCT user_id FROM mlg_bot.wa_identities WHERE jid=ANY($1::text[])',[aliases]);
  if(existing.rows.length>1)throw Error('Identity conflict');
  const id=existing.rows[0]?.user_id??randomUUID();
- await q.query('INSERT INTO mlg_bot.users(id,display_name) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name',[id,name.slice(0,60)]);
+ await q.query('INSERT INTO mlg_bot.users(id,display_name) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET display_name=CASE WHEN $3 THEN excluded.display_name ELSE mlg_bot.users.display_name END',[id,(name??'Participante').slice(0,60),name!==null]);
  for(const alias of aliases)await q.query('INSERT INTO mlg_bot.wa_identities(jid,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING',[alias,id]);
  return id;
 }
@@ -132,6 +132,32 @@ Deno.serve(async req=>{
    const allowed=await q.query('SELECT 1 FROM mlg_bot.groups WHERE id=$1 AND authorized',[e.group]);if(!allowed.rows.length)throw Error('Group not authorized');
    const id=await identity(q,e.aliases,e.name);
    let eventText=e.text;
+   if(/^!(?:contasverificadas|carreiraid|registrarid|associarid|confrontoids)(?:\s|$)/i.test(eventText))throw Error('Invalid internal command');
+   if(/^!sincronizarcontas\s*$/i.test(eventText)){
+    const admin=await q.query('SELECT 1 FROM mlg_bot.admins a JOIN mlg_bot.groups g ON g.id=a.group_id WHERE a.group_id=$1 AND a.user_id=$2 AND g.admins_configured',[e.group,id]);
+    if(admin.rows.length&&Array.isArray(e.targets)&&e.targets.length<=100&&e.targets.every(validAliases)){
+     await q.query('SELECT pg_advisory_xact_lock(71012027)');let checked=0,linked=0,conflicts=0;
+     for(const aliases of e.targets){
+      const found=await q.query('SELECT DISTINCT user_id FROM mlg_bot.wa_identities WHERE jid=ANY($1::text[])',[aliases]);
+      if(found.rows.length>1){conflicts++;continue;}if(!found.rows.length)continue;
+      const member=await q.query('SELECT 1 FROM mlg_bot.cup_participants p JOIN mlg_bot.cups c ON c.id=p.cup_id WHERE c.group_id=$1 AND p.user_id=$2 UNION SELECT 1 FROM mlg_bot.coach_profiles WHERE group_id=$1 AND user_id=$2',[e.group,found.rows[0].user_id]);
+      if(!member.rows.length)continue;checked++;
+      for(const alias of aliases){const inserted=await q.query('INSERT INTO mlg_bot.wa_identities(jid,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING RETURNING jid',[alias,found.rows[0].user_id]);linked+=inserted.rows.length;}
+     }
+     eventText=`!contasverificadas ${checked} ${linked} ${conflicts} ${e.targets.length}`;
+    }
+   }
+   if(/^!(?:carreira|registrar|associar)\s/i.test(eventText)&&Array.isArray(e.targets)&&e.targets.length===1&&e.targets.every(validAliases)){
+    const command=eventText.trim().split(/\s+/)[0].toLowerCase();
+    if(command!=='!carreira'){
+     const admin=await q.query('SELECT 1 FROM mlg_bot.admins a JOIN mlg_bot.groups g ON g.id=a.group_id WHERE a.group_id=$1 AND a.user_id=$2 AND g.admins_configured',[e.group,id]);
+     if(!admin.rows.length){eventText=command;}else{
+      const name=eventText.slice(command.length).split('|')[0].trim();
+      if(!eventText.includes('|')||!name)eventText=command;
+      else eventText=command+'id '+await identity(q,e.targets[0])+' '+name;
+     }
+    }else eventText='!carreiraid '+await identity(q,e.targets[0]);
+   }
    if(/^!confronto\s/i.test(eventText)&&Array.isArray(e.targets)&&e.targets.length===2&&e.targets.every(validAliases)){
     const targets=[];for(const aliases of e.targets)targets.push(await identity(q,aliases));
     eventText='!confrontoids '+targets.join(' ');

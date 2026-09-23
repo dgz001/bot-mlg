@@ -32,6 +32,7 @@ async function setup(db: Pool) {
   await db.query("DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service_role NOLOGIN; END IF; END $$");
   await db.query(await readFile(new URL('../migrations/003_minicamp_gateway.sql',import.meta.url),'utf8'));
   await db.query(await readFile(new URL('../migrations/004_controls_history.sql',import.meta.url),'utf8'));
+  await db.query(await readFile(new URL('../migrations/010_coach_profiles.sql',import.meta.url),'utf8'));
   await db.query("INSERT INTO mlg_bot.users VALUES ('admin','Admin'); INSERT INTO mlg_bot.groups(id,authorized,admins_configured) VALUES ('g',true,true); INSERT INTO mlg_bot.admins VALUES ('g','admin','owner');");
   for (let i=0;i<16;i++) await db.query('INSERT INTO mlg_bot.club_pool VALUES ($1,$2)',['g',`Club ${i}`]);
 }
@@ -108,4 +109,47 @@ test('constraints: isolamento, confirmação e clube repetido', integration, asy
     assert.equal((await db.query<{status:string}>('SELECT status FROM mlg_bot.matches WHERE code=$1',[m.code])).rows[0]!.status,'pending');
     await send(m.away,`!confirmar ${m.code}`);
   } finally { await f.close(); }
+});
+
+test('cadastros persistem com auditoria, autorização e rollback sob papel gateway',integration,async()=>{
+ const f=await fixture();try{
+  await setup(f.pool);await f.pool.query("INSERT INTO mlg_bot.users VALUES ('coach','Original');");
+  const base=pgDatabase(f.pool);const gateway:Database={transaction:run=>base.transaction(async q=>{await q.query('SET LOCAL ROLE mlg_bot_gateway');return run(q);})};
+  const event={id:'profile',groupId:'g',userId:'admin',name:'ADM',at:1,text:'!registrarid coach Nome Oficial'};
+  await processEvent(gateway,event);assert.equal((await processEvent(gateway,event)).duplicate,true);
+  assert.equal((await f.pool.query('SELECT count(*) FROM mlg_bot.coach_profiles')).rows[0].count,'1');
+  assert.equal((await f.pool.query('SELECT cup_id FROM mlg_bot.audit_logs')).rows[0].cup_id,null);
+  await f.restartClient();const res=await processEvent(pgDatabase(f.pool),{...event,id:'career',userId:'coach',name:'Nome WhatsApp',text:'!carreira'});assert.match(res.notices[0]!,/Nome Oficial/);
+  await assert.rejects(processEvent(pgDatabase(f.pool),{...event,id:'unauthorized',userId:'coach',text:'!associarid coach Alterado'}),/Somente ADM/);
+  const fail:Database={transaction:run=>pgDatabase(f.pool).transaction(q=>run({query:async<T>(sql:string,args?:unknown[])=>{if(sql.includes('INSERT INTO mlg_bot.outbox'))throw Error('storage failure');return q.query<T>(sql,args);}}))};
+  await assert.rejects(processEvent(fail,{...event,id:'rollback',text:'!associarid coach Alterado'}),/storage failure/);
+  assert.equal((await f.pool.query('SELECT display_name FROM mlg_bot.coach_profiles')).rows[0].display_name,'Nome Oficial');
+ }finally{await f.close();}
+});
+
+test('gateway real: menção, bloqueio de comandos internos e sincronização sem unir contas',integration,async()=>{
+ const f=await fixture();try{
+  await setup(f.pool);
+  await f.pool.query("INSERT INTO mlg_bot.groups(id,authorized,admins_configured) VALUES ('100@g.us',true,true); INSERT INTO mlg_bot.admins VALUES ('100@g.us','admin','owner'); INSERT INTO mlg_bot.wa_identities(jid,user_id) VALUES ('100@s.whatsapp.net','admin');");
+  const {createHash,webcrypto}=await import('node:crypto');const header='Bearer synthetic-test-token';
+  const source=(await readFile(new URL('../deploy/minicamp-gateway.ts',import.meta.url),'utf8')).replace(/^import .*;\n/gm,'').replace('__DIGEST__',createHash('sha256').update(header).digest('hex'));
+  let handler:((req:Request)=>Promise<Response>)|undefined;
+  const factory=new Function('Pool','randomUUID','pgDatabase','processEvent','minicampClubs','Deno','crypto',source);
+  const client=f.pool;
+  factory(class {constructor(){return client;}},randomUUID,pgDatabase,processEvent,[],{env:{get:()=>''},serve:(fn:typeof handler)=>{handler=fn;}},webcrypto);
+  let serial=0;
+  const send=async(text:string,targets?:string[][],aliases=['100@s.whatsapp.net'])=>handler!(new Request('https://example.invalid',{method:'POST',headers:{authorization:header},body:JSON.stringify({action:'event',event:{group:'100@g.us',aliases,targets,id:String(++serial),name:'Test',text}})}));
+  assert.equal((await send('!registrar Técnico | @conta',[['200@lid','200@s.whatsapp.net']])).status,200);
+  assert.equal((await f.pool.query("SELECT display_name FROM mlg_bot.coach_profiles WHERE group_id='100@g.us'")).rows[0].display_name,'Técnico');
+  assert.equal((await send('!registrarid admin Forged')).status,503);
+  assert.equal((await send('!associar Alterado | @conta',[['200@lid']],['300@s.whatsapp.net'])).status,200);
+  assert.equal((await f.pool.query("SELECT display_name FROM mlg_bot.coach_profiles WHERE group_id='100@g.us'")).rows[0].display_name,'Técnico');
+  assert.equal((await send('!carreira @conta',[['200@lid']])).status,200);
+  const before=await f.pool.query('SELECT jid,user_id FROM mlg_bot.wa_identities ORDER BY jid');
+  assert.equal((await send('!sincronizarcontas',[['200@lid','300@s.whatsapp.net'],['200@lid','201@s.whatsapp.net']])).status,200);
+  const after=await f.pool.query('SELECT jid,user_id FROM mlg_bot.wa_identities ORDER BY jid');
+  assert.equal(after.rows.length,before.rows.length+1);
+  for(const old of before.rows)assert.deepEqual(after.rows.find(r=>r.jid===old.jid),old);
+  assert.match((await f.pool.query("SELECT body FROM mlg_bot.outbox WHERE body LIKE '%CONEXÕES%' ORDER BY id DESC LIMIT 1")).rows[0].body,/1 conflitos/);
+ }finally{await f.close();}
 });

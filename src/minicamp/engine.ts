@@ -1,9 +1,10 @@
+import {careers,careerText,normalizeName} from './career.ts';
 import { randomInt, randomUUID } from 'node:crypto';
 
 // Pure domain boundary. The production adapter MUST resolve identities, load
 // permissions and commit state + inbox + audit + outbox in one DB transaction.
 // This module does not provide a database, transport or operational durability.
-export const commandMenu='📋🎮 COMANDOS MLG\n\n😂 RESENHA\n!bot mensagem — entra na conversa\n!palpite jogador A x jogador B — palpite de brincadeira\n!tecnicos — nomes e clubes para os palpites\n\n⚔️ RETROSPECTO REAL\n!confronto jogador A x jogador B\nOu marque as duas contas: !confronto @jogador1 x @jogador2\n!titulo nome — títulos e conquistas; sem nome, consulta sua conta\n!stats — seus números\n!stats Nome completo — outro participante\n!ranking • !campeoes • !historico • !minhascopas\n\n🏆 MINICAMP\n!teste — configuração e situação da Copa\n!supabase — comunicação e leitura/gravação no banco\n!clubes — os clubes disponíveis para sorteio\n!entrar — inscrição\n!sair — libera vaga; após sorteio, propõe W.O. 3x0 para confirmação\n!copa — chaveamento\n!jogo código — partida\n!resultado 4x3 — mandante x visitante\n!confirmar 4x3 • !contestar — confronto único\nSe houver dúvida, acrescente o código da partida.\n\n🔐 SOMENTE ADMs SELECIONADOS NO PAINEL\n!novacopa → !formato 4, 8 ou 16\n!cancelar copa\n!forcarresultado código 4x3 motivo\n!resolver código 4x3 motivo\n!deletar código — anular resultado sem fase posterior\n!deletar título código-da-final — retirar título e reabrir final\n!anularcopa ID-da-Copa — retirar todos os dados de teste das estatísticas\n!config\n\n📊 Retrospectos usam partidas confirmadas neste bot. Palpites não alteram resultados.';
+export const commandMenu='📋🎮 COMANDOS MLG\n\n😂 RESENHA\n!bot mensagem — entra na conversa\n!palpite jogador A x jogador B — palpite de brincadeira\n!tecnicos — nomes e clubes para os palpites\n\n⚔️ RETROSPECTO REAL\n!confronto jogador A x jogador B\nOu marque as duas contas: !confronto @jogador1 x @jogador2\n!titulo nome — títulos e conquistas; sem nome, consulta sua conta\n!stats — seus números\n!stats Nome completo — outro participante\n!carreira [nome ou @conta] — perfil completo\n!moral [página] — pontos e conquistas\n!participantes [ID da Copa] — inscritos\n!ranking • !campeoes • !historico • !minhascopas\n\n🏆 MINICAMP\n!teste — configuração e situação da Copa\n!supabase — comunicação e leitura/gravação no banco\n!clubes — os clubes disponíveis para sorteio\n!entrar — inscrição\n!sair — libera vaga; após sorteio, propõe W.O. 3x0 para confirmação\n!copa — chaveamento\n!jogo código — partida\n!resultado 4x3 — mandante x visitante\n!confirmar 4x3 • !contestar — confronto único\nSe houver dúvida, acrescente o código da partida.\n\n🔐 SOMENTE ADMs SELECIONADOS NO PAINEL\n!novacopa → !formato 4, 8 ou 16\n!cancelar copa\n!forcarresultado código 4x3 motivo\n!resolver código 4x3 motivo\n!deletar código — anular resultado sem fase posterior\n!deletar título código-da-final — retirar título e reabrir final\n!anularcopa ID-da-Copa — retirar todos os dados de teste das estatísticas\n!registrar Nome | @conta — cadastro\n!associar Nome | @conta — nome da conta\n!sincronizarcontas — conferir vínculos\n!revisarnumeros — reconstruir estatísticas\n!config\n\n📊 Retrospectos usam partidas confirmadas neste bot. Palpites não alteram resultados.';
 export type Participant = { userId: string; name: string; club?: string };
 export type Result = {
   home: number; away: number; author: string; at: number;
@@ -21,11 +22,12 @@ export type Cup = {
   participants: Participant[]; matches: Match[]; champion?: string; completedAt?: number; cancellationReason?: string;
 };
 type Audit = {
-  actor: string; groupId: string; cupId: string; matchCode?: number; at: number;
+  actor: string; groupId: string; cupId: string | null; matchCode?: number; at: number;
   action: string; before: string; after: string; outcome: 'accepted';
 };
 export type State = {
   groups: Record<string, { authorized: boolean; admins: string[]; clubs: string[] }>;
+  profiles?: Record<string,Record<string,string>>;
   drafts: Record<string, { ownerId: string; expiresAt: number }>;
   cups: Record<string, Cup>;
   processed: Record<string, true>;
@@ -174,7 +176,42 @@ export function apply(input: State, event: Event, env: Environment = environment
   const cmd = parts[0]!.toLowerCase();
   let notices: string[] = [];
   const cheer=['🔥 Chegou pra disputar a taça ou pra render resenha?','🎮 Agora é no controle! A torcida já está de olho.','🍿 Mais um nome na disputa. Vai faltar cadeira nessa arquibancada!','⚽ Tá dentro! O discurso de campeão a gente deixa pra final.','🏆 Vaga garantida. Agora chama aquele rival que fala muito!','📣 A lista está esquentando! Essa Copa promete.'][[...event.id].reduce((n,c)=>n+c.charCodeAt(0),0)%6];
-  if(cmd==='!supabase'){
+  const profiles=s.profiles?.[event.groupId]??{};
+  const groupCups=Object.values(s.cups).filter(c=>c.groupId===event.groupId);
+  if(cmd==='!registrarid'||cmd==='!associarid'){
+    needAdmin();const target=parts[1];const name=cleanName(parts.slice(2).join(' '));
+    requireThat(target&&parts.length>2&&name!=='Participante','Formato: !registrar Nome do técnico | @conta');
+    const people=new Map<string,string>();for(const c of groupCups)for(const p of c.participants)people.set(p.userId,p.name);for(const [id,n] of Object.entries(profiles))people.set(id,n);
+    requireThat(![...people].some(([id,n])=>id!==target&&normalizeName(n)===normalizeName(name)),'Nome já pertence a outra conta. Nenhum histórico foi transferido.');
+    if(cmd==='!registrarid')requireThat(!Object.hasOwn(profiles,target),'Nome desta conta já cadastrado. Use !associar Nome | @conta para atualizar.');
+    s.profiles??={};s.profiles[event.groupId]??={};const before=JSON.stringify(profiles);s.profiles[event.groupId]![target]=name;
+    s.audit.push({actor:event.userId,groupId:event.groupId,cupId:null,at:event.at,action:cmd.slice(1),before,after:JSON.stringify(s.profiles[event.groupId]),outcome:'accepted'});
+    notices.push(`🪪 IDENTIDADE NA ARENA\n${name} está associado à conta marcada.\n✅ Cadastro salvo. Jogos e títulos continuam na mesma conta.`);
+  } else if(cmd==='!registrar'||cmd==='!associar'){
+    needAdmin();throw Error('Formato: '+cmd+' Nome do técnico | @conta — marque uma conta do grupo.');
+  } else if(cmd==='!contasverificadas'){
+    needAdmin();const counts=parts.slice(1).map(Number);requireThat(counts.length===4&&counts.every(n=>Number.isSafeInteger(n)&&n>=0),'Comando inválido.');
+    notices.push(`🔗 CONEXÕES DA ARENA\n✅ ${counts[0]} cadastros conferidos.\n🪪 ${counts[1]} identificadores verificados adicionados.\n⚠️ ${counts[2]} conflitos preservados para revisão.\nAmostra: ${counts[3]} membros (limite 100 por execução). Só pares reconhecidos pelo WhatsApp são associados. Jogos e títulos permanecem intactos.`);
+    s.audit.push({actor:event.userId,groupId:event.groupId,cupId:null,at:event.at,action:'sincronizarcontas',before:'null',after:JSON.stringify(counts),outcome:'accepted'});
+  } else if(cmd==='!sincronizarcontas'){
+    needAdmin();notices.push('🔗 CONTAS CONFERIDAS\nOs vínculos verificados pelo WhatsApp são sincronizados automaticamente ao receber comandos. Contas conflitantes não são unidas por nome.\nPara definir o nome de uma conta: !registrar Nome | @conta.');
+  } else if(cmd==='!revisarnumeros'){
+    needAdmin();const rows=careers(groupCups,profiles);notices.push(`🧮 REVISÃO DA ARENA\n✅ ${rows.length} carreiras reconstruídas a partir do histórico confirmado.\n🎮 ${rows.reduce((n,p)=>n+p.games,0)/2} partidas contabilizadas.\n🏆 ${rows.reduce((n,p)=>n+p.titles,0)} títulos válidos.\nOs números são recalculados em cada consulta; não existem contadores antigos para acumular duplicações.`);
+  } else if(cmd==='!participantes'){
+    const cup=parts[1]?groupCups.find(c=>c.id===parts[1]):active()??groupCups.sort((a,b)=>b.createdAt-a.createdAt)[0];
+    requireThat(cup,'Nenhuma Copa encontrada neste grupo.');notices.push(`🏟️ QUEM ESTÁ NA DISPUTA\nCopa ${cup.id} · ${cup.participants.length}/${cup.size}\n`+cup.participants.map((p,i)=>`${i+1}. ${profiles[p.userId]??p.name} · ${p.club??'aguardando sorteio'}`).join('\n'));
+  } else if(cmd==='!carreira'||cmd==='!carreiraid'||cmd==='!moral'){
+    const rows=careers(groupCups,profiles);
+    if(cmd==='!moral'){
+      const page=Number(parts[1]??1);requireThat(Number.isSafeInteger(page)&&page>0&&page<=Math.max(1,Math.ceil(rows.length/10)),'Formato: !moral número-da-página');
+      notices.push(`⭐ MORAL NA ARENA · ${page}/${Math.max(1,Math.ceil(rows.length/10))}\n`+(rows.slice((page-1)*10,page*10).map((p,i)=>`${(page-1)*10+i+1}. ${p.name} — ${p.points} pts\n🏆 ${p.titles} · 🥈 ${p.vices} · ✅ ${p.wins}`).join('\n\n')||'A disputa ainda vai começar!')+'\n\nPontuação: título 100 · vice 40 · vitória 5 · empate 2 · cada jogo dos recordes invicto e de vitórias 2. Medalhas: primeira taça +10, sequência de 5 vitórias +15, 10 invicto +25. Bônus uma vez por conquista.\nMais posições: !moral 2');
+    }else{
+      const search=normalizeName(parts.slice(1).join(' '));const found=cmd==='!carreiraid'?rows.filter(p=>p.id===parts[1]):search?rows.filter(p=>normalizeName(p.name)===search):rows.filter(p=>p.id===event.userId);
+      requireThat(found.length<=1,'Nome ambíguo. Marque a conta com !carreira @conta.');
+      requireThat(found.length||!search,'Nome não encontrado. Use !carreira ou marque a conta.');
+      const p=found[0]??careers([],{[event.userId]:cleanName(event.name)})[0]!;notices.push(careerText(p,rows.findIndex(r=>r.id===p.id)+1));
+    }
+  } else if(cmd==='!supabase'){
     requireThat(parts.length===1,'Formato: !supabase');
     notices.push('🗄️ DIAGNÓSTICO SUPABASE\n✅ Comando reconhecido em grupo autorizado.');
   } else if(cmd==='!teste'){
@@ -190,7 +227,7 @@ export function apply(input: State, event: Event, env: Environment = environment
     notices.push(commandMenu);
   } else if(cmd==='!confronto'||cmd==='!confrontoids'){
     const cups=Object.values(s.cups).filter(c=>c.groupId===event.groupId&&c.status!=='cancelled');
-    const people=new Map<string,string>();for(const c of cups)for(const p of c.participants)people.set(p.userId,p.name);
+    const people=new Map<string,string>();for(const c of cups)for(const p of c.participants)people.set(p.userId,p.name);for(const [id,n] of Object.entries(profiles))people.set(id,n);
     const normalize=(v:string)=>v.normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim().replace(/\s+/g,' ');
     let ids:string[];
     if(cmd==='!confrontoids'){ids=parts.slice(1);requireThat(ids.length===2&&ids.every(id=>people.has(id)),'Nome ainda não registrado em Copas deste grupo. Entre em uma Copa antes de consultar o retrospecto.');}
@@ -234,7 +271,7 @@ export function apply(input: State, event: Event, env: Environment = environment
     requireThat(!cup.participants.some(p => p.userId === event.userId), 'Você já está inscrito nesta Copa.');
     requireThat(cup.participants.length < cup.size, 'Inscrições encerradas.');
     const before = JSON.stringify(cup);
-    cup.participants.push({ userId: event.userId, name: cleanName(event.name) });
+    cup.participants.push({ userId: event.userId, name: profiles[event.userId]??cleanName(event.name) });
     notices.push(`✅ ENTRADA APROVADA\n${cleanName(event.name)} entrou no Minicamp!\n👥 Participantes: ${cup.participants.length}/${cup.size}\n${cheer}`);
     if (cup.participants.length === cup.size) {
       const pool = [...new Set(group.clubs.map(c => c.trim()).filter(Boolean))];
@@ -387,7 +424,7 @@ export function apply(input: State, event: Event, env: Environment = environment
   } else if (cmd === '!stats') {
     const cups = Object.values(s.cups).filter(c=>c.groupId===event.groupId&&c.status!=='cancelled');
     const search=parts.slice(1).join(' ').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
-    const named=new Map<string,string>();for(const c of cups)for(const p of c.participants)named.set(p.userId,p.name);
+    const named=new Map<string,string>();for(const c of cups)for(const p of c.participants)named.set(p.userId,p.name);for(const [id,n] of Object.entries(profiles))named.set(id,n);
     const candidates=search?[...named].filter(([,name])=>name.normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase()===search).map(([id])=>id):[event.userId];
     requireThat(candidates.length===1,'Nome não encontrado ou ambíguo. Cada jogador pode consultar a própria conta com !stats.');
     const target=candidates[0]!;let wins=0,losses=0,gf=0,ga=0,titles=0,runnerUp=0,streak=0,record=0;

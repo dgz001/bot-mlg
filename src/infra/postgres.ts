@@ -65,7 +65,13 @@ export async function processEvent(database: Database, event: Event, env: Enviro
       }
       state.cups[cup.id] = cup;
     }
+    const profiles=await q.query<{userId:string;name:string}>('SELECT user_id AS "userId",display_name AS name FROM mlg_bot.coach_profiles WHERE group_id=$1',[event.groupId]);
+    state.profiles={[event.groupId]:Object.fromEntries(profiles.rows.map(p=>[p.userId,p.name]))};
     const output = apply(state,event,env);
+    for(const [id,name] of Object.entries(output.state.profiles?.[event.groupId]??{})){
+      if(state.profiles[event.groupId]?.[id]===name)continue;
+      await q.query('INSERT INTO mlg_bot.coach_profiles(group_id,user_id,display_name) VALUES($1,$2,$3) ON CONFLICT(group_id,user_id) DO UPDATE SET display_name=excluded.display_name',[event.groupId,id,name]);
+    }
     for (const cup of Object.values(output.state.cups)) {
       if (JSON.stringify(state.cups[cup.id]) === JSON.stringify(cup)) continue;
       await q.query(`INSERT INTO mlg_bot.cups(id,group_id,created_by,created_at,size,status,champion,completed_at,cancellation_reason)
