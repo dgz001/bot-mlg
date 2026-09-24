@@ -34,7 +34,8 @@ export function privateControl(options:{secret:string;origin:string;socketPath:s
     let authenticated=false;
     try { authenticated=options.authenticate?await options.authenticate(authorization):validControlToken(authorization,options.secret); }
     catch { reply(503,{error:'Verificação da senha indisponível. Tente novamente.'});return; }
-    if(!authenticated){failures++;reply(401,{error:'Senha inválida'});return;}
+    // An automatic cookie probe from a new browser is not a bad password.
+    if(!authenticated){if(password)failures++;reply(401,{error:'Senha inválida'});return;}
     if(password)res.setHeader('Set-Cookie',session.issue(password));
     let body='',ownsOperation=false;
     req.setTimeout(10000,()=>req.destroy());
