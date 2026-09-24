@@ -64,6 +64,16 @@ async function connect(){
   auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);await auth.save();
   if(socket===current&&enabled()&&auth.data.groups.includes(group))await current.sendMessage(group,{text:commandMenu});return;
  }
+ if(/^!supabase\s*$/i.test(text)&&auth.data.groups.includes(group)&&enabled('minicamp')){
+  const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
+  auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);await auth.save();
+  let answer='🗄️ SUPABASE\n⚠️ Diagnóstico indisponível: serviço do Minicamp não configurado.';
+  if(cupApi){
+   try{const health=await cupApi<{database:boolean}>({action:'health'});answer=health.database===true?'🗄️ SUPABASE\n✅ Conexão com o banco verificada agora.':'🗄️ SUPABASE\n⚠️ O banco não confirmou a verificação.';}
+   catch{answer='🗄️ SUPABASE\n⚠️ Não foi possível verificar a conexão agora. Tente novamente em instantes.';}
+  }
+  if(socket===current&&!stopping&&enabled('minicamp')&&auth.data.groups.includes(group))await current.sendMessage(group,{text:answer});return;
+ }
  if(cupApi&&minicampCommand(text.trim())){
   if(!enabled('minicamp'))return;
   if(!auth.data.groups.includes(group)||!message.key.participant||text.length>1000)return;
