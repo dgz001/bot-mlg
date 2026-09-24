@@ -18,4 +18,12 @@ test('community jokes reflect the archive without inventing official results',()
  assert.match(reply('g','o Van vai negociar de novo?'),/Van|negocia/);
  assert.match(reply('g','fala do Arthur'),/Arthur|zaga/);
  assert.match(reply('g','a internet do Anderson caiu?'),/Anderson|roteador|conexão/);
+ assert.match(reply('g','o GS vai jogar com Amério?'),/GS|Amério/);
+ assert.match(reply('g','e o Ronald na Roma?'),/Ronald|Roma/);
+ assert.match(reply('g','Rafa Santos vai jogar?'),/Rafa Santos/);
+ assert.match(reply('g','mercado e negociação da janela'),/janela|negocia|Mercado|elenco|proposta|privado|Mercado/i);
+ for(const question of ['Amério ganhou do GS?', 'Van é vingativo?', 'o Ronald vai ser campeão?']){
+  const response=reply('g',question);
+  assert.doesNotMatch(response,/\+?\d[\d\s()-]{8,}\d|campeão oficial|venceu por \d+x\d+/i);
+ }
 });
