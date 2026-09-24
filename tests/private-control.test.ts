@@ -19,8 +19,10 @@ test('painel privado: senha forte, origem e bloqueio de tentativas',async()=>{
  new Script(script).runInNewContext({document:dom,AbortSignal,setTimeout,clearTimeout,fetch:async(url:string,options:any)=>{if(url==='/control')return {ok:false,json:async()=>({error:'Senha inválida'})};calls++;assert.equal(url,'/readyz');assert.equal(options.headers,undefined);return {ok:true,text:async()=> 'OK'};}});
  await nodes.get('wake').onclick();assert.equal(calls,1);assert.equal(nodes.get('wake').disabled,false);assert.match(nodes.get('wake-status').textContent,/Bot pronto/);
  const call=(origin:string,token:string,action='status')=>fetch(base+'/control',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json','X-MLG-Control':'1',Authorization:'Bearer '+token},body:JSON.stringify({action})});
- assert.equal((await call('https://evil.example',secret)).status,403);
+ const anonymous=()=>fetch(base+'/control',{method:'POST',headers:{Origin:'https://bot.example','Content-Type':'application/json','X-MLG-Control':'1'},body:'{"action":"status"}'});
+ for(let i=0;i<8;i++)assert.equal((await anonymous()).status,401);
  assert.equal((await call('https://bot.example',secret,'reset-session')).status,400);
+ assert.equal((await call('https://evil.example',secret)).status,403);
  for(let i=0;i<5;i++)assert.equal((await call('https://bot.example','wrong')).status,401);
  assert.equal((await call('https://bot.example',secret)).status,429);
  }finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));}
