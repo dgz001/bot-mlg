@@ -1,7 +1,6 @@
 // Deployed with a SHA-256 digest injected by provisioning; never embed the token.
 const EXPECTED_DIGEST = '__DIGEST__';
 const bucket='mlg-bot-private-session';
-const object='resenha-v1.json';
 Deno.serve(async(req:Request)=>{
  try{
  const token=req.headers.get('authorization')?.replace(/^Bearer /,'')??'';
@@ -9,6 +8,8 @@ Deno.serve(async(req:Request)=>{
  const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(token)))).map(x=>x.toString(16).padStart(2,'0')).join('');
  let mismatch=hash.length^EXPECTED_DIGEST.length;for(let i=0;i<hash.length;i++)mismatch|=hash.charCodeAt(i)^EXPECTED_DIGEST.charCodeAt(i);
  if(mismatch!==0)return new Response(null,{status:401});
+ const panel=new URL(req.url).pathname.endsWith('/panel-credentials');
+ const object=panel?'panel-credentials.json':'resenha-v1.json';
  const base=Deno.env.get('SUPABASE_URL')!+'/storage/v1';
  const headers={Authorization:'Bearer '+Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'),'Content-Type':'application/json'};
  const objectUrl=base+'/object/'+bucket+'/'+object;
@@ -19,7 +20,7 @@ Deno.serve(async(req:Request)=>{
  }
  if(req.method!=='PUT')return new Response(null,{status:405});
  const raw=await req.text();if(raw.length>4_000_000)return new Response(null,{status:413});const value=JSON.parse(raw);
- if(value.version!==1||typeof value.ciphertext!=='string'||typeof value.nonce!=='string'||typeof value.tag!=='string'||value.nonce.length!==16||value.tag.length!==24)return new Response(null,{status:400});
+ if(panel ? (value.version!==1||!/^([0-9a-f]{32})$/.test(value.salt)||!/^([0-9a-f]{64})$/.test(value.digest)) : (value.version!==1||typeof value.ciphertext!=='string'||typeof value.nonce!=='string'||typeof value.tag!=='string'||value.nonce.length!==16||value.tag.length!==24))return new Response(null,{status:400});
  const create=await fetch(base+'/bucket',{method:'POST',headers,body:JSON.stringify({id:bucket,name:bucket,public:false,file_size_limit:4_000_000})});
  if(!create.ok&&create.status!==409){const e=await create.json();if(!['409','Duplicate'].includes(String(e.statusCode??e.code)))return new Response(null,{status:503});}
  const saved=await fetch(objectUrl,{method:'POST',headers:{...headers,'x-upsert':'true'},body:JSON.stringify(value)});
