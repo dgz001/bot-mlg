@@ -23,7 +23,7 @@ const cupApi=process.env.MINICAMP_URL&&process.env.MINICAMP_TOKEN?minicampClient
 delete process.env.MINICAMP_TOKEN;
 const cupClubs=[...minicampClubs];
 const configuredCups=new Set<string>();
-let cupBusy=false,lastCupTick=Date.now(),cupHealthy=!cupApi,cupTimer:ReturnType<typeof setInterval>|undefined;
+let cupBusy=false,lastCupTick=Date.now(),lastCupSuccessAt=0,cupHealthy=!cupApi,cupTimer:ReturnType<typeof setInterval>|undefined;
 const controlPath='/tmp/mlg-bot-control.sock';
 const portal=privateControl({secret:process.env.CONTROL_PASSWORD,origin:process.env.CONTROL_ORIGIN,socketPath:controlPath,resenha:true});
 for(const name of ['AUTH_ENCRYPTION_KEY','CONTROL_PASSWORD','SESSION_VAULT_TOKEN','DATABASE_URL','APP_DATABASE_PASSWORD'])delete process.env[name];
@@ -153,7 +153,7 @@ async function cupTick(){
    let sent=false;try{await current.sendMessage(m.group_id,{text:m.body},{messageId:m.wa_message_id});sent=true;}catch{log('MINICAMP_SEND_RETRY');}
    await cupApi({action:'ack',id:m.id,lease:m.lease,sent});
   }
-  cupHealthy=true;lastCupTick=Date.now();
+  cupHealthy=true;lastCupTick=lastCupSuccessAt=Date.now();
  }catch{cupHealthy=false;log('MINICAMP_RETRY');}finally{
   cupBusy=false;
   // Drain persisted requests promptly after recovery without overlapping workers.
@@ -161,7 +161,7 @@ async function cupTick(){
  }
 }
 const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>client.destroy());client.on('data',chunk=>{buffer+=chunk.toString();if(buffer.length>8192){client.destroy();return;}if(!buffer.includes('\n'))return;client.pause();void(async()=>{
- const req=JSON.parse(buffer.trim());if(req.action==='status')return {controls:auth.data.controls??{enabled:true,resenha:true,minicamp:true},queued:auth.data.cupInbox?.length??0,phase,authorizedGroups:auth.data.groups.length,minicamp:cupApi?(cupHealthy?'READY':'RETRYING'):'DISABLED'};
+ const req=JSON.parse(buffer.trim());if(req.action==='status')return {controls:auth.data.controls??{enabled:true,resenha:true,minicamp:true},queued:auth.data.cupInbox?.length??0,phase,authorizedGroups:auth.data.groups.length,minicamp:cupApi?(cupHealthy?'READY':'RETRYING'):'DISABLED',minicampLastSuccessAt:lastCupSuccessAt||null,checkedAt:Date.now()};
  if(req.action==='settings'){
  const previous=auth.data.controls;auth.data.controls=parseControls(req.settings);
  try{await auth.save();}catch{auth.data.controls=previous;throw Error('Settings persistence failed');}log('BOT_CONTROLS_UPDATED');return {controls:auth.data.controls,phase,updated:true};
