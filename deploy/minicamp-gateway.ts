@@ -147,9 +147,9 @@ Deno.serve(async req=>{
      eventText=`!contasverificadas ${checked} ${linked} ${conflicts} ${e.targets.length}`;
     }
    }
-   if(/^!(?:carreira|registrar|associar)\s/i.test(eventText)&&Array.isArray(e.targets)&&e.targets.length===1&&e.targets.every(validAliases)){
+   if(/^!(?:carreira|jornada|registrar|associar)\s/i.test(eventText)&&Array.isArray(e.targets)&&e.targets.length===1&&e.targets.every(validAliases)){
     const command=eventText.trim().split(/\s+/)[0].toLowerCase();
-    if(command!=='!carreira'){
+    if(command!=='!carreira'&&command!=='!jornada'){
      const admin=await q.query('SELECT 1 FROM mlg_bot.admins a JOIN mlg_bot.groups g ON g.id=a.group_id WHERE a.group_id=$1 AND a.user_id=$2 AND g.admins_configured',[e.group,id]);
      if(!admin.rows.length){eventText=command;}else{
       const name=eventText.slice(command.length).split('|')[0].trim();

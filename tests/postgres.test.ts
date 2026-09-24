@@ -145,6 +145,8 @@ test('gateway real: menção, bloqueio de comandos internos e sincronização se
   assert.equal((await send('!associar Alterado | @conta',[['200@lid']],['300@s.whatsapp.net'])).status,200);
   assert.equal((await f.pool.query("SELECT display_name FROM mlg_bot.coach_profiles WHERE group_id='100@g.us'")).rows[0].display_name,'Técnico');
   assert.equal((await send('!carreira @conta',[['200@lid']])).status,200);
+  assert.equal((await send('!jornada @conta',[['200@lid']])).status,200);
+  assert.match((await f.pool.query("SELECT body FROM mlg_bot.outbox WHERE body LIKE '🎮 CARREIRA%' ORDER BY id DESC LIMIT 1")).rows[0].body,/Técnico/);
   const before=await f.pool.query('SELECT jid,user_id FROM mlg_bot.wa_identities ORDER BY jid');
   assert.equal((await send('!sincronizarcontas',[['200@lid','300@s.whatsapp.net'],['200@lid','201@s.whatsapp.net']])).status,200);
   const after=await f.pool.query('SELECT jid,user_id FROM mlg_bot.wa_identities ORDER BY jid');
