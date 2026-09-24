@@ -39,3 +39,22 @@ test('reinício exige senha e origem corretas, funciona sem socket do bot',async
   const r=await call('https://bot.example',secret);assert.equal(r.status,202);assert.equal((await r.json() as any).restarting,true);assert.equal(restarted,1);
  }finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));}
 });
+
+test('troca de senha exige autenticação e invalida a senha anterior imediatamente',async()=>{
+ let password='a'.repeat(43);
+ const handler=privateControl({secret:password,origin:'https://bot.example',socketPath:'/tmp/missing-worker.sock',
+  authenticate:async header=>header==='Bearer '+password,
+  rotatePassword:async(header,next)=>{if(header!=='Bearer '+password||typeof next!=='string'||next.length<32)throw Error('Senha inválida.');password=next;}});
+ const server=createServer((req,res)=>{void handler(req,res);});
+ await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
+ const addr=server.address();assert.ok(addr&&typeof addr==='object');
+ const call=(token:string,next:string)=>fetch('http://127.0.0.1:'+addr.port+'/control',{method:'POST',headers:{Origin:'https://bot.example','Content-Type':'application/json','X-MLG-Control':'1',Authorization:'Bearer '+token},body:JSON.stringify({action:'change-password',newPassword:next})});
+ try{
+  const old=password,next='b'.repeat(43);
+  assert.equal((await call('wrong',next)).status,401);
+  assert.equal((await call(old,'short')).status,400);
+  assert.equal((await call(old,next)).status,200);
+  assert.equal((await call(old,'c'.repeat(43))).status,401);
+  assert.equal((await call(next,'c'.repeat(43))).status,200);
+ }finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));}
+});
