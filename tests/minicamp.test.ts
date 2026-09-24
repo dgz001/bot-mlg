@@ -44,12 +44,27 @@ for (const size of [4, 8, 16]) {
     assert.equal(cup.matches.length, size - 1);
     assert.equal(new Set(cup.matches.map(m => m.code)).size, size - 1);
     assert.equal(cup.matches.filter(m => m.winner === cup.champion).length, Math.log2(size));
-    assert.ok(h.send('u0', '!campeoes').notices.join('\n').includes(cup.champion!));
+    const gallery=h.send('u0','!campeoes').notices.join('\n');
+    assert.ok(gallery.includes(cup.champion!));
+    assert.match(gallery,/GALERIA DOS CAMPEÕES.*Edição 1/s);
+    assert.ok(!gallery.includes(cup.id));
     h.send('admin', '!novacopa');
     h.send('admin', '1');
     assert.equal(Object.values(h.state.cups).filter(c => c.status === 'completed').length, 1);
   });
 }
+
+test('consultas exibem edições legíveis e aceitam seu número sem revelar código da Copa',()=>{
+ const h=harness();const cup=h.start(4);
+ for(const command of ['!copa','!historico','!participantes','!minhascopas']){
+  const result=h.send('u0',command).notices[0]!;
+  assert.match(result,/Edição 1/);assert.ok(!result.includes(cup.id));
+ }
+ assert.match(h.send('u0','!participantes 1').notices[0]!,/Edição 1/);
+ assert.throws(()=>h.send('u0','!historico 2'),/Página inválida/);
+ h.send('admin','!anularcopa 1');assert.equal(h.state.cups[cup.id]!.status,'cancelled');
+ assert.match(h.send('u0','!historico').notices[0]!,/anulada/);
+});
 
 test('evento repetido não cria copa, inscrição ou confirmação duplicada', () => {
   const h = harness();
@@ -225,7 +240,8 @@ test('lista aprovada de 89 clubes é usada no sorteio e preservada no restart',a
  assert.equal(minicampClubs.length,89);assert.equal(new Set(minicampClubs).size,89);
  for(const size of [4,8,16]){
   const h=harness();h.state.groups.g!.clubs=[...minicampClubs];
-  assert.match(h.send('visitante','!clubes').notices[0]!,/Urawa Red Diamonds/);
+  assert.match(h.send('visitante','!clubes 5').notices[0]!,/Urawa Red Diamonds/);
+  assert.doesNotMatch(h.send('visitante','!clubes').notices[0]!,/Urawa Red Diamonds/);
   const c=h.start(size);assert.equal(new Set(c.participants.map(p=>p.club)).size,size);
   assert.ok(c.participants.every(p=>minicampClubs.includes(p.club!)));
   const assignments=JSON.stringify(c.participants);h.restart();assert.equal(JSON.stringify(h.state.cups[c.id]!.participants),assignments);
