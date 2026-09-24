@@ -180,6 +180,13 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  auth.data.cupInbox=auth.data.cupInbox?.filter(e=>e.group!==req.group);
  await auth.save();log('GROUP_REVOKED');return {revoked:true};
  }
+ if(req.action==='leave-group'){
+  if(typeof req.group!=='string'||!req.group.endsWith('@g.us')||auth.data.groups.includes(req.group))throw Error('Revoke group before leaving');
+  if(phase!=='CONNECTED'||!socket)throw Error('WhatsApp unavailable');
+  const participating=await socket.groupFetchAllParticipating();
+  if(!Object.hasOwn(participating,req.group))return {left:true,alreadyLeft:true};
+  await socket.groupLeave(req.group);log('UNAUTHORIZED_GROUP_LEFT');return {left:true};
+ }
  if(['setadmins','history-candidates','history-review'].includes(req.action)){
  if(!cupApi||!socket||!auth.data.groups.includes(req.group))throw Error('Group unavailable');
  await configureCup(req.group,socket);
