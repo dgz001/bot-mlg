@@ -368,3 +368,39 @@ test('teste é diagnóstico sem mutação de Copa e não declara banco verificad
  assert.deepEqual(h.send('u0','!supabase','db-check').notices,[]);
  assert.throws(()=>h.send('u0','!supabase extra'),/Formato/);
  });
+
+test('jornada, arquivo e vistoria têm identidade própria e preservam o estado',()=>{
+ const h=harness();
+ assert.throws(()=>h.send('u0','!vistoria'),/ADM/);
+ assert.match(h.send('admin','!vistoria').notices[0]!,/Nenhuma Copa ativa/);
+ h.send('admin','!novacopa');h.send('admin','3');
+ for(let i=0;i<16;i++)h.send(`u${i}`,'!entrar');
+ const current=Object.values(h.state.cups)[0]!;
+ const snapshot=JSON.stringify(h.state.cups);
+ assert.match(h.send('u0','!jornada').notices[0]!,/CARREIRA NA ARENA/);
+ assert.match(h.send('u0','!jornada u1').notices[0]!,/u1/);
+ const first=h.send('u0','!arquivo').notices[0]!;
+ assert.match(first,/ARQUIVO DA ARENA · 1\/2/);
+ assert.match(first,/!arquivo 2/);
+ const second=h.send('u0','!arquivo 2').notices[0]!;
+ assert.match(second,/ARQUIVO DA ARENA · 2\/2/);
+ assert.doesNotMatch(second,/!arquivo 3/);
+ assert.throws(()=>h.send('u0','!arquivo 3'),/Página inválida/);
+ assert.match(h.send('admin','!vistoria').notices[0]!,/partidas a jogar/);
+ assert.equal(JSON.stringify(h.state.cups),snapshot);
+ const match=current.matches[0]!;
+ const proposal=h.send(match.home,`!resultado ${match.code} 3x1`).notices[0]!;
+ assert.match(proposal,/Aguardando confirmação/);
+ assert.match(h.send('admin','!vistoria').notices[0]!,new RegExp(`#${match.code}`));
+ h.send(match.away,`!contestar ${match.code}`);
+ assert.match(h.send('admin','!vistoria').notices[0]!,/Resolver disputa/);
+});
+
+test('arquivo não mistura grupos nem mostra Copa anulada',()=>{
+ const h=harness();h.start(4);
+ h.state.groups.other={authorized:true,admins:['admin'],clubs};
+ assert.match(h.send('admin','!arquivo','out-1','other').notices[0]!,/Ainda não há inscrições/);
+ const cup=Object.values(h.state.cups)[0]!;
+ h.send('admin',`!anularcopa ${cup.id}`);
+ assert.match(h.send('admin','!arquivo').notices[0]!,/Ainda não há inscrições/);
+});

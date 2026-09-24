@@ -85,8 +85,12 @@ async function connect(){
   }
   auth.data.cupInbox??=[];
   if(!auth.data.cupInbox.some(e=>e.group===group&&e.id===id&&e.aliases.some(a=>aliases.includes(a)))){
-   if(auth.data.cupInbox.length>=100){log('MINICAMP_QUEUE_FULL');return;}
-   let targets=/^!(?:confronto|carreira|registrar|associar)\s/i.test(text)&&context?.mentionedJid?.length&&context.mentionedJid.length<=2?await Promise.all(context.mentionedJid.map(j=>cupAliases(j,current))):undefined;
+   if(auth.data.cupInbox.length>=100){
+    log('MINICAMP_QUEUE_FULL');
+    if(socket===current&&enabled('minicamp'))try{await current.sendMessage(group,{text:'⚠️ O Minicamp está com muitas solicitações aguardando. Este comando não foi registrado; tente novamente em instantes.'});}catch{log('MINICAMP_QUEUE_NOTICE_FAILED');}
+    return;
+   }
+   let targets=/^!(?:confronto|carreira|jornada|registrar|associar)\s/i.test(text)&&context?.mentionedJid?.length&&context.mentionedJid.length<=2?await Promise.all(context.mentionedJid.map(j=>cupAliases(j,current))):undefined;
    if(targets?.length&&/^!(?:registrar|associar)\s/i.test(text)){
     const metadata=await current.groupMetadata(group);
     const members=new Set(metadata.participants.map(p=>jidNormalizedUser(p.id)));
@@ -150,7 +154,11 @@ async function cupTick(){
    await cupApi({action:'ack',id:m.id,lease:m.lease,sent});
   }
   cupHealthy=true;lastCupTick=Date.now();
- }catch{cupHealthy=false;log('MINICAMP_RETRY');}finally{cupBusy=false;}
+ }catch{cupHealthy=false;log('MINICAMP_RETRY');}finally{
+  cupBusy=false;
+  // Drain persisted requests promptly after recovery without overlapping workers.
+  if(!stopping&&cupHealthy&&auth.data.cupInbox?.some(e=>auth.data.groups.includes(e.group)))setTimeout(()=>{void cupTick();},250);
+ }
 }
 const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>client.destroy());client.on('data',chunk=>{buffer+=chunk.toString();if(buffer.length>8192){client.destroy();return;}if(!buffer.includes('\n'))return;client.pause();void(async()=>{
  const req=JSON.parse(buffer.trim());if(req.action==='status')return {controls:auth.data.controls??{enabled:true,resenha:true,minicamp:true},queued:auth.data.cupInbox?.length??0,phase,authorizedGroups:auth.data.groups.length,minicamp:cupApi?(cupHealthy?'READY':'RETRYING'):'DISABLED'};
@@ -160,7 +168,9 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  }
  if(req.action==='revoke'){
  if(typeof req.group!=='string'||!auth.data.groups.includes(req.group))throw Error('Invalid group');
- auth.data.groups=auth.data.groups.filter(g=>g!==req.group);await auth.save();log('GROUP_REVOKED');return {revoked:true};
+ auth.data.groups=auth.data.groups.filter(g=>g!==req.group);
+ auth.data.cupInbox=auth.data.cupInbox?.filter(e=>e.group!==req.group);
+ await auth.save();log('GROUP_REVOKED');return {revoked:true};
  }
  if(['setadmins','history-candidates','history-review'].includes(req.action)){
  if(!cupApi||!socket||!auth.data.groups.includes(req.group))throw Error('Group unavailable');
