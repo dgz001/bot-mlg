@@ -1,6 +1,7 @@
 import {minicampClubs} from './minicamp/clubs.ts';
 import {commandMenu} from './minicamp/engine.ts';
 import {moduleEnabled,parseControls} from './infra/bot-controls.ts';
+import {allowsGroup,groupMode,validGroupMode} from './infra/group-modes.ts';
 import {minicampClient,minicampCommand,type PendingCupEvent} from './minicamp/client.ts';
 import {loadRoster} from './resenha/matchup.ts';
 import makeWASocket,{DisconnectReason,jidNormalizedUser,extractMessageContent} from '@whiskeysockets/baileys';
@@ -34,6 +35,7 @@ const pairingReady=new WeakSet<object>();
 let queue=Promise.resolve();
 let banterReply:ReturnType<typeof createBanterReply>;
 const enabled=(module?:'resenha'|'minicamp')=>moduleEnabled(auth.data.controls,module);
+const inChannel=(group:string,module:'resenha'|'minicamp')=>auth.data.groups.includes(group)&&allowsGroup(auth.data.groupModes,group,module);
 async function connect(){
  if(stopping)return;phase='CONNECTING';
  const current=makeWASocket({auth:auth.state,logger:pino({level:'silent'}),syncFullHistory:false,markOnlineOnConnect:false,shouldSyncHistoryMessage:()=>false});socket=current;
@@ -59,12 +61,12 @@ async function connect(){
  const self=[current.user?.id,current.user?.lid].filter(Boolean).map(v=>jidNormalizedUser(v!));
  const mention=context?.mentionedJid?.some(j=>self.includes(jidNormalizedUser(j)));
  const reply=context?.participant&&self.includes(jidNormalizedUser(context.participant));
- if(/^!comandos\s*$/i.test(text)&&auth.data.groups.includes(group)){
+ if(/^!comandos\s*$/i.test(text)&&inChannel(group,'minicamp')){
   const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
   auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);await auth.save();
-  if(socket===current&&enabled()&&auth.data.groups.includes(group))await current.sendMessage(group,{text:commandMenu});return;
+  if(socket===current&&enabled()&&inChannel(group,'minicamp'))await current.sendMessage(group,{text:commandMenu});return;
  }
- if(/^!supabase\s*$/i.test(text)&&auth.data.groups.includes(group)&&enabled('minicamp')){
+ if(/^!supabase\s*$/i.test(text)&&inChannel(group,'minicamp')&&enabled('minicamp')){
   const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
   auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);await auth.save();
   let answer='🗄️ SUPABASE\n⚠️ Diagnóstico indisponível: serviço do Minicamp não configurado.';
@@ -72,11 +74,11 @@ async function connect(){
    try{const health=await cupApi<{database:boolean}>({action:'health'});answer=health.database===true?'🗄️ SUPABASE\n✅ Conexão com o banco verificada agora.':'🗄️ SUPABASE\n⚠️ O banco não confirmou a verificação.';}
    catch{answer='🗄️ SUPABASE\n⚠️ Não foi possível verificar a conexão agora. Tente novamente em instantes.';}
   }
-  if(socket===current&&!stopping&&enabled('minicamp')&&auth.data.groups.includes(group))await current.sendMessage(group,{text:answer});return;
+  if(socket===current&&!stopping&&enabled('minicamp')&&inChannel(group,'minicamp'))await current.sendMessage(group,{text:answer});return;
  }
  if(cupApi&&minicampCommand(text.trim())){
   if(!enabled('minicamp'))return;
-  if(!auth.data.groups.includes(group)||!message.key.participant||text.length>1000)return;
+  if(!inChannel(group,'minicamp')||!message.key.participant||text.length>1000)return;
   const aliases=await cupAliases(message.key.participant,current);
   if(/^!config(?:\s|$)/i.test(text.trim())){
    await configureCup(group,current);
@@ -104,10 +106,9 @@ async function connect(){
   }
   void cupTick();return;
  }
- if(!enabled('resenha'))return;
+ if(!enabled('resenha')||!inChannel(group,'resenha'))return;
  const request=/^!palpite(?:\s|$)/i.test(text)?text.replace(/^!palpite\s*/i,'')+' quem ganha':/^!tecnicos\s*$/i.test(text)?'__LIST_COACHES__':banterRequest(text,Boolean(mention),Boolean(reply));if(request===null)return;
- if(!auth.data.groups.includes(group)){log('RESENHA_GROUP_NOT_AUTHORIZED');return;}
- const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
+  const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
  auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);
  let archive='';
  if(cupApi){
@@ -121,7 +122,7 @@ async function connect(){
  }
  const response=request==='__LIST_COACHES__'?'🎮 TÉCNICOS DA MASTER LIGA\n'+loadRoster(process.env.MLG_ROSTER_JSON).map(c=>c.name+' — '+c.club).join('\n')+'\nUse nomes completos ou clubes nos palpites.':banterReply(group,request)+archive;
  await auth.save();
- if(socket===current&&!stopping&&auth.data.groups.includes(group)&&enabled('resenha')){await current.sendMessage(group,{text:response});log('RESENHA_SENT');}
+ if(socket===current&&!stopping&&inChannel(group,'resenha')&&enabled('resenha')){await current.sendMessage(group,{text:response});log('RESENHA_SENT');}
  }).catch(()=>fail('MESSAGE_PROCESSING_FAILED'));}
  });
 }
@@ -143,13 +144,13 @@ async function cupTick(){
  try{
   for(const event of (auth.data.cupInbox??[]).slice(0,5)){
    if(!enabled('minicamp'))break;
-   if(!auth.data.groups.includes(event.group))continue;
+   if(!inChannel(event.group,'minicamp'))continue;
    await configureCup(event.group,current);await cupApi({action:'event',event});
    auth.data.cupInbox=auth.data.cupInbox!.filter(e=>e!==event);await auth.save();
   }
   const batch=await cupApi<{messages:{id:string;group_id:string;body:string;wa_message_id:string;lease:string}[]}>({action:'poll'});
   for(const m of batch.messages){
-   if(!auth.data.groups.includes(m.group_id)||socket!==current||stopping||!enabled('minicamp')){await cupApi({action:'ack',id:m.id,lease:m.lease,sent:false});continue;}
+   if(!inChannel(m.group_id,'minicamp')||socket!==current||stopping||!enabled('minicamp')){await cupApi({action:'ack',id:m.id,lease:m.lease,sent:false});continue;}
    let sent=false;try{await current.sendMessage(m.group_id,{text:m.body},{messageId:m.wa_message_id});sent=true;}catch{log('MINICAMP_SEND_RETRY');}
    await cupApi({action:'ack',id:m.id,lease:m.lease,sent});
   }
@@ -157,11 +158,17 @@ async function cupTick(){
  }catch{cupHealthy=false;log('MINICAMP_RETRY');}finally{
   cupBusy=false;
   // Drain persisted requests promptly after recovery without overlapping workers.
-  if(!stopping&&cupHealthy&&auth.data.cupInbox?.some(e=>auth.data.groups.includes(e.group)))setTimeout(()=>{void cupTick();},250);
+  if(!stopping&&cupHealthy&&auth.data.cupInbox?.some(e=>inChannel(e.group,'minicamp')))setTimeout(()=>{void cupTick();},250);
  }
 }
 const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>client.destroy());client.on('data',chunk=>{buffer+=chunk.toString();if(buffer.length>8192){client.destroy();return;}if(!buffer.includes('\n'))return;client.pause();void(async()=>{
  const req=JSON.parse(buffer.trim());if(req.action==='status')return {controls:auth.data.controls??{enabled:true,resenha:true,minicamp:true},queued:auth.data.cupInbox?.length??0,phase,authorizedGroups:auth.data.groups.length,minicamp:cupApi?(cupHealthy?'READY':'RETRYING'):'DISABLED',minicampLastSuccessAt:lastCupSuccessAt||null,checkedAt:Date.now()};
+ if(req.action==='set-group-mode'){
+ if(typeof req.group!=='string'||!auth.data.groups.includes(req.group)||!validGroupMode(req.mode))throw Error('Invalid group mode');
+ auth.data.groupModes??={};const previous=auth.data.groupModes[req.group];auth.data.groupModes[req.group]=req.mode;
+ try{await auth.save();}catch{if(previous)auth.data.groupModes[req.group]=previous;else delete auth.data.groupModes[req.group];throw Error('Mode persistence failed');}
+ log('GROUP_MODE_UPDATED');return {updated:true,group:req.group,mode:req.mode};
+ }
  if(req.action==='settings'){
  const previous=auth.data.controls;auth.data.controls=parseControls(req.settings);
  try{await auth.save();}catch{auth.data.controls=previous;throw Error('Settings persistence failed');}log('BOT_CONTROLS_UPDATED');return {controls:auth.data.controls,phase,updated:true};
@@ -169,6 +176,7 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  if(req.action==='revoke'){
  if(typeof req.group!=='string'||!auth.data.groups.includes(req.group))throw Error('Invalid group');
  auth.data.groups=auth.data.groups.filter(g=>g!==req.group);
+ if(auth.data.groupModes)delete auth.data.groupModes[req.group];
  auth.data.cupInbox=auth.data.cupInbox?.filter(e=>e.group!==req.group);
  await auth.save();log('GROUP_REVOKED');return {revoked:true};
  }
@@ -195,7 +203,7 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  catch{log('PAIRING_REQUEST_FAILED');return {error:'Não foi possível preparar a conexão com o WhatsApp. Aguarde 60 segundos e tente novamente.',phase};}
  }
  if(phase!=='CONNECTED'||!socket)throw new Error('Not connected');
- if(req.action==='groups')return {groups:Object.values(await socket.groupFetchAllParticipating()).map(g=>({id:g.id,name:g.subject,authorized:auth.data.groups.includes(g.id)}))};
+ if(req.action==='groups')return {groups:Object.values(await socket.groupFetchAllParticipating()).map(g=>({id:g.id,name:g.subject,authorized:auth.data.groups.includes(g.id),mode:groupMode(auth.data.groupModes,g.id)}))};
  if(typeof req.group!=='string'||!req.group.endsWith('@g.us'))throw new Error('Invalid group');
  const group=await socket.groupMetadata(req.group);
  if(req.action==='participants'){
@@ -207,7 +215,8 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  }))};}
  if(req.action==='authorize'){
  if(!group.participants.some(p=>p.id===req.admin))throw new Error('Invalid participant');
- if(!auth.data.groups.includes(req.group))auth.data.groups.push(req.group);await auth.save();log('GROUP_AUTHORIZED');return {authorized:true};
+ if(!auth.data.groups.includes(req.group))auth.data.groups.push(req.group);
+ if(!validGroupMode(req.mode))throw Error('Invalid group mode');auth.data.groupModes??={};auth.data.groupModes[req.group]=req.mode;await auth.save();log('GROUP_AUTHORIZED');return {authorized:true,mode:req.mode};
  }throw new Error('Unknown operation');
  })().then(r=>client.end(JSON.stringify(r)+'\n')).catch(()=>client.end(JSON.stringify({error:'Operação recusada. Confira conexão, número e seleção.'})+'\n'));});});
 const health=httpServer((req,res)=>{if(req.url==='/livez'||req.url==='/readyz'){const ok=!stopping&&(req.url==='/livez'||(phase==='CONNECTED'&&(!enabled('minicamp')||!cupApi||(cupHealthy&&Date.now()-lastCupTick<120000))));res.writeHead(ok?200:503,{'Cache-Control':'no-store'}).end(ok?'OK':'UNAVAILABLE');return;}void portal(req,res).catch(()=>{if(!res.headersSent)res.writeHead(500);res.end();});});
