@@ -1,7 +1,8 @@
 import type {PendingCupEvent} from '../minicamp/client.ts';
 import {initAuthCreds,BufferJSON,proto,type AuthenticationState,type SignalDataTypeMap} from '@whiskeysockets/baileys';
 import {seal,unseal,type Sealed} from '../infra/security.ts';
-export type VaultData={creds:AuthenticationState['creds'];keys:Record<string,Record<string,unknown>>;groups:string[];seen:string[];controls?:{enabled:boolean;resenha:boolean;minicamp:boolean};cupInbox?:PendingCupEvent[];replyHistory?:Record<string,string[]>};
+import type {GroupMode} from '../infra/group-modes.ts';
+export type VaultData={creds:AuthenticationState['creds'];keys:Record<string,Record<string,unknown>>;groups:string[];groupModes?:Record<string,GroupMode>;seen:string[];controls?:{enabled:boolean;resenha:boolean;minicamp:boolean};cupInbox?:PendingCupEvent[];replyHistory?:Record<string,string[]>};
 export async function vaultAuth(url:string,token:string,key:Buffer){
  async function remote(method:string,body?:unknown){
   const attempts=method==='GET'?3:1;
