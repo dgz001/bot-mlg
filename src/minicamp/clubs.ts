@@ -1,22 +1,20 @@
-// The approved Minicamp draw pool, independent from Master Liga coach clubs.
-export const minicampClubs:readonly string[]=Object.freeze([
- 'Roma','Real Madrid','Barcelona','Atlético de Madrid','Flamengo','Corinthians','Palmeiras','Botafogo',
- 'Paris Saint-Germain','Porto','Benfica','Lyon','Atalanta','Internazionale','Milan','Sporting CP',
- 'Boca Juniors','River Plate','Vasco','Fluminense','Santos','RB Bragantino','Náutico','Cuiabá',
- 'Goiás','Vitória','Sport','Ceará',
- // Confirmed: Konami official license list, 2026-09-22.
- 'São Paulo','Club América','CD Guadalajara',
- // Inglaterra — PES Master, consulta 2026-09-22.
- "Arsenal","Aston Villa","Bournemouth","Brentford","Brighton & Hove Albion","Chelsea","Coventry City","Crystal Palace","Everton","Fulham","Hull City","Ipswich Town","Leeds United","Liverpool","Manchester City","Manchester United","Newcastle United","Nottingham Forest","Sunderland","Tottenham Hotspur",
- // Itália — PES Master, consulta 2026-09-22.
- "Bologna","Cagliari Calcio","Calcio Como","Fiorentina","Frosinone","Genoa","Lecce","Monza","Napoli","Parma Calcio 1913","Juventus","S.S. Lazio","U.S. Sassuolo","Torino","Udinese","Venezia",
- // Espanha — PES Master, consulta 2026-09-22.
- "Alavés","Athletic Club","Elche CF","Getafe CF","Deportivo A Coruña","Levante UD","RCD Espanyol","Málaga CF","CA Osasuna","Racing de Santander","Sevilla FC","Real Betis","Valencia CF","Rayo Vallecano","Real Sociedad","Celta de Vigo","Villarreal",
- // França — PES Master, consulta 2026-09-22.
- "AJ Auxerre","Angers SCO","AS Monaco","ESTAC Troyes","FC Lorient","Havre AC","Le Mans FC","LOSC Lille","OGC Nice","Olympique de Marseille","Paris FC","RC Lens","RC Strasbourg Alsace","Stade Brestois 29","Stade Rennais FC","Toulouse FC",
- // Portugal — PES Master, consulta 2026-09-22.
- "Académico de Viseu FC","Casa Pia AC","CD Nacional","CD Santa Clara","CF Estrela da Amadora","CS Maritimo","FC Alverca","FC Arouca","FC Famalicão","Estoril Praia","Gil Vicente","Moreirense","Rio Ave","S.C. Braga","Vitória Guimarães",
- // Países Baixos — PES Master, consulta 2026-09-22.
- "ADO Den Haag","Ajax","AZ","Excelsior Rotterdam","FC Groningen","FC Twente","FC Utrecht","Feyenoord","Fortuna Sittard","Go Ahead Eagles","N.E.C. Nijmegen","PEC Zwolle","PSV","SC Cambuur Leeuwarden","sc Heerenveen","Sparta Rotterdam","Telstar","Willem II Tilburg",
+// Approved draw pool. Existing Cup assignments remain stored with their Cup.
+export const minicampClubs: readonly string[] = Object.freeze([
+  'Arsenal', 'Manchester United', 'Barcelona', 'Atlético de Madrid', 'Bayern de Munique',
+  'Borussia Dortmund', 'Bayer Leverkusen', 'Inter de Milão', 'AC Milan', 'Juventus',
+  'Napoli', 'Roma', 'Lazio', 'Atalanta', 'Fiorentina', 'Bologna', 'Torino', 'Genoa',
+  'Paris Saint-Germain', 'Monaco', 'Olympique de Marseille', 'Lyon', 'Lille', 'Lens',
+  'Rennes', 'Nice', 'Palmeiras', 'Flamengo', 'São Paulo', 'Corinthians', 'Fluminense',
+  'Botafogo', 'Vasco da Gama', 'Internacional', 'Grêmio', 'Atlético Mineiro', 'Cruzeiro',
+  'Bahia', 'Fortaleza', 'Athletico Paranaense', 'Santos', 'Inter Miami', 'LA Galaxy',
+  'Los Angeles FC', 'New York City FC', 'New York Red Bulls', 'Orlando City',
+  'Seattle Sounders', 'Atlanta United', 'Al-Hilal', 'Al-Nassr', 'Al-Ittihad', 'Al-Ahli',
+  'Al-Shabab', 'Ajax', 'PSV Eindhoven', 'Feyenoord', 'Benfica', 'Sporting CP', 'Porto',
+  'Galatasaray', 'Fenerbahçe', 'Beşiktaş', 'Celtic', 'Rangers', 'Club América',
+  'CD Guadalajara', 'Monterrey', 'Tigres UANL', 'Cruz Azul', 'Pumas UNAM',
+  'Boca Juniors', 'River Plate', 'Racing Club', 'San Lorenzo', 'Colo-Colo',
+  'Universidad de Chile', 'Atlético Nacional', 'Millonarios', 'América de Cali',
+  'Barcelona de Guayaquil', 'LDU Quito', 'Peñarol', 'Nacional do Uruguai',
+  'Shakhtar Donetsk', 'Dynamo Kyiv', 'Vissel Kobe', 'Yokohama F. Marinos',
+  'Urawa Red Diamonds',
 ]);
-
