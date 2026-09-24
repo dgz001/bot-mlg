@@ -6,9 +6,9 @@ import {panelCredentials} from './infra/panel-credentials.ts';
 process.umask(0o077);
 const secret=process.env.CONTROL_PASSWORD,origin=process.env.CONTROL_ORIGIN;
 if(!secret||!origin)throw Error('Control configuration missing');
-const database=process.env.DATABASE_URL;
-if(!database)throw Error('Panel credential storage missing');
-const credentials=panelCredentials(database,secret);
+const vaultUrl=process.env.SESSION_VAULT_URL,vaultToken=process.env.SESSION_VAULT_TOKEN;
+if(!vaultUrl||!vaultToken)throw Error('Panel credential storage missing');
+const credentials=panelCredentials(vaultUrl,vaultToken,secret);
 const supervisor=new RuntimeSupervisor({worker:new URL('./resenha-worker.ts',import.meta.url),env:{...process.env},log:event=>console.log(JSON.stringify({event,at:new Date().toISOString()}))});
 const portal=privateControl({secret,origin,socketPath:'/tmp/mlg-bot-control.sock',resenha:true,restart:()=>supervisor.restart(),authenticate:credentials.verify,rotatePassword:credentials.rotate});
 let stopping=false;
@@ -19,6 +19,6 @@ const server=createServer((req,res)=>{
   }
   void portal(req,res).catch(()=>{if(!res.headersSent)res.writeHead(500);res.end();});
 });
-async function stop(){if(stopping)return;stopping=true;server.close();await supervisor.stop();server.closeAllConnections();await credentials.close();process.exit(0);}
+async function stop(){if(stopping)return;stopping=true;server.close();await supervisor.stop();server.closeAllConnections();process.exit(0);}
 process.on('SIGTERM',()=>{void stop();});process.on('SIGINT',()=>{void stop();});
 server.listen(Number(process.env.PORT??3000),'0.0.0.0',()=>supervisor.start());
