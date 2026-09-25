@@ -2,7 +2,7 @@ import {minicampClubs} from './clubs.ts';
 // Private server-to-server gateway. Inject only a token digest during deployment.
 import {Pool} from 'npm:pg@8.23.0';
 import {randomUUID} from 'node:crypto';
-import {pgDatabase,processEvent} from './postgres.ts';
+import {pgDatabase,processEvent,checkpointCup} from './postgres.ts';
 const EXPECTED_DIGEST='__DIGEST__';
 const pool=new Pool({connectionString:Deno.env.get('SUPABASE_DB_URL'),max:2,connectionTimeoutMillis:8000});
 const base=pgDatabase(pool);
@@ -82,6 +82,10 @@ Deno.serve(async req=>{
    if(!g.rows.length)throw Error('Unauthorized group');
    const templates=await q.query('SELECT id,name,team_kind AS "teamKind",cardinality(teams) AS "teamCount",updated_at AS "updatedAt" FROM mlg_bot.competition_templates WHERE group_id=$1 ORDER BY lower(name)',[body.group]);
    const cup=await q.query("SELECT c.id,c.competition_name AS name,c.status,c.size,(SELECT count(*) FROM mlg_bot.cup_participants p WHERE p.cup_id=c.id) AS participants,(SELECT count(*) FROM mlg_bot.matches m WHERE m.cup_id=c.id AND m.status='pending') AS pending,(SELECT count(*) FROM mlg_bot.matches m WHERE m.cup_id=c.id AND m.status='disputed') AS disputed FROM mlg_bot.cups c WHERE c.group_id=$1 AND c.status IN ('open','playing') ORDER BY c.created_at DESC LIMIT 1",[body.group]);
+   if(cup.rows[0]){
+    const saved=await q.query('SELECT max(recorded_at)::float8 AS "checkpointAt",count(*)::int AS "checkpointCount" FROM mlg_bot.cup_checkpoints WHERE cup_id=$1',[cup.rows[0].id]);
+    Object.assign(cup.rows[0],saved.rows[0]);
+   }
    const history=await q.query('SELECT id,name,status,size,edition FROM (SELECT id,competition_name AS name,status,size,row_number() OVER (ORDER BY created_at,id) AS edition FROM mlg_bot.cups WHERE group_id=$1) editions ORDER BY edition DESC LIMIT 15',[body.group]);
    return {templates:templates.rows,activeTemplateId:g.rows[0].active_template_id,activeCompetition:g.rows[0].competition_name,activeCup:cup.rows[0]??null,recentCups:history.rows};
   });
@@ -89,9 +93,10 @@ Deno.serve(async req=>{
  else if(body.action==='cup-open'){
   if(!groupId.test(body.group)||![4,8,16,32].includes(body.size))throw Error('Invalid cup');
   result=await db.transaction(async q=>{
-   const g=await q.query('SELECT competition_name,team_kind,admins_configured FROM mlg_bot.groups WHERE id=$1 AND authorized FOR UPDATE',[body.group]);
+   const g=await q.query('SELECT competition_name,team_kind,format_size,admins_configured FROM mlg_bot.groups WHERE id=$1 AND authorized FOR UPDATE',[body.group]);
    if(!g.rows.length)throw Error('Unauthorized group');
    if(!g.rows[0].admins_configured)return {error:'Selecione e salve os ADMs deste grupo antes de abrir a Copa.'};
+   if(g.rows[0].format_size&&g.rows[0].format_size!==body.size)return {error:'Este grupo está configurado para '+g.rows[0].format_size+' vagas.'};
    const active=await q.query("SELECT 1 FROM mlg_bot.cups WHERE group_id=$1 AND status IN ('open','playing')",[body.group]);
    if(active.rows.length)return {error:'Já existe uma Copa aberta neste grupo.'};
    const draft=await q.query('SELECT 1 FROM mlg_bot.command_drafts WHERE group_id=$1 AND expires_at>$2',[body.group,Date.now()]);
@@ -101,6 +106,7 @@ Deno.serve(async req=>{
    await q.query('INSERT INTO mlg_bot.users(id,display_name) VALUES($1,$2) ON CONFLICT DO NOTHING',[panelActor,'Painel MLG']);
    const id=randomUUID(),at=Date.now();
    await q.query("INSERT INTO mlg_bot.cups(id,group_id,created_by,created_at,size,status,competition_name,team_kind) VALUES($1,$2,$3,$4,$5,'open',$6,$7)",[id,body.group,panelActor,at,body.size,g.rows[0].competition_name,g.rows[0].team_kind]);
+   await checkpointCup(q,body.group,id,panelActor,'panel-'+randomUUID());
    await q.query("INSERT INTO mlg_bot.audit_logs(actor,group_id,cup_id,occurred_at,action,before_state,after_state,outcome) VALUES($1,$2,$3,$4,'panel-open',NULL,$5::jsonb,'accepted')",[panelActor,body.group,id,at,JSON.stringify({size:body.size,name:g.rows[0].competition_name})]);
    await q.query("INSERT INTO mlg_bot.control_audit(action,group_id,user_id) VALUES('panel-open-cup',$1,$2)",[body.group,panelActor]);
    await panelNotice(q,body.group,'🏆 '+g.rows[0].competition_name+' | INSCRIÇÕES ABERTAS\n\n🎮 '+body.size+' vagas. Envie !entrar para participar. Ao completar as vagas, o bot sorteia equipes e confrontos.');
@@ -122,6 +128,7 @@ Deno.serve(async req=>{
    if(!cup.rows.length||!cancelling&&cup.rows[0].status!=='completed')return {error:'Selecione uma edição encerrada para anular.'};
    const c=cup.rows[0],at=Date.now(),reason=body.reason.trim();
    await q.query("UPDATE mlg_bot.cups SET status='cancelled',champion=NULL,completed_at=NULL,cancellation_reason=$2 WHERE id=$1",[c.id,reason]);
+   await checkpointCup(q,body.group,c.id,panelActor,'panel-'+randomUUID());
    await q.query('INSERT INTO mlg_bot.users(id,display_name) VALUES($1,$2) ON CONFLICT DO NOTHING',[panelActor,'Painel MLG']);
    await q.query("INSERT INTO mlg_bot.audit_logs(actor,group_id,cup_id,occurred_at,action,before_state,after_state,outcome) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,'accepted')",[panelActor,body.group,c.id,at,cancelling?'panel-cancel':'panel-void',JSON.stringify({status:c.status}),JSON.stringify({status:'cancelled',reason})]);
    await q.query('INSERT INTO mlg_bot.control_audit(action,group_id,user_id) VALUES($1,$2,$3)',[cancelling?'panel-cancel-cup':'panel-void-cup',body.group,panelActor]);
