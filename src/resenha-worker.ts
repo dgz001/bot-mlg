@@ -70,6 +70,15 @@ async function connect(){
   }
   if(socket===current&&!stopping&&enabled('minicamp')&&inChannel(group,'minicamp'))await current.sendMessage(group,{text:answer});return;
  }
+ if(/^!(?:modelos|ativarmodelo)(?:\s|$)/i.test(text)&&inChannel(group,'minicamp')){
+  if(!enabled('minicamp')||!cupApi||!message.key.participant)return;
+  const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
+  const aliases=await cupAliases(message.key.participant,current);
+  await configureCup(group,current);
+  const response=await cupApi<{text:string}>({action:'admin-templates',event:{group,aliases,text:text.trim()}});
+  auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);await auth.save();
+  if(socket===current&&!stopping&&enabled('minicamp')&&inChannel(group,'minicamp'))await current.sendMessage(group,{text:response.text});return;
+ }
  if(cupApi&&minicampCommand(text.trim())){
   if(!enabled('minicamp'))return;
   if(!inChannel(group,'minicamp')||!message.key.participant||text.length>1000)return;
