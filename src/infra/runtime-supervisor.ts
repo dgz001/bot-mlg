@@ -29,10 +29,10 @@ export class RuntimeSupervisor {
       }
     },this.options.checkMs??5000);
   }
-  restart(){
+  restart(source:'PANEL'|'WHATSAPP'='PANEL'){
     if(this.stopping)throw Error('Servidor encerrando.');
     if(this.recycling||Date.now()-this.manualAt<(this.options.cooldownMs??60000))throw Error('Aguarde um minuto entre reinícios.');
-    this.manualAt=Date.now();this.options.log?.('PANEL_RESTART_REQUESTED');
+    this.manualAt=Date.now();this.options.log?.(source+'_RESTART_REQUESTED');
     if(this.timer){clearTimeout(this.timer);this.timer=undefined;}
     if(this.child)this.recycle();else this.launch();
     return {restarting:true,phase:'RESTARTING'};
@@ -52,6 +52,10 @@ export class RuntimeSupervisor {
     child.on('message',(value:unknown)=>{
       if(this.child!==child||!value||typeof value!=='object'||this.recycling)return;
       const m=value as Record<string,unknown>;
+      if(m.type==='restart-request'){
+        try{this.restart('WHATSAPP');}catch{this.options.log?.('WHATSAPP_RESTART_RATE_LIMITED');}
+        return;
+      }
       if(m.type!=='health'||typeof m.ready!=='boolean'||typeof m.phase!=='string'||!/^[A-Z_]{1,40}$/.test(m.phase))return;
       this.heartbeatAt=Date.now();this.connected=m.ready;this.phase=m.phase;
       if(Date.now()-this.bornAt>60000)this.failures=0;
