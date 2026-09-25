@@ -57,6 +57,29 @@ Deno.serve(async req=>{
   });
  }
 
+ else if(body.action==='competition-get'){
+  if(!groupId.test(body.group))throw Error('Invalid group');
+  result=await db.transaction(async q=>{
+   const g=await q.query('SELECT competition_name,team_kind,format_size FROM mlg_bot.groups WHERE id=$1 AND authorized',[body.group]);
+   if(!g.rows.length)throw Error('Unauthorized group');
+   const t=await q.query('SELECT name FROM mlg_bot.club_pool WHERE group_id=$1 ORDER BY name',[body.group]);
+   return {competition:{name:g.rows[0].competition_name,teamKind:g.rows[0].team_kind,formatSize:g.rows[0].format_size,teams:t.rows.map(r=>r.name)}};
+  });
+ }
+ else if(body.action==='competition-save'){
+  if(!groupId.test(body.group)||typeof body.name!=='string'||body.name.trim().length<3||body.name.length>60||!['clube','seleção'].includes(body.teamKind)||!(body.formatSize===null||[4,8,16,32].includes(body.formatSize))||!Array.isArray(body.teams)||body.teams.length<Math.max(4,body.formatSize??4)||body.teams.length>100||body.teams.some(t=>typeof t!=='string'||t.length<2||t.length>60||t.trim()!==t||/[\r\n\x00-\x1f\x7f\u202a-\u202e*_~`]/.test(t))||new Set(body.teams.map(t=>t.toLocaleLowerCase('pt-BR'))).size!==body.teams.length)throw Error('Invalid competition');
+  result=await db.transaction(async q=>{
+   const g=await q.query('SELECT id FROM mlg_bot.groups WHERE id=$1 AND authorized FOR UPDATE',[body.group]);
+   if(!g.rows.length)throw Error('Unauthorized group');
+   const active=await q.query("SELECT id FROM mlg_bot.cups WHERE group_id=$1 AND status IN ('open','playing') LIMIT 1",[body.group]);
+   if(active.rows.length)return {error:'Termine ou cancele a Copa em andamento antes de mudar seus times e regras.'};
+   await q.query('UPDATE mlg_bot.groups SET competition_name=$2,team_kind=$3,format_size=$4 WHERE id=$1',[body.group,body.name.trim(),body.teamKind,body.formatSize]);
+   await q.query('DELETE FROM mlg_bot.club_pool WHERE group_id=$1',[body.group]);
+   for(const team of body.teams)await q.query('INSERT INTO mlg_bot.club_pool(group_id,name) VALUES($1,$2)',[body.group,team]);
+   await q.query("INSERT INTO mlg_bot.control_audit(action,group_id) VALUES('panel-save-competition',$1)",[body.group]);
+   return {updated:true,competition:{name:body.name.trim(),teamKind:body.teamKind,formatSize:body.formatSize,teams:body.teams}};
+  });
+ }
  else if(body.action==='getadmins'){
   if(!groupId.test(body.group))throw Error('Invalid group');
   result=await db.transaction(async q=>{
