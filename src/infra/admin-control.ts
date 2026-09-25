@@ -1,5 +1,5 @@
 export type ControlDraft={name:string;teamKind:'clube'|'seleção'|'misto';teams:string[];size:number|null;reviewed?:string;reviewedAt?:number};
-export type ControlWorkspace={targetId?:string;draft?:ControlDraft;draw?:{group:string;cupId:string;fingerprint:string;mode:'equipes'|'chave'|'completo';reason:string;expiresAt:number}};
+export type ControlWorkspace={targetId?:string;draft?:ControlDraft;draw?:{group:string;cupId:string;fingerprint:string;mode:'equipes'|'chave'|'completo';reason:string;expiresAt:number};roster?:{group:string;fingerprint:string;change:'incluir'|'retirar'|'trocar';position?:number;targetAliases?:string[];targetName?:string;reason:string;expiresAt:number}};
 export type ControlTarget={id:string;name:string};
 type Api=(body:Record<string,unknown>)=>Promise<any>;
 const label=(kind:ControlDraft['teamKind'])=>kind==='seleção'?'seleções':kind==='misto'?'clubes e seleções':'clubes';
@@ -7,20 +7,53 @@ const clean=(value:string)=>value.trim().toLocaleLowerCase('pt-BR');
 const safeTeam=(value:string)=>value.length>=2&&value.length<=60&&!/[\r\n\x00-\x1f\x7f\u202a-\u202e*_~`]/.test(value);
 const validTeams=(teams:string[])=>teams.length<=200&&teams.every(safeTeam)&&new Set(teams.map(clean)).size===teams.length;
 const fingerprint=(d:ControlDraft)=>JSON.stringify([d.name,d.teamKind,d.teams,d.size]);
-const menu='🎛️ CENTRAL MLG · ADMs\n\n📍 DESTINO E COPA\n!grupos · !usar número · !central · !pendencias\n!modelos · !ativarmodelo número (entre Copas)\n!novacopa · !nome · !categoria · !equipes\n!adicionar · !remover · !times · !vagas\n!revisar · !abrircopa · !descartar\n\n🎲 CORRIGIR SORTEIO (ANTES DO PRIMEIRO RESULTADO)\n!sorteio — consultar equipes e confrontos\n!refazersorteio equipes motivo — redistribuir os times atuais\n!refazersorteio chave motivo — refazer os confrontos\n!refazersorteio completo motivo — refazer ambos\n!confirmarsorteio — confirmar em até 5 minutos\n!cancelarsorteio — descartar a correção\n\n🛡️ EDIÇÕES\n!cancelarcopa motivo · !anularcopa edição motivo\n\nJogos e placares continuam no grupo da Copa. Sorteios anteriores ficam nos registros de recuperação.';
+const menu='🎛️ CENTRAL MLG · ADMs\n\n⚡ BOT\n!statusbot · !acordarbot · !desligarbot · !reiniciarbot\n!copas ligar/desligar · !resenha ligar/desligar\n\n📍 DESTINO E COPA\n!grupos · !usar número · !central · !pendencias\n!modelos · !ativarmodelo número (entre Copas)\n!novacopa · !nome · !categoria · !equipes\n!adicionar · !remover · !times · !vagas\n!revisar · !abrircopa · !descartar\n\n👥 PARTICIPANTES\n!inscritosadm — ver números da lista\n!inscrever telefone Nome | motivo (com vaga aberta)\n!retirar posição | motivo (antes do sorteio)\n!trocar posição telefone Nome | motivo (sem placar)\n!confirmarelenco · !cancelarelenco\n\n🎲 CORRIGIR SORTEIO (ANTES DO PRIMEIRO RESULTADO)\n!sorteio — consultar equipes e confrontos\n!refazersorteio equipes motivo — redistribuir os times atuais\n!refazersorteio chave motivo — refazer os confrontos\n!refazersorteio completo motivo — refazer ambos\n!confirmarsorteio · !cancelarsorteio\n\n🛡️ EDIÇÕES\n!cancelarcopa motivo · !anularcopa edição motivo\n\nUse !painel para rever esta lista. O banco guarda o estado anterior de cada correção.';
 function requireSuccess<T>(value:any):T {if(value?.error)throw Error(value.error);return value as T;}
 
-export async function adminControl(text:string,room:ControlWorkspace,targets:ControlTarget[],api:Api,save:()=>Promise<void>,now=Date.now(),actor?:{controlGroup:string;aliases:string[]}):Promise<string>{
+export async function adminControl(text:string,room:ControlWorkspace,targets:ControlTarget[],api:Api,save:()=>Promise<void>,now=Date.now(),actor?:{controlGroup:string;aliases:string[];resolveMember?:(group:string,phone:string)=>Promise<string[]|null>}):Promise<string>{
  const trimmed=text.trim();const [command='']=trimmed.split(/\s+/,1);const arg=trimmed.slice(command.length).trim();const cmd=command.toLocaleLowerCase('pt-BR');
  if(cmd==='!ajuda'||cmd==='!comandos'||cmd==='!painel')return menu;
  if(cmd==='!grupos')return '📍 GRUPOS DE COPA\n'+(targets.map((g,i)=>(room.targetId===g.id?'● ':'○ ')+(i+1)+'. '+g.name).join('\n')||'Nenhum grupo autorizado. Cadastre um no painel.')+'\n\nEnvie !usar número para escolher onde a Copa acontecerá.';
  if(cmd==='!usar'){
   const n=Number(arg);if(!Number.isSafeInteger(n)||n<1||n>targets.length)return 'Use !grupos e depois !usar número da lista.';
-  const choice=targets[n-1]!;room.targetId=choice.id;delete room.draft;delete room.draw;await save();return '✅ Destino: '+choice.name+'\nUse !novacopa para preparar a edição. Nenhuma inscrição foi aberta.';
+  const choice=targets[n-1]!;room.targetId=choice.id;delete room.draft;delete room.draw;delete room.roster;await save();return '✅ Destino: '+choice.name+'\nUse !novacopa para preparar a edição. Nenhuma inscrição foi aberta.';
  }
  const target=targets.find(g=>g.id===room.targetId);
  if(!target)return 'Escolha primeiro o destino: !grupos e !usar número. Apenas grupos de Copa autorizados aparecem.';
  const group=target.id;
+ if(cmd==='!cancelarelenco'){delete room.roster;await save();return '🗑️ Mudança de participantes descartada. A Copa permanece como estava.';}
+ if(['!inscritosadm','!inscrever','!retirar','!trocar','!confirmarelenco'].includes(cmd)){
+  if(!actor)return 'Não foi possível validar o ADM desta central.';
+  const request={action:'cup-roster',group,controlGroup:actor.controlGroup,aliases:actor.aliases};
+  if(cmd==='!confirmarelenco'){
+   const pending=room.roster;if(!pending||pending.group!==group||pending.expiresAt<now)return 'Não há mudança aguardando confirmação. Use !inscritosadm e prepare novamente.';
+   const result=await api({...request,...pending,expected:pending.fingerprint});
+   if(result.error){delete room.roster;await save();return '⚠️ '+result.error;}
+   delete room.roster;await save();return '✅ Participantes atualizados em '+target.name+'. O grupo receberá o aviso; o estado anterior ficou guardado no banco.';
+  }
+  const current=await api(request);if(current.error)return '⚠️ '+current.error;
+  if(cmd==='!inscritosadm')return '👥 PARTICIPANTES · '+current.name+'\n'+current.participants.map((p:any,i:number)=>`${i+1}. ${p.display_name}${p.club?' · '+p.club:''}`).join('\n')+'\n\n'+current.participants.length+'/'+current.size+' inscritos · '+(current.status==='open'?'inscrições abertas':'sorteio realizado')+'\n\n!inscrever telefone Nome | motivo\n!retirar posição | motivo\n!trocar posição telefone Nome | motivo';
+  const segments=arg.split('|');const reason=segments.length===2?segments[1]!.trim():'';
+  if(reason.length<8||reason.length>160||/[\r\n\x00-\x1f\x7f\u202a-\u202e*_~`]/.test(reason))return 'Informe um motivo de 8 a 160 caracteres após |. Exemplo: !retirar 2 | desistiu antes do sorteio';
+  let position:number|undefined,targetName:string|undefined,targetAliases:string[]|undefined;
+  if(cmd==='!retirar'){
+   position=Number(segments[0]);if(!Number.isSafeInteger(position)||position<1||position>current.participants.length)return 'Posição inválida. Consulte !inscritosadm.';
+  }else{
+   const match=cmd==='!trocar'?segments[0]!.trim().match(/^(\d+)\s+(\d{10,15})\s+(.{2,60})$/):segments[0]!.trim().match(/^(\d{10,15})\s+(.{2,60})$/);
+   if(!match)return cmd==='!trocar'?'Use !trocar posição telefone Nome completo | motivo.':'Use !inscrever telefone Nome completo | motivo.';
+   if(cmd==='!trocar'){position=Number(match[1]);targetName=match[3]!.trim();}else targetName=match[2]!.trim();
+   const phone=cmd==='!trocar'?match[2]!:match[1]!;
+   if(position!==undefined&&(!Number.isSafeInteger(position)||position<1||position>current.participants.length))return 'Posição inválida. Consulte !inscritosadm.';
+   if(!targetName||/[\r\n\x00-\x1f\x7f\u202a-\u202e*_~`]/.test(targetName))return 'Informe o nome do novo jogador sem caracteres especiais.';
+   targetAliases=await actor.resolveMember?.(group,phone)??undefined;
+   if(!targetAliases)return 'Esta conta não foi localizada no grupo da Copa pelo número completo. Adicione a pessoa ao grupo e confira o DDI e DDD.';
+  }
+  if(current.status==='playing'&&cmd!=='!trocar')return 'Após o sorteio, apenas a substituição é possível antes do primeiro placar. Use !resolver se já houve jogo.';
+  if(cmd==='!inscrever'&&current.participants.length>=current.size)return 'A Copa já está cheia. Use !trocar antes do primeiro placar, se necessário.';
+  room.roster={group,fingerprint:current.fingerprint,change:cmd==='!inscrever'?'incluir':cmd==='!retirar'?'retirar':'trocar',position,targetAliases,targetName,reason,expiresAt:now+300_000};await save();
+  const previous=position?current.participants[position-1].display_name:'';
+  return '🔎 CONFERIR PARTICIPANTES\n📍 '+target.name+' · '+current.name+'\n'+(cmd==='!inscrever'?'Incluir '+targetName:cmd==='!retirar'?'Retirar '+previous:'Trocar '+previous+' por '+targetName)+(current.status==='playing'?' · seleção e código do jogo preservados':'')+'\nMotivo: '+reason+'\n\nEnvie !confirmarelenco em até 5 minutos ou !cancelarelenco para desistir. Se a lista mudar, a confirmação será bloqueada.';
+ }
  if(cmd==='!pendencias'){
   const current=requireSuccess<any>(await api({action:'templates-list',group}));const cup=current.activeCup;
   return `📋 VISTORIA · ${target.name}\n${cup?'🏆 '+cup.name+' · '+cup.participants+'/'+cup.size+' participantes\n⏳ Placares pendentes: '+cup.pending+' · ⚖️ Contestações: '+cup.disputed:'Nenhuma Copa aberta neste grupo.'}\n🛡️ Registros de recuperação: ${cup?.checkpointCount??0}\n\nPara ver os jogos, envie !copa no grupo do campeonato.`;
