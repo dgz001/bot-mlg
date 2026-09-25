@@ -181,7 +181,7 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
   if(!Object.hasOwn(participating,req.group))return {left:true,alreadyLeft:true};
   await socket.groupLeave(req.group);log('UNAUTHORIZED_GROUP_LEFT');return {left:true};
  }
- if(['setadmins','history-candidates','history-review','competition-get','competition-save'].includes(req.action)){
+ if(['setadmins','history-candidates','history-review','competition-get','competition-save','templates-list','template-get','template-save','template-activate','template-delete'].includes(req.action)){
  if(!cupApi||!socket||!auth.data.groups.includes(req.group))throw Error('Group unavailable');
  await configureCup(req.group,socket);
  if(req.action==='setadmins'){
@@ -190,7 +190,7 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
   const admins=await Promise.all(req.admins.map((id:string)=>cupAliases(id,socket!)));
   return cupApi({action:'setadmins',group:req.group,admins,revision:req.revision});
  }
- return cupApi({action:req.action,group:req.group,ids:req.ids,approved:req.approved,name:req.name,teamKind:req.teamKind,formatSize:req.formatSize,teams:req.teams});
+ return cupApi({action:req.action,group:req.group,ids:req.ids,approved:req.approved,name:req.name,teamKind:req.teamKind,formatSize:req.formatSize,teams:req.teams,templateId:req.templateId});
  }
  if(req.action==='pair'){
  if(auth.state.creds.registered||phase==='CONNECTED'||phase==='STOPPED')throw new Error('Pairing unavailable');
