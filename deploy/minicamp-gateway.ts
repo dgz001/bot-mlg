@@ -123,6 +123,28 @@ Deno.serve(async req=>{
    await q.query("INSERT INTO mlg_bot.control_audit(action,group_id) VALUES('panel-delete-template',$1)",[body.group]);return {deleted:true};
   });
  }
+ else if(body.action==='admin-templates'){
+  const e=body.event;if(!e||!groupId.test(e.group)||!validAliases(e.aliases)||typeof e.text!=='string'||e.text.length>90)throw Error('Invalid admin request');
+  result=await db.transaction(async q=>{
+   const id=await identity(q,e.aliases);
+   const permission=await q.query('SELECT 1 FROM mlg_bot.admins a JOIN mlg_bot.groups g ON g.id=a.group_id WHERE g.id=$1 AND g.authorized AND g.admins_configured AND a.user_id=$2',[e.group,id]);
+   if(!permission.rows.length)return {text:'🔒 Só os ADMs selecionados no painel podem trocar o campeonato.'};
+   const g=await q.query('SELECT active_template_id FROM mlg_bot.groups WHERE id=$1 FOR UPDATE',[e.group]);
+   const rows=await q.query('SELECT id,name,team_kind,teams FROM mlg_bot.competition_templates WHERE group_id=$1 ORDER BY lower(name)',[e.group]);
+   if(/^!modelos\s*$/i.test(e.text))return {text:'🏆 CAMPEONATOS DESTE GRUPO\n'+(rows.rows.map(t=>(t.id===g.rows[0].active_template_id?'● ':'○ ')+t.name+' · '+t.teams.length+' '+(t.team_kind==='seleção'?'seleções':'clubes')).join('\n')||'Nenhum modelo salvo. Configure um no painel.')+'\n\nADM: !ativarmodelo Nome exato do campeonato. A Copa aberta não será alterada.'};
+   const name=e.text.match(/^!ativarmodelo\s+(.+)$/i)?.[1]?.trim();
+   if(!name)return {text:'⚙️ Use !modelos para ver as opções. Depois envie !ativarmodelo Nome exato do campeonato.'};
+   const chosen=rows.rows.find(t=>t.name.toLocaleLowerCase('pt-BR')===name.toLocaleLowerCase('pt-BR'));
+   if(!chosen)return {text:'⚠️ Campeonato não encontrado neste grupo. Consulte !modelos e use o nome completo.'};
+   const active=await q.query("SELECT id FROM mlg_bot.cups WHERE group_id=$1 AND status IN ('open','playing') LIMIT 1",[e.group]);
+   if(active.rows.length)return {text:'⚠️ Há uma Copa aberta. Termine ou cancele a edição antes de ativar outro modelo.'};
+   await q.query('UPDATE mlg_bot.groups SET competition_name=$2,team_kind=$3,format_size=NULL,active_template_id=$4 WHERE id=$1',[e.group,chosen.name,chosen.team_kind,chosen.id]);
+   await q.query('DELETE FROM mlg_bot.club_pool WHERE group_id=$1',[e.group]);
+   for(const team of chosen.teams)await q.query('INSERT INTO mlg_bot.club_pool(group_id,name) VALUES($1,$2)',[e.group,team]);
+   await q.query("INSERT INTO mlg_bot.control_audit(action,group_id,user_id) VALUES('whatsapp-activate-template',$1,$2)",[e.group,id]);
+   return {text:'✅ '+chosen.name+' ativado! Agora um ADM pode usar !novacopa e escolher 4, 8, 16 ou 32 vagas.'};
+  });
+ }
  else if(body.action==='competition-save'){
   if(!groupId.test(body.group)||!validCompetition(body)||!(body.formatSize===null||[4,8,16,32].includes(body.formatSize))||body.teams.length<Math.max(4,body.formatSize??4))throw Error('Invalid competition');
   result=await db.transaction(async q=>{
