@@ -103,11 +103,18 @@ test('constraints: isolamento, confirmação e clube repetido', integration, asy
     for(let i=0;i<4;i++) await send(`u${i}`,'!entrar');
     await assert.rejects(db.query("UPDATE mlg_bot.cup_participants SET club='same'"),/unique/i);
     const m=(await db.query<{code:string;home:string;away:string}>('SELECT * FROM mlg_bot.matches ORDER BY code LIMIT 1')).rows[0]!;
-    await send(m.home,`!resultado ${m.code} 1x0`);
+    await send(m.home,`!resultado ${m.code} 0x1`);
     await assert.rejects(send('stranger',`!confirmar ${m.code}`),/confronto/);
     await assert.rejects(send(m.home,`!confirmar ${m.code}`),/próprio/);
     assert.equal((await db.query<{status:string}>('SELECT status FROM mlg_bot.matches WHERE code=$1',[m.code])).rows[0]!.status,'pending');
     await send(m.away,`!confirmar ${m.code}`);
+    const other=(await db.query<{code:string;home:string}>("SELECT code,home FROM mlg_bot.matches WHERE status='scheduled' ORDER BY code LIMIT 1")).rows[0]!;
+    await send(other.home,`!resultado ${other.code} 2x0`);
+    await send(other.home,`!confirmar ${other.code}`);
+    const confirmed=(await db.query<{reason:string;confirmed_by:string;status:string}>('SELECT reason,confirmed_by,status FROM mlg_bot.match_results WHERE match_code=$1',[other.code])).rows[0]!;
+    assert.equal(confirmed.confirmed_by,other.home);
+    assert.equal(confirmed.status,'confirmed');
+    assert.match(confirmed.reason,/próprio vencedor/);
   } finally { await f.close(); }
 });
 

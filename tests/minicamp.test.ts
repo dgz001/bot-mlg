@@ -90,7 +90,7 @@ test('permissões e validação de resultado/contestação', () => {
   assert.throws(() => h.send('stranger', `!resultado ${m.code} 2x0`), /confronto/);
   assert.throws(() => h.send(m.home, `!resultado ${m.code} 2x2`), /empate/);
   assert.throws(() => h.send(m.home, `!resultado ${m.code} -1x2`), /Formato/);
-  h.send(m.home, `!resultado ${m.code} 2x0`);
+  h.send(m.home, `!resultado ${m.code} 0x2`);
   const before = JSON.stringify(h.state);
   assert.throws(() => h.send(m.home, `!confirmar ${m.code}`), /próprio/);
   assert.throws(() => h.send('stranger', `!confirmar ${m.code}`), /confronto/);
@@ -105,11 +105,35 @@ test('permissões e validação de resultado/contestação', () => {
   assert.equal(updated.results[0]!.status, 'disputed');
 });
 
+test('vencedor confirma o placar informado imediatamente sem depender do adversário',()=>{
+ const h=harness(),cup=h.start(4),match=cup.matches[0]!;
+ h.send(match.home,`!resultado ${match.code} 2x0`);
+ const third=cup.participants.find(p=>![match.home,match.away].includes(p.userId))!.userId;
+ assert.throws(()=>h.send(third,`!confirmar ${match.code}`),/confronto/);
+ assert.throws(()=>h.send('stranger',`!confirmar ${match.code}`),/confronto/);
+ assert.throws(()=>h.send(match.home,`!confirmar ${match.code} 0x2`),/Placar diferente/);
+ assert.equal(h.state.cups[cup.id]!.matches[0]!.status,'pending');
+ h.restart();const done=h.send(match.home,`!confirmar ${match.code} 2x0`);
+ assert.match(done.notices.join('\n'),/Vencedor confirmou/);
+ assert.equal(h.state.cups[cup.id]!.matches[0]!.winner,match.home);
+ assert.equal(h.state.cups[cup.id]!.matches[0]!.results[0]!.confirmedBy,match.home);
+ assert.match(h.state.cups[cup.id]!.matches[0]!.results[0]!.reason!,/próprio vencedor/);
+ assert.throws(()=>h.send(match.away,`!contestar ${match.code}`),/pendente/);
+});
+
+test('autor derrotado não confirma o próprio placar',()=>{
+ const h=harness(),cup=h.start(4),match=cup.matches[0]!;
+ h.send(match.home,`!resultado ${match.code} 0x2`);
+ const reported=h.state.cups[cup.id]!.matches[0]!.results[0]!;
+ assert.throws(()=>apply(h.state,{id:'loser',at:reported.at+1,groupId:'g',userId:match.home,name:match.home,text:`!confirmar ${match.code}`},environment),/não venceu/);
+ assert.equal(h.state.cups[cup.id]!.matches[0]!.status,'pending');
+});
+
 test('ADM proponente não confirma nem resolve sozinho sua proposta', () => {
   const h = harness();
   const m = h.start(4).matches[0]!;
   h.state.groups.g!.admins.push(m.home);
-  h.send(m.home, `!resultado ${m.code} 2x0`);
+  h.send(m.home, `!resultado ${m.code} 0x2`);
   assert.throws(() => h.send(m.home, `!confirmar ${m.code}`), /próprio/);
   h.send(m.away, `!contestar ${m.code}`);
   assert.throws(() => h.send(m.home, `!resolver ${m.code} 2x0 conferido novamente`), /próprio/);
