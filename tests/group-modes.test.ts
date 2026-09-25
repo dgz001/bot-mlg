@@ -4,11 +4,14 @@ import {allowsGroup,groupMode,validGroupMode} from '../src/infra/group-modes.ts'
 import {createBanterReply} from '../src/resenha/reply.ts';
 
 test('group modes separate banter and tournament, with legacy continuity',()=>{
- const modes={resenha:'resenha',copa:'minicamp'} as const;
+ const modes={resenha:'resenha',copa:'minicamp',central:'controle'} as const;
  assert.equal(allowsGroup(modes,'resenha','resenha'),true);
  assert.equal(allowsGroup(modes,'resenha','minicamp'),false);
  assert.equal(allowsGroup(modes,'copa','resenha'),false);
  assert.equal(allowsGroup(modes,'copa','minicamp'),true);
+ assert.equal(allowsGroup(modes,'central','resenha'),false);
+ assert.equal(allowsGroup(modes,'central','minicamp'),false);
+ assert.equal(validGroupMode('controle'),true);
  assert.equal(groupMode(modes,'legacy'),'both');
  assert.equal(validGroupMode('admin'),false);
 });
