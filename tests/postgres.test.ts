@@ -34,9 +34,33 @@ async function setup(db: Pool) {
   await db.query(await readFile(new URL('../migrations/004_controls_history.sql',import.meta.url),'utf8'));
   await db.query(await readFile(new URL('../migrations/010_coach_profiles.sql',import.meta.url),'utf8'));
   await db.query(await readFile(new URL('../migrations/011_competitions.sql',import.meta.url),'utf8'));
+  await db.query(await readFile(new URL('../migrations/012_competition_templates.sql',import.meta.url),'utf8'));
   await db.query("INSERT INTO mlg_bot.users VALUES ('admin','Admin'); INSERT INTO mlg_bot.groups(id,authorized,admins_configured) VALUES ('g',true,true); INSERT INTO mlg_bot.admins VALUES ('g','admin','owner');");
   for (let i=0;i<16;i++) await db.query('INSERT INTO mlg_bot.club_pool VALUES ($1,$2)',['g',`Club ${i}`]);
 }
+
+test('modelos de campeonato ficam no grupo e a Copa conserva nome e sorteio após edição',integration,async()=>{
+ const f=await fixture();const db=f.pool;
+ try{
+  await setup(db);
+  const teams=['Brasil','Argentina','Portugal','França'];
+  const model=await db.query<{id:string}>("INSERT INTO mlg_bot.competition_templates(group_id,name,team_kind,teams) VALUES('g','Copa do Mundo','seleção',$1) RETURNING id",[teams]);
+  const id=model.rows[0]!.id;
+  await db.query("UPDATE mlg_bot.groups SET competition_name='Copa do Mundo',team_kind='seleção',active_template_id=$1 WHERE id='g'",[id]);
+  await db.query("DELETE FROM mlg_bot.club_pool WHERE group_id='g'");
+  for(const team of teams)await db.query("INSERT INTO mlg_bot.club_pool(group_id,name) VALUES('g',$1)",[team]);
+  let seq=0;const send=(who:string,text:string)=>processEvent(pgDatabase(db),{id:'template-'+ ++seq,groupId:'g',userId:who,name:who,text,at:Date.now()+seq});
+  assert.match((await send('admin','!novacopa')).notices[0]!,/COPA DO MUNDO/);
+  await send('admin','!formato 4');for(let i=0;i<4;i++)await send('j'+i,'!entrar');
+  const cup=await db.query<{competition_name:string;team_kind:string}>("SELECT competition_name,team_kind FROM mlg_bot.cups WHERE group_id='g'");
+  assert.deepEqual(cup.rows[0],{competition_name:'Copa do Mundo',team_kind:'seleção'});
+  assert.deepEqual((await db.query<{club:string}>("SELECT club FROM mlg_bot.cup_participants ORDER BY club")).rows.map(x=>x.club).sort(),[...teams].sort());
+  await db.query("UPDATE mlg_bot.competition_templates SET name='Copa América',teams=ARRAY['Chile','México','Uruguai','Peru'] WHERE id=$1",[id]);
+  assert.equal((await db.query<{name:string}>("SELECT competition_name AS name FROM mlg_bot.cups")).rows[0]!.name,'Copa do Mundo');
+  await db.query("INSERT INTO mlg_bot.groups(id,authorized) VALUES('other',true)");
+  await assert.rejects(db.query("UPDATE mlg_bot.groups SET active_template_id=$1 WHERE id='other'",[id]));
+ }finally{await f.close();}
+});
 
 test('PostgreSQL real: copa completa, estado relacional, reconexão de cliente e dedup', integration, async () => {
   const f = await fixture(); let db = f.pool;
