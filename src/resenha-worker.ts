@@ -68,7 +68,7 @@ async function connect(){
   try{
    const aliases=await cupAliases(message.key.participant,current);
    const members=(await current.groupMetadata(group)).participants;
-   if(!members.some(p=>aliases.includes(jidNormalizedUser(p.id))))return;
+   if(!members.some(p=>aliases.includes(jidNormalizedUser(p.id)))&&!(await Promise.all(members.map(p=>cupAliases(p.id,current).catch(()=>[])))).some(a=>a.some(j=>aliases.includes(j))))return;
    const permission=await cupApi<{allowed:boolean}>({action:'control-check',group,aliases});
    let response='🔒 Só as contas selecionadas como ADMs deste grupo no painel podem usar a central.';
    if(permission.allowed){
@@ -188,6 +188,16 @@ async function cupTick(){
 }
 const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>client.destroy());client.on('data',chunk=>{buffer+=chunk.toString();if(buffer.length>8192){client.destroy();return;}if(!buffer.includes('\n'))return;client.pause();void(async()=>{
  const req=JSON.parse(buffer.trim());if(req.action==='status')return {controls:auth.data.controls??{enabled:true,resenha:true,minicamp:true},queued:auth.data.cupInbox?.length??0,phase,authorizedGroups:auth.data.groups.length,minicamp:cupApi?(cupHealthy?'READY':'RETRYING'):'DISABLED',minicampLastSuccessAt:lastCupSuccessAt||null,checkedAt:Date.now()};
+ if(req.action==='select-context'){
+  if(typeof req.group!=='string'||!req.group.endsWith('@g.us')||typeof req.templateId!=='string'||req.templateId.length>100)throw Error('Invalid selection');
+  if(phase!=='CONNECTED'||!socket)throw Error('Not connected');
+  const participating=await socket.groupFetchAllParticipating();if(!Object.hasOwn(participating,req.group))throw Error('Group unavailable');
+  const previous=auth.data.panelSelection;const templates={...previous?.templates};
+  if(req.templateId)templates[req.group]=req.templateId;else if(req.templateChanged)delete templates[req.group];
+  auth.data.panelSelection={group:req.group,templates};
+  try{await auth.save();}catch{auth.data.panelSelection=previous;throw Error('Selection persistence failed');}
+  return {selectedGroup:req.group,selectedTemplate:templates[req.group]??''};
+ }
  if(req.action==='set-group-mode'){
  if(typeof req.group!=='string'||!auth.data.groups.includes(req.group)||!validGroupMode(req.mode))throw Error('Invalid group mode');
  auth.data.groupModes??={};const previous=auth.data.groupModes[req.group];auth.data.groupModes[req.group]=req.mode;
@@ -214,16 +224,20 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
   await socket.groupLeave(req.group);log('UNAUTHORIZED_GROUP_LEFT');return {left:true};
  }
  if(['setadmins','history-candidates','history-review','competition-get','competition-save','templates-list','template-get','template-save','template-activate','template-delete','cup-open','cup-cancel','cup-void'].includes(req.action)){
- if(!cupApi||!socket||!auth.data.groups.includes(req.group))throw Error('Group unavailable');
+ const startingControl=req.action==='setadmins'&&req.mode==='controle'&&!auth.data.groups.includes(req.group);
+ if(!cupApi||!socket||(!auth.data.groups.includes(req.group)&&!startingControl))throw Error('Group unavailable');
  if(groupMode(auth.data.groupModes,req.group)==='controle'&&!['setadmins','history-candidates','history-review'].includes(req.action))throw Error('Control group cannot host a Cup');
  await configureCup(req.group,socket);
  if(req.action==='setadmins'){
   const metadata=await socket.groupMetadata(req.group);
   if(!Array.isArray(req.admins)||req.admins.length<1||req.admins.length>10||!req.admins.every((id:string)=>metadata.participants.some(p=>p.id===id)))throw Error('Invalid admins');
   const admins=await Promise.all(req.admins.map((id:string)=>cupAliases(id,socket!)));
-  return cupApi({action:'setadmins',group:req.group,admins,revision:req.revision});
+  const result=await cupApi<{updated?:boolean;error?:string}>({action:'setadmins',group:req.group,admins,revision:req.revision});
+  if(req.mode==='controle'&&result.updated){if(startingControl)auth.data.groups.push(req.group);auth.data.groupModes??={};auth.data.groupModes[req.group]='controle';await auth.save();log(startingControl?'GROUP_AUTHORIZED':'GROUP_MODE_UPDATED');}
+  return {...result,authorized:startingControl&&result.updated,mode:groupMode(auth.data.groupModes,req.group)};
  }
- return cupApi({action:req.action,group:req.group,ids:req.ids,approved:req.approved,name:req.name,teamKind:req.teamKind,formatSize:req.formatSize,teams:req.teams,templateId:req.templateId,size:req.size,cupId:req.cupId,reason:req.reason});
+ const result=await cupApi<Record<string,unknown>>({action:req.action,group:req.group,ids:req.ids,approved:req.approved,name:req.name,teamKind:req.teamKind,formatSize:req.formatSize,teams:req.teams,templateId:req.templateId,size:req.size,cupId:req.cupId,reason:req.reason});
+ return req.action==='templates-list'?{...result,selectedTemplate:auth.data.panelSelection?.templates[req.group]??''}:result;
  }
  if(req.action==='pair'){
  if(auth.state.creds.registered||phase==='CONNECTED'||phase==='STOPPED')throw new Error('Pairing unavailable');
@@ -237,12 +251,12 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  catch{log('PAIRING_REQUEST_FAILED');return {error:'Não foi possível preparar a conexão com o WhatsApp. Aguarde 60 segundos e tente novamente.',phase};}
  }
  if(phase!=='CONNECTED'||!socket)throw new Error('Not connected');
- if(req.action==='groups')return {groups:Object.values(await socket.groupFetchAllParticipating()).map(g=>({id:g.id,name:g.subject,authorized:auth.data.groups.includes(g.id),mode:groupMode(auth.data.groupModes,g.id)}))};
+ if(req.action==='groups')return {groups:Object.values(await socket.groupFetchAllParticipating()).map(g=>({id:g.id,name:g.subject,authorized:auth.data.groups.includes(g.id),mode:groupMode(auth.data.groupModes,g.id)})),selectedGroup:auth.data.panelSelection?.group??''};
  if(typeof req.group!=='string'||!req.group.endsWith('@g.us'))throw new Error('Invalid group');
  const group=await socket.groupMetadata(req.group);
  if(req.action==='participants'){
  let registered:{aliases:string[];revision:string}={aliases:[],revision:''};
- if(cupApi&&auth.data.groups.includes(req.group)){await configureCup(req.group,socket);registered=await cupApi({action:'getadmins',group:req.group});}
+ if(cupApi&&(auth.data.groups.includes(req.group)||req.mode==='controle')){await configureCup(req.group,socket);registered=await cupApi({action:'getadmins',group:req.group});}
  return {revision:registered.revision,participants:await Promise.all(group.participants.map(async p=>{
  const aliases=await cupAliases(p.id,socket!);const phone=aliases.find(a=>a.endsWith('@s.whatsapp.net'))?.split('@')[0];
  return {id:p.id,phone:phone?'+'+phone:p.id,selected:aliases.some(a=>registered.aliases.includes(a))};
