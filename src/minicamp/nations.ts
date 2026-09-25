@@ -1,9 +1,10 @@
-// Candidate preset, not a claim of current availability in eFootball.
-// Owner must verify and edit this list against the game's Authentic Teams menu.
+// Draw pool supplied by the MLG organizer. Availability in eFootball must be
+// checked by the players; this list does not claim a current Konami licence.
 export const worldCupCandidates = Object.freeze([
-  'Argélia','Camarões','Egito','Gana','Marrocos','Senegal','Tunísia',
-  'Argentina','Brasil','Canadá','Chile','Colômbia','Equador','México','Peru','Uruguai','Estados Unidos',
-  'Austrália','Japão','Coreia do Sul','Arábia Saudita','Catar',
-  'Bélgica','Croácia','Dinamarca','Inglaterra','França','Alemanha','Itália','Países Baixos',
-  'Polônia','Portugal','Espanha','Suíça','Turquia','País de Gales',
+  'Espanha','Argentina','França','Inglaterra','Brasil','Marrocos',
+  'Portugal','Bélgica','Holanda','México','Colômbia','Alemanha',
+  'Croácia','Suíça','Itália','Estados Unidos','Japão','Senegal',
+  'Noruega','Uruguai','Dinamarca','Irã','Áustria','Egito',
+  'Equador','Nigéria','Turquia','Austrália','Argélia','Canadá',
+  'Costa do Marfim','Coreia do Sul','Ucrânia','Paraguai','Rússia','Polônia',
 ]);
