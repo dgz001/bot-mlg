@@ -103,9 +103,14 @@ Deno.serve(async req=>{
     const saved=await q.query('SELECT max(recorded_at)::float8 AS "checkpointAt",count(*)::int AS "checkpointCount" FROM mlg_bot.cup_checkpoints WHERE cup_id=$1',[cup.rows[0].id]);
     Object.assign(cup.rows[0],saved.rows[0]);
    }
-   const history=await q.query('SELECT id,name,status,size,edition FROM (SELECT id,competition_name AS name,status,size,row_number() OVER (ORDER BY created_at,id) AS edition FROM mlg_bot.cups WHERE group_id=$1) editions ORDER BY edition DESC LIMIT 15',[body.group]);
+   const history=await q.query(`SELECT id,name,status,size,edition FROM (
+      SELECT id,competition_name AS name,status,size,created_at,
+        row_number() OVER (PARTITION BY (status='cancelled') ORDER BY created_at,id) AS edition
+      FROM mlg_bot.cups WHERE group_id=$1
+    ) editions ORDER BY created_at DESC,id DESC LIMIT 15`,[body.group]);
+   const nextEdition=await q.query("SELECT count(*)::int+1 AS edition FROM mlg_bot.cups WHERE group_id=$1 AND status<>'cancelled'",[body.group]);
    const draft=await q.query('SELECT 1 FROM mlg_bot.command_drafts WHERE group_id=$1 AND expires_at>$2',[body.group,Date.now()]);
-   return {templates:templates.rows,activeTemplateId:g.rows[0].active_template_id,activeCompetition:g.rows[0].competition_name,activeCup:cup.rows[0]??null,preparing:draft.rows.length>0,recentCups:history.rows};
+   return {templates:templates.rows,activeTemplateId:g.rows[0].active_template_id,activeCompetition:g.rows[0].competition_name,activeCup:cup.rows[0]??null,preparing:draft.rows.length>0,nextEdition:nextEdition.rows[0].edition,recentCups:history.rows};
   });
  }
  else if(body.action==='cup-open'){
@@ -132,13 +137,14 @@ Deno.serve(async req=>{
     if(poolSize.rows[0].total<body.size)return {error:'O modelo ativo precisa ter pelo menos '+body.size+' times.'};
    }
    await q.query('INSERT INTO mlg_bot.users(id,display_name) VALUES($1,$2) ON CONFLICT DO NOTHING',[panelActor,'Painel MLG']);
+   const number=await q.query("SELECT count(*)::int+1 AS edition FROM mlg_bot.cups WHERE group_id=$1 AND status<>'cancelled'",[body.group]);
    const id=randomUUID(),at=Date.now();
    await q.query("INSERT INTO mlg_bot.cups(id,group_id,created_by,created_at,size,status,competition_name,team_kind) VALUES($1,$2,$3,$4,$5,'open',$6,$7)",[id,body.group,panelActor,at,body.size,g.rows[0].competition_name,g.rows[0].team_kind]);
    await checkpointCup(q,body.group,id,panelActor,'panel-'+randomUUID());
    await q.query("INSERT INTO mlg_bot.audit_logs(actor,group_id,cup_id,occurred_at,action,before_state,after_state,outcome) VALUES($1,$2,$3,$4,'panel-open',NULL,$5::jsonb,'accepted')",[panelActor,body.group,id,at,JSON.stringify({size:body.size,name:g.rows[0].competition_name})]);
    await q.query("INSERT INTO mlg_bot.control_audit(action,group_id,user_id) VALUES('panel-open-cup',$1,$2)",[body.group,panelActor]);
-   await panelNotice(q,body.group,'🏆 '+g.rows[0].competition_name+' | INSCRIÇÕES ABERTAS\n\n🎮 '+body.size+' vagas. Envie !entrar para participar. Ao completar as vagas, o bot sorteia equipes e confrontos.');
-   return {opened:true};
+   await panelNotice(q,body.group,'🏆 '+g.rows[0].competition_name+' · EDIÇÃO '+number.rows[0].edition+'\n📣 INSCRIÇÕES ABERTAS · 0/'+body.size+' vagas\n\nEnvie !entrar para participar. Ao completar as vagas, o bot sorteia equipes e confrontos.');
+   return {opened:true,edition:number.rows[0].edition};
   });
  }
  else if(body.action==='cup-cancel'||body.action==='cup-void'){
@@ -149,7 +155,7 @@ Deno.serve(async req=>{
    const g=await q.query('SELECT 1 FROM mlg_bot.groups WHERE id=$1 AND authorized FOR UPDATE',[body.group]);if(!g.rows.length)throw Error('Unauthorized group');
    let selectedId=body.cupId;
    if(!cancelling&&!templateId.test(selectedId??'')){
-    const selected=await q.query('SELECT id FROM (SELECT id,row_number() OVER (ORDER BY created_at,id) AS edition FROM mlg_bot.cups WHERE group_id=$1) history WHERE edition=$2',[body.group,edition]);
+    const selected=await q.query("SELECT id FROM (SELECT id,row_number() OVER (ORDER BY created_at,id) AS edition FROM mlg_bot.cups WHERE group_id=$1 AND status<>'cancelled') history WHERE edition=$2",[body.group,edition]);
     selectedId=selected.rows[0]?.id;
    }
    const cup=await q.query(cancelling?"SELECT id,competition_name,status FROM mlg_bot.cups WHERE group_id=$1 AND status IN ('open','playing') FOR UPDATE": "SELECT id,competition_name,status FROM mlg_bot.cups WHERE group_id=$1 AND id=$2 FOR UPDATE",cancelling?[body.group]:[body.group,selectedId??null]);
@@ -161,13 +167,14 @@ Deno.serve(async req=>{
    }
    if(!cup.rows.length||!cancelling&&cup.rows[0].status!=='completed')return {error:'Selecione uma edição encerrada para anular.'};
    const c=cup.rows[0],at=Date.now(),reason=body.reason.trim();
+   const publicNumber=await q.query("SELECT edition FROM (SELECT id,row_number() OVER (ORDER BY created_at,id) AS edition FROM mlg_bot.cups WHERE group_id=$1 AND status<>'cancelled') history WHERE id=$2",[body.group,c.id]);
    await q.query('INSERT INTO mlg_bot.users(id,display_name) VALUES($1,$2) ON CONFLICT DO NOTHING',[panelActor,'Painel MLG']);
    await q.query("UPDATE mlg_bot.cups SET status='cancelled',champion=NULL,completed_at=NULL,cancellation_reason=$2 WHERE id=$1",[c.id,reason]);
    await checkpointCup(q,body.group,c.id,panelActor,'panel-'+randomUUID());
    await q.query("INSERT INTO mlg_bot.audit_logs(actor,group_id,cup_id,occurred_at,action,before_state,after_state,outcome) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,'accepted')",[panelActor,body.group,c.id,at,cancelling?'panel-cancel':'panel-void',JSON.stringify({status:c.status}),JSON.stringify({status:'cancelled',reason})]);
    await q.query('INSERT INTO mlg_bot.control_audit(action,group_id,user_id) VALUES($1,$2,$3)',[cancelling?'panel-cancel-cup':'panel-void-cup',body.group,panelActor]);
-   await panelNotice(q,body.group,'📋 '+c.competition_name+' | EDIÇÃO ANULADA\n\nMotivo: '+reason+'\nO histórico permanece disponível; esta edição não conta nas estatísticas.');
-   return {cancelled:true};
+   await panelNotice(q,body.group,'🚫 '+c.competition_name+' · EDIÇÃO '+publicNumber.rows[0].edition+' CANCELADA\nMotivo: '+reason+'\n\nO número fica livre para a próxima Copa. O histórico segue guardado; jogos e títulos desta tentativa não contam nas estatísticas.');
+   return {cancelled:true,edition:Number(publicNumber.rows[0].edition)};
   });
  }
  else if(body.action==='template-get'){

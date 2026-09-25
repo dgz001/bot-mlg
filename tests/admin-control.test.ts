@@ -35,6 +35,17 @@ test('central dos ADMs prepara, revisa e abre a Copa somente no grupo escolhido'
  assert.ok(calls.every(c=>c.group==='world@g.us'));
 });
 
+test('central mostra a próxima edição e confirma o número liberado ao cancelar',async()=>{
+ const room:ControlWorkspace={targetId:'world@g.us'};
+ const targets=[{id:'world@g.us',name:'Copa do Mundo'}];
+ const api=async(body:Record<string,unknown>)=>body.action==='templates-list'
+  ?{activeCompetition:'Copa do Mundo MLG',activeCup:null,nextEdition:8}
+  :body.action==='cup-cancel'?{cancelled:true,edition:8}:{error:'Comando inesperado'};
+ const send=(message:string)=>adminControl(message,room,targets,api,async()=>{});
+ assert.match(await send('!central'),/Próxima edição: 8/);
+ assert.match(await send('!cancelarcopa Erro no sorteio'),/Edição 8 cancelada.*número fica livre/);
+});
+
 test('central impede times repetidos, evita destino removido e preserva a Copa ao descartar rascunho',async()=>{
  const room:ControlWorkspace={targetId:'world@g.us'};
  const targets=[{id:'world@g.us',name:'Copa'}];let calls=0;
