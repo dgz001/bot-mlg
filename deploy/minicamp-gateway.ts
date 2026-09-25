@@ -10,8 +10,15 @@ const db={transaction:run=>base.transaction(async q=>{await q.query('SET LOCAL R
 const jid=/^[0-9]+@(lid|s\.whatsapp\.net)$/;
 const groupId=/^[0-9-]+@g\.us$/;
 function validAliases(v){return Array.isArray(v)&&v.length>=1&&v.length<=2&&v.every(x=>typeof x==='string'&&jid.test(x));}
-function validCompetition(body){return typeof body.name==='string'&&body.name.trim().length>=3&&body.name.length<=60&&['clube','seleção','misto'].includes(body.teamKind)&&Array.isArray(body.teams)&&body.teams.length>=4&&body.teams.length<=100&&body.teams.every(t=>typeof t==='string'&&t.length>=2&&t.length<=60&&t.trim()===t&&!/[\r\n\x00-\x1f\x7f\u202a-\u202e*_~`]/.test(t))&&new Set(body.teams.map(t=>t.toLocaleLowerCase('pt-BR'))).size===body.teams.length;}
+function validCompetition(body){return typeof body.name==='string'&&body.name.trim().length>=3&&body.name.length<=60&&['clube','seleção','misto'].includes(body.teamKind)&&Array.isArray(body.teams)&&body.teams.length>=4&&body.teams.length<=200&&body.teams.every(t=>typeof t==='string'&&t.length>=2&&t.length<=60&&t.trim()===t&&!/[\r\n\x00-\x1f\x7f\u202a-\u202e*_~`]/.test(t))&&new Set(body.teams.map(t=>t.toLocaleLowerCase('pt-BR'))).size===body.teams.length;}
 const templateId=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const panelActor='mlg-control-panel';
+async function panelNotice(q,group,message){
+ const id='panel-'+randomUUID();
+ await q.query('INSERT INTO mlg_bot.users(id,display_name) VALUES($1,$2) ON CONFLICT DO NOTHING',[panelActor,'Painel MLG']);
+ await q.query('INSERT INTO mlg_bot.processed_messages(group_id,user_id,message_id,received_at) VALUES($1,$2,$3,$4)',[group,panelActor,id,Date.now()]);
+ await q.query('INSERT INTO mlg_bot.outbox(group_id,user_id,message_id,ordinal,body) VALUES($1,$2,$3,0,$4)',[group,panelActor,id,message]);
+}
 async function identity(q,aliases,name=null){
  if(!validAliases(aliases))throw Error('Invalid identity');
  await q.query('SELECT pg_advisory_xact_lock(71012027)');
@@ -75,7 +82,51 @@ Deno.serve(async req=>{
    if(!g.rows.length)throw Error('Unauthorized group');
    const templates=await q.query('SELECT id,name,team_kind AS "teamKind",cardinality(teams) AS "teamCount",updated_at AS "updatedAt" FROM mlg_bot.competition_templates WHERE group_id=$1 ORDER BY lower(name)',[body.group]);
    const cup=await q.query("SELECT c.id,c.competition_name AS name,c.status,c.size,(SELECT count(*) FROM mlg_bot.cup_participants p WHERE p.cup_id=c.id) AS participants,(SELECT count(*) FROM mlg_bot.matches m WHERE m.cup_id=c.id AND m.status='pending') AS pending,(SELECT count(*) FROM mlg_bot.matches m WHERE m.cup_id=c.id AND m.status='disputed') AS disputed FROM mlg_bot.cups c WHERE c.group_id=$1 AND c.status IN ('open','playing') ORDER BY c.created_at DESC LIMIT 1",[body.group]);
-   return {templates:templates.rows,activeTemplateId:g.rows[0].active_template_id,activeCompetition:g.rows[0].competition_name,activeCup:cup.rows[0]??null};
+   const history=await q.query('SELECT id,name,status,size,edition FROM (SELECT id,competition_name AS name,status,size,row_number() OVER (ORDER BY created_at,id) AS edition FROM mlg_bot.cups WHERE group_id=$1) editions ORDER BY edition DESC LIMIT 15',[body.group]);
+   return {templates:templates.rows,activeTemplateId:g.rows[0].active_template_id,activeCompetition:g.rows[0].competition_name,activeCup:cup.rows[0]??null,recentCups:history.rows};
+  });
+ }
+ else if(body.action==='cup-open'){
+  if(!groupId.test(body.group)||![4,8,16,32].includes(body.size))throw Error('Invalid cup');
+  result=await db.transaction(async q=>{
+   const g=await q.query('SELECT competition_name,team_kind,admins_configured FROM mlg_bot.groups WHERE id=$1 AND authorized FOR UPDATE',[body.group]);
+   if(!g.rows.length)throw Error('Unauthorized group');
+   if(!g.rows[0].admins_configured)return {error:'Selecione e salve os ADMs deste grupo antes de abrir a Copa.'};
+   const active=await q.query("SELECT 1 FROM mlg_bot.cups WHERE group_id=$1 AND status IN ('open','playing')",[body.group]);
+   if(active.rows.length)return {error:'Já existe uma Copa aberta neste grupo.'};
+   const draft=await q.query('SELECT 1 FROM mlg_bot.command_drafts WHERE group_id=$1 AND expires_at>$2',[body.group,Date.now()]);
+   if(draft.rows.length)return {error:'Há uma Copa em preparação pelo WhatsApp. Conclua ou cancele o comando antes de abrir outra.'};
+   const poolSize=await q.query('SELECT count(*)::int AS total FROM mlg_bot.club_pool WHERE group_id=$1',[body.group]);
+   if(poolSize.rows[0].total<body.size)return {error:'O modelo ativo precisa ter pelo menos '+body.size+' times.'};
+   await q.query('INSERT INTO mlg_bot.users(id,display_name) VALUES($1,$2) ON CONFLICT DO NOTHING',[panelActor,'Painel MLG']);
+   const id=randomUUID(),at=Date.now();
+   await q.query("INSERT INTO mlg_bot.cups(id,group_id,created_by,created_at,size,status,competition_name,team_kind) VALUES($1,$2,$3,$4,$5,'open',$6,$7)",[id,body.group,panelActor,at,body.size,g.rows[0].competition_name,g.rows[0].team_kind]);
+   await q.query("INSERT INTO mlg_bot.audit_logs(actor,group_id,cup_id,occurred_at,action,before_state,after_state,outcome) VALUES($1,$2,$3,$4,'panel-open',NULL,$5::jsonb,'accepted')",[panelActor,body.group,id,at,JSON.stringify({size:body.size,name:g.rows[0].competition_name})]);
+   await q.query("INSERT INTO mlg_bot.control_audit(action,group_id,user_id) VALUES('panel-open-cup',$1,$2)",[body.group,panelActor]);
+   await panelNotice(q,body.group,'🏆 '+g.rows[0].competition_name+' | INSCRIÇÕES ABERTAS\n\n🎮 '+body.size+' vagas. Envie !entrar para participar. Ao completar as vagas, o bot sorteia equipes e confrontos.');
+   return {opened:true};
+  });
+ }
+ else if(body.action==='cup-cancel'||body.action==='cup-void'){
+  const cancelling=body.action==='cup-cancel';
+  if(!groupId.test(body.group)||!cancelling&&!templateId.test(body.cupId??'')||typeof body.reason!=='string'||body.reason.trim().length<8||body.reason.length>160||/[\r\n\x00-\x1f\x7f\u202a-\u202e*_~`]/.test(body.reason))throw Error('Invalid cancellation');
+  result=await db.transaction(async q=>{
+   const g=await q.query('SELECT 1 FROM mlg_bot.groups WHERE id=$1 AND authorized FOR UPDATE',[body.group]);if(!g.rows.length)throw Error('Unauthorized group');
+   const cup=await q.query(cancelling?"SELECT id,competition_name,status FROM mlg_bot.cups WHERE group_id=$1 AND status IN ('open','playing') FOR UPDATE": "SELECT id,competition_name,status FROM mlg_bot.cups WHERE group_id=$1 AND id=$2 FOR UPDATE",cancelling?[body.group]:[body.group,body.cupId]);
+   if(!cup.rows.length&&cancelling){
+    const draft=await q.query('DELETE FROM mlg_bot.command_drafts WHERE group_id=$1 RETURNING group_id',[body.group]);
+    if(!draft.rows.length)return {error:'Nenhuma Copa ativa neste grupo.'};
+    await q.query('INSERT INTO mlg_bot.control_audit(action,group_id) VALUES($1,$2)',['panel-cancel-draft',body.group]);
+    return {cancelled:true,draft:true};
+   }
+   if(!cup.rows.length||!cancelling&&cup.rows[0].status!=='completed')return {error:'Selecione uma edição encerrada para anular.'};
+   const c=cup.rows[0],at=Date.now(),reason=body.reason.trim();
+   await q.query("UPDATE mlg_bot.cups SET status='cancelled',champion=NULL,completed_at=NULL,cancellation_reason=$2 WHERE id=$1",[c.id,reason]);
+   await q.query('INSERT INTO mlg_bot.users(id,display_name) VALUES($1,$2) ON CONFLICT DO NOTHING',[panelActor,'Painel MLG']);
+   await q.query("INSERT INTO mlg_bot.audit_logs(actor,group_id,cup_id,occurred_at,action,before_state,after_state,outcome) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,'accepted')",[panelActor,body.group,c.id,at,cancelling?'panel-cancel':'panel-void',JSON.stringify({status:c.status}),JSON.stringify({status:'cancelled',reason})]);
+   await q.query('INSERT INTO mlg_bot.control_audit(action,group_id,user_id) VALUES($1,$2,$3)',[cancelling?'panel-cancel-cup':'panel-void-cup',body.group,panelActor]);
+   await panelNotice(q,body.group,'📋 '+c.competition_name+' | EDIÇÃO ANULADA\n\nMotivo: '+reason+'\nO histórico permanece disponível; esta edição não conta nas estatísticas.');
+   return {cancelled:true};
   });
  }
  else if(body.action==='template-get'){
