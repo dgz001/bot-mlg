@@ -49,3 +49,23 @@ test('central impede times repetidos, evita destino removido e preserva a Copa a
  assert.match(await send('!novacopa',[]),/Escolha primeiro/);
  assert.equal(calls,2);
 });
+
+test('sorteio exige confirmação, bloqueia mudança concorrente e preserva o motivo',async()=>{
+ const room:ControlWorkspace={targetId:'world@g.us'};let version='a'.repeat(64),draws=0;
+ const targets=[{id:'world@g.us',name:'Copa do Mundo'}];
+ const api=async(body:Record<string,unknown>)=>{
+  assert.equal(body.action,'cup-draw');assert.equal(body.group,'world@g.us');assert.equal(body.controlGroup,'central@g.us');
+  if(body.mode){if(body.expected!==version)return {error:'O sorteio mudou depois da revisão.'};draws++;version='b'.repeat(64);return {changed:true};}
+  return {cupId:'cup-1',name:'Copa do Mundo',fingerprint:version,participants:[{user_id:'u1',display_name:'Ana',club:'Brasil'},{user_id:'u2',display_name:'Beto',club:'França'}],matches:[{code:101,home:'u1',away:'u2'}]};
+ };
+ const send=(s:string,now=1000)=>adminControl(s,room,targets,api,async()=>{},now,{controlGroup:'central@g.us',aliases:['123@s.whatsapp.net']});
+ assert.match(await send('!sorteio'),/Brasil/);
+ assert.match(await send('!refazersorteio equipes erro na seleção'),/5 minutos/);
+ version='c'.repeat(64);
+ assert.match(await send('!confirmarsorteio'),/mudou depois/);assert.equal(draws,0);
+ await send('!refazersorteio completo sorteio incorreto');
+ assert.match(await send('!confirmarsorteio'),/Sorteio atualizado/);assert.equal(draws,1);
+ assert.equal(room.draw,undefined);
+ await send('!refazersorteio chave inverter sorteio');
+ assert.match(await send('!confirmarsorteio',302_000),/Não há sorteio/);assert.equal(draws,1);
+});

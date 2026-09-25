@@ -1,5 +1,5 @@
 export type ControlDraft={name:string;teamKind:'clube'|'seleção'|'misto';teams:string[];size:number|null;reviewed?:string;reviewedAt?:number};
-export type ControlWorkspace={targetId?:string;draft?:ControlDraft};
+export type ControlWorkspace={targetId?:string;draft?:ControlDraft;draw?:{group:string;cupId:string;fingerprint:string;mode:'equipes'|'chave'|'completo';reason:string;expiresAt:number}};
 export type ControlTarget={id:string;name:string};
 type Api=(body:Record<string,unknown>)=>Promise<any>;
 const label=(kind:ControlDraft['teamKind'])=>kind==='seleção'?'seleções':kind==='misto'?'clubes e seleções':'clubes';
@@ -7,20 +7,52 @@ const clean=(value:string)=>value.trim().toLocaleLowerCase('pt-BR');
 const safeTeam=(value:string)=>value.length>=2&&value.length<=60&&!/[\r\n\x00-\x1f\x7f\u202a-\u202e*_~`]/.test(value);
 const validTeams=(teams:string[])=>teams.length<=200&&teams.every(safeTeam)&&new Set(teams.map(clean)).size===teams.length;
 const fingerprint=(d:ControlDraft)=>JSON.stringify([d.name,d.teamKind,d.teams,d.size]);
-const menu='🎛️ CENTRAL MLG · ADMs\n!grupos — destinos disponíveis\n!usar número — escolher o grupo da Copa\n!novacopa — preparar a edição com o modelo ativo\n!nome Nome da Copa\n!categoria clubes | seleções | misto\n!equipes Time A | Time B | ... (substitui a lista)\n!adicionar Time A | Time B · !remover Nome exato\n!times — conferir o sorteio disponível\n!vagas 4 | 8 | 16 | 32\n!revisar — conferir tudo antes de abrir\n!abrircopa — salvar o modelo e abrir inscrições\n!descartar — abandonar apenas a preparação\n!cancelarcopa motivo · !anularcopa edição motivo\n\n🛡️ Cada ADM é identificado pela conta selecionada no painel. Jogos e placares seguem no grupo da Copa.';
+const menu='🎛️ CENTRAL MLG · ADMs\n\n📍 DESTINO E COPA\n!grupos · !usar número · !central · !pendencias\n!modelos · !ativarmodelo número (entre Copas)\n!novacopa · !nome · !categoria · !equipes\n!adicionar · !remover · !times · !vagas\n!revisar · !abrircopa · !descartar\n\n🎲 CORRIGIR SORTEIO (ANTES DO PRIMEIRO RESULTADO)\n!sorteio — consultar equipes e confrontos\n!refazersorteio equipes motivo — redistribuir os times atuais\n!refazersorteio chave motivo — refazer os confrontos\n!refazersorteio completo motivo — refazer ambos\n!confirmarsorteio — confirmar em até 5 minutos\n!cancelarsorteio — descartar a correção\n\n🛡️ EDIÇÕES\n!cancelarcopa motivo · !anularcopa edição motivo\n\nJogos e placares continuam no grupo da Copa. Sorteios anteriores ficam nos registros de recuperação.';
 function requireSuccess<T>(value:any):T {if(value?.error)throw Error(value.error);return value as T;}
 
-export async function adminControl(text:string,room:ControlWorkspace,targets:ControlTarget[],api:Api,save:()=>Promise<void>,now=Date.now()):Promise<string>{
+export async function adminControl(text:string,room:ControlWorkspace,targets:ControlTarget[],api:Api,save:()=>Promise<void>,now=Date.now(),actor?:{controlGroup:string;aliases:string[]}):Promise<string>{
  const trimmed=text.trim();const [command='']=trimmed.split(/\s+/,1);const arg=trimmed.slice(command.length).trim();const cmd=command.toLocaleLowerCase('pt-BR');
  if(cmd==='!ajuda'||cmd==='!comandos'||cmd==='!painel')return menu;
  if(cmd==='!grupos')return '📍 GRUPOS DE COPA\n'+(targets.map((g,i)=>(room.targetId===g.id?'● ':'○ ')+(i+1)+'. '+g.name).join('\n')||'Nenhum grupo autorizado. Cadastre um no painel.')+'\n\nEnvie !usar número para escolher onde a Copa acontecerá.';
  if(cmd==='!usar'){
   const n=Number(arg);if(!Number.isSafeInteger(n)||n<1||n>targets.length)return 'Use !grupos e depois !usar número da lista.';
-  const choice=targets[n-1]!;room.targetId=choice.id;delete room.draft;await save();return '✅ Destino: '+choice.name+'\nUse !novacopa para preparar a edição. Nenhuma inscrição foi aberta.';
+  const choice=targets[n-1]!;room.targetId=choice.id;delete room.draft;delete room.draw;await save();return '✅ Destino: '+choice.name+'\nUse !novacopa para preparar a edição. Nenhuma inscrição foi aberta.';
  }
  const target=targets.find(g=>g.id===room.targetId);
  if(!target)return 'Escolha primeiro o destino: !grupos e !usar número. Apenas grupos de Copa autorizados aparecem.';
  const group=target.id;
+ if(cmd==='!pendencias'){
+  const current=requireSuccess<any>(await api({action:'templates-list',group}));const cup=current.activeCup;
+  return `📋 VISTORIA · ${target.name}\n${cup?'🏆 '+cup.name+' · '+cup.participants+'/'+cup.size+' participantes\n⏳ Placares pendentes: '+cup.pending+' · ⚖️ Contestações: '+cup.disputed:'Nenhuma Copa aberta neste grupo.'}\n🛡️ Registros de recuperação: ${cup?.checkpointCount??0}\n\nPara ver os jogos, envie !copa no grupo do campeonato.`;
+ }
+ if(cmd==='!modelos'||cmd==='!ativarmodelo'){
+  const current=requireSuccess<any>(await api({action:'templates-list',group}));
+  const templates=current.templates??[];
+  if(cmd==='!modelos')return '🏆 MODELOS · '+target.name+'\n'+(templates.map((m:any,i:number)=>`${i+1}. ${m.name} · ${m.teamCount} times${m.id===current.activeTemplateId?' · ATIVO':''}`).join('\n')||'Nenhum modelo salvo. Prepare uma Copa com !novacopa ou crie um no painel.')+'\n\nPara escolher entre Copas: !ativarmodelo número.';
+  const n=Number(arg);if(!Number.isSafeInteger(n)||n<1||n>templates.length)return 'Use !modelos e depois !ativarmodelo número da lista.';
+  const selected=templates[n-1];if(current.activeCup)return 'A Copa em andamento termina antes de trocar o modelo. O sorteio atual está preservado.';
+  const result=await api({action:'template-activate',group,templateId:selected.id});
+  return result.error?'⚠️ '+result.error:'✅ Modelo ativo: '+selected.name+'. A próxima Copa usará estes times. Copas anteriores não mudaram.';
+ }
+ if(cmd==='!cancelarsorteio'){delete room.draw;await save();return '🗑️ Correção de sorteio descartada. A Copa continua como estava.';}
+ if(['!sorteio','!refazersorteio','!confirmarsorteio'].includes(cmd)){
+  if(!actor)return 'Não foi possível validar o ADM desta central.';
+  const request={action:'cup-draw',group,controlGroup:actor.controlGroup,aliases:actor.aliases};
+  if(cmd==='!confirmarsorteio'){
+   const pending=room.draw;
+   if(!pending||pending.group!==group||pending.expiresAt<now)return 'Não há sorteio aguardando confirmação. Envie !refazersorteio equipes, chave ou completo, seguido do motivo.';
+   const changed=await api({...request,mode:pending.mode,expected:pending.fingerprint,reason:pending.reason});
+   if(changed.error){delete room.draw;await save();return '⚠️ '+changed.error;}
+   delete room.draw;await save();return '✅ Sorteio atualizado em '+target.name+'. As novas equipes e partidas serão anunciadas no grupo da Copa. O estado anterior foi guardado para recuperação.';
+  }
+  const current=await api(request);
+  if(current.error)return '⚠️ '+current.error;
+  if(cmd==='!sorteio')return '🎲 SORTEIO ATUAL · '+current.name+'\n📍 '+target.name+'\n\n⚽ EQUIPES\n'+current.participants.map((p:any,i:number)=>`${i+1}. ${p.display_name} → ${p.club}`).join('\n')+'\n\n⚔️ CONFRONTOS\n'+current.matches.map((m:any)=>'Jogo '+m.code+': '+current.participants.find((p:any)=>p.user_id===m.home)?.display_name+' × '+current.participants.find((p:any)=>p.user_id===m.away)?.display_name).join('\n')+'\n\nPara corrigir, use !refazersorteio equipes, chave ou completo, seguido do motivo.';
+  const match=arg.match(/^(equipes|chave|completo)\s+(.{8,160})$/s);
+  if(!match||match[2]!.trim().length<8||/[\r\n\x00-\x1f\x7f\u202a-\u202e*_~`]/.test(match[2]!))return 'Use !refazersorteio equipes | chave | completo seguido de um motivo de 8 a 160 caracteres.';
+  const mode=match[1] as 'equipes'|'chave'|'completo';room.draw={group,cupId:current.cupId,fingerprint:current.fingerprint,mode,reason:match[2]!.trim(),expiresAt:now+300_000};await save();
+  return '🔎 CONFIRMAR NOVO SORTEIO\n📍 '+target.name+' · '+current.name+'\n🎲 Mudança: '+(mode==='equipes'?'redistribuir as equipes atuais':mode==='chave'?'refazer os confrontos':'redistribuir equipes e refazer confrontos')+'\n📋 Motivo: '+room.draw.reason+'\n\nAs partidas ainda não têm resultado. Envie !confirmarsorteio em até 5 minutos. Se alguém registrar resultado ou alterar a chave, a confirmação será bloqueada. Para voltar: !cancelarsorteio.';
+ }
  if(cmd==='!central'){
   const current=requireSuccess<any>(await api({action:'templates-list',group}));
   return '🎛️ CENTRAL MLG\n📍 '+target.name+'\n🏆 Modelo ativo: '+current.activeCompetition+'\n'+(current.activeCup?'🎮 Copa em andamento: '+current.activeCup.participants+'/'+current.activeCup.size+' inscritos.':current.preparing?'⏳ Um ADM está escolhendo o formato no grupo da Copa.':'📣 Nenhuma Copa aberta.')+'\n'+(room.draft?'📝 Preparação salva: '+room.draft.name+(room.draft.size?' · '+room.draft.size+' vagas':' · vagas a definir'):'📝 Sem preparação em andamento.')+'\n\n!painel mostra os comandos.';

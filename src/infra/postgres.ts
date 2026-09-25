@@ -1,5 +1,5 @@
 import type { Pool } from 'pg';
-import { createHash } from 'node:crypto';
+import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { apply, emptyState, environment, type Cup, type Event, type Match, type Participant, type Result, type Environment } from '../minicamp/engine.ts';
 
 export interface Query {
@@ -24,6 +24,55 @@ export async function checkpointCup(q:Query,groupId:string,cupId:string,actorId:
  const state=canonicalCheckpoint({cup:cup.rows[0],participants:participants.rows,matches:matches.rows,results:results.rows});
  const sha256=createHash('sha256').update(state).digest('hex');
  await q.query('INSERT INTO mlg_bot.cup_checkpoints(group_id,cup_id,actor_id,event_id,recorded_at,state,sha256) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7)',[groupId,cupId,actorId,eventId,Date.now(),state,sha256]);
+}
+type DrawMode='equipes'|'chave'|'completo';
+type DrawRow={user_id:string;display_name:string;club:string;position:number};
+type DrawMatch={code:number;home:string;away:string;round:number;position:number;status:string};
+function shuffleDifferent<T>(values:T[]):T[]{
+ const drawn=[...values];for(let i=drawn.length-1;i>0;i--){const j=randomInt(i+1);[drawn[i],drawn[j]]=[drawn[j]!,drawn[i]!];}
+ if(drawn.length>1&&drawn.every((v,i)=>v===values[i]))drawn.push(drawn.shift()!);
+ return drawn;
+}
+export async function cupDraw(database:Database,request:{group:string;controlGroup:string;actorAliases:string[];mode?:DrawMode;expected?:string;reason?:string}):Promise<{error?:string;cupId?:string;name?:string;fingerprint?:string;participants?:DrawRow[];matches?:DrawMatch[];changed?:boolean;mode?:DrawMode}>{
+ return database.transaction(async q=>{
+  const authorized=await q.query<{id:string}>('SELECT DISTINCT a.user_id AS id FROM mlg_bot.admins a JOIN mlg_bot.wa_identities w ON w.user_id=a.user_id JOIN mlg_bot.groups g ON g.id=a.group_id WHERE a.group_id=$1 AND w.jid=ANY($2::text[]) AND g.authorized AND g.admins_configured',[request.controlGroup,request.actorAliases]);
+  if(!authorized.rows.length)return {error:'Sua conta não está entre os ADMs da central.'};
+  const actor=authorized.rows[0]!.id;
+  const group=await q.query('SELECT 1 FROM mlg_bot.groups WHERE id=$1 AND authorized FOR UPDATE',[request.group]);
+  if(!group.rows.length)return {error:'Grupo da Copa não autorizado.'};
+  const cups=await q.query<{id:string;competition_name:string;size:number;status:string}>("SELECT id,competition_name,size,status FROM mlg_bot.cups WHERE group_id=$1 AND status IN ('open','playing') ORDER BY created_at DESC LIMIT 1 FOR UPDATE",[request.group]);
+  const cup=cups.rows[0];if(!cup||cup.status!=='playing')return {error:'O sorteio só pode ser revisto depois que as vagas fecharem.'};
+  const participants=await q.query<DrawRow>('SELECT user_id,display_name,club,position FROM mlg_bot.cup_participants WHERE cup_id=$1 ORDER BY position FOR UPDATE',[cup.id]);
+  const matches=await q.query<DrawMatch>('SELECT code::float8 AS code,home,away,round,position,status FROM mlg_bot.matches WHERE cup_id=$1 ORDER BY round,position FOR UPDATE',[cup.id]);
+  const started=await q.query('SELECT 1 FROM mlg_bot.match_results r JOIN mlg_bot.matches m ON m.code=r.match_code WHERE m.cup_id=$1 LIMIT 1',[cup.id]);
+  if(started.rows.length||matches.rows.some(m=>m.status!=='scheduled'||m.round!==0)||matches.rows.length!==cup.size/2||participants.rows.length!==cup.size||participants.rows.some(p=>!p.club))return {error:'Sorteio bloqueado: já há resultado, alteração de jogo ou chave incompleta. Corrija a partida pelo fluxo de revisão.'};
+  const fingerprint=createHash('sha256').update(JSON.stringify([cup.id,participants.rows,matches.rows])).digest('hex');
+  if(!request.mode)return {cupId:cup.id,name:cup.competition_name,fingerprint,participants:participants.rows,matches:matches.rows};
+  if(request.expected!==fingerprint)return {error:'O sorteio mudou depois da revisão. Envie !sorteio e prepare a correção novamente.'};
+  const before=structuredClone({participants:participants.rows,matches:matches.rows});
+  await q.query('INSERT INTO mlg_bot.users(id,display_name) VALUES($1,$2) ON CONFLICT DO NOTHING',['mlg-control-panel','Painel MLG']);
+  const eventId='redraw-'+randomUUID();
+  await checkpointCup(q,request.group,cup.id,actor,eventId+'-before');
+  if(request.mode!=='chave'){
+   const clubs=shuffleDifferent(participants.rows.map(p=>p.club));
+   // UNIQUE(cup_id,club) is immediate: release old assignments inside this
+   // transaction before reassigning the same pool to different players.
+   await q.query('UPDATE mlg_bot.cup_participants SET club=NULL WHERE cup_id=$1',[cup.id]);
+   for(const [i,p] of participants.rows.entries()){p.club=clubs[i]!;await q.query('UPDATE mlg_bot.cup_participants SET club=$3 WHERE cup_id=$1 AND user_id=$2',[cup.id,p.user_id,p.club]);}
+  }
+  if(request.mode!=='equipes'){
+   const ids=shuffleDifferent(matches.rows.flatMap(m=>[m.home,m.away]));
+   for(const [i,m] of matches.rows.entries()){m.home=ids[i*2]!;m.away=ids[i*2+1]!;await q.query('UPDATE mlg_bot.matches SET home=$2,away=$3 WHERE code=$1 AND cup_id=$4',[m.code,m.home,m.away,cup.id]);}
+  }
+  await q.query('INSERT INTO mlg_bot.audit_logs(actor,group_id,cup_id,occurred_at,action,before_state,after_state,outcome) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8)',[actor,request.group,cup.id,Date.now(),'redraw-'+request.mode,JSON.stringify({...before,reason:request.reason}),JSON.stringify({participants:participants.rows,matches:matches.rows}),'accepted']);
+  await checkpointCup(q,request.group,cup.id,actor,eventId+'-after');
+  const users=new Map(participants.rows.map(p=>[p.user_id,p]));
+  const kind=request.mode==='equipes'?'as equipes':request.mode==='chave'?'os confrontos':'as equipes e os confrontos';
+  const notice='🎲 SORTEIO ATUALIZADO · '+cup.competition_name+'\nA central refez '+kind+'. Motivo: '+request.reason+'\n\n⚔️ CONFRONTOS E EQUIPES\n\n'+matches.rows.map(m=>`🎮 JOGO ${m.code}\n${users.get(m.home)?.display_name} · ${users.get(m.home)?.club}\n       ×\n${users.get(m.away)?.display_name} · ${users.get(m.away)?.club}`).join('\n\n')+'\n\n📸 Os confrontos anteriores foram substituídos. Enviem o print antes de registrar o placar.';
+  const messageId='panel-'+randomUUID();await q.query('INSERT INTO mlg_bot.processed_messages(group_id,user_id,message_id,received_at) VALUES($1,$2,$3,$4)',[request.group,'mlg-control-panel',messageId,Date.now()]);
+  await q.query('INSERT INTO mlg_bot.outbox(group_id,user_id,message_id,ordinal,body) VALUES($1,$2,$3,0,$4)',[request.group,'mlg-control-panel',messageId,notice]);
+  return {changed:true,cupId:cup.id,name:cup.competition_name,mode:request.mode,participants:participants.rows,matches:matches.rows};
+ });
 }
 export function pgDatabase(pool: Pool): Database {
   return {

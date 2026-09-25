@@ -71,9 +71,11 @@ test('sorteio e placar orientam a dupla sem exigir confirmação do adversário'
  const h=harness();h.send('admin','!novacopa');h.send('admin','1');
  for(let i=0;i<3;i++)h.send(`u${i}`,'!entrar');
  const announced=h.send('u3','!entrar').notices;
- assert.match(announced[1]!,/SORTEIO MLG.*Clubes definidos/s);
+ assert.match(announced[1]!,/SORTEIO · MINICAMP MLG.*Equipes e adversários/s);
  assert.match(announced[2]!,/SEMIFINAL · 2 jogos/);
- assert.equal((announced[2]!.match(/^#\d+ · /gm)??[]).length,2);
+ assert.equal((announced[2]!.match(/^🎮 JOGO \d+/gm)??[]).length,2);
+ const overview=h.send('u0','!sorteio').notices[0]!;
+ assert.match(overview,/SORTEIO · MINICAMP MLG/);assert.equal((overview.match(/^🎮 JOGO \d+/gm)??[]).length,2);
  assert.match(announced[2]!,/Os dois jogadores podem confirmar/);
  const match=Object.values(h.state.cups)[0]!.matches[0]!;
  const pending=h.send(match.away,`!resultado ${match.code} 0x2`).notices[0]!;
@@ -489,7 +491,7 @@ test('Minicamp aceita sorteio misto de clubes e seleções sem repetição',()=>
  h.send('admin','!novacopa');h.send('admin','!formato 32');
  for(let i=0;i<31;i++)h.send('m'+i,'!entrar');
  const final=h.send('m31','!entrar').notices.join('\n');
- assert.match(final,/Times definidos/);assert.match(final,/O time sorteado vale nesta edição/);
+ assert.match(final,/Equipes e adversários aparecem juntos/);assert.equal((final.match(/^🎮 JOGO \d+/gm)??[]).length,16);
  const cup=Object.values(h.state.cups)[0]!;
  assert.equal(cup.participants.length,32);
  assert.equal(new Set(cup.participants.map(p=>p.club)).size,32);

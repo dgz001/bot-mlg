@@ -75,7 +75,7 @@ async function connect(){
     const participating=Object.values(await current.groupFetchAllParticipating());
     const targets:ControlTarget[]=participating.filter(g=>g.id!==group&&auth.data.groups.includes(g.id)&&groupMode(auth.data.groupModes,g.id)==='minicamp').map(g=>({id:g.id,name:g.subject})).sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
     auth.data.controlRooms??={};const room=auth.data.controlRooms[group]??={};auth.data.controlRooms[group]=room;
-    response=await adminControl(text,room,targets,cupApi,()=>auth.save());
+    response=await adminControl(text,room,targets,cupApi,()=>auth.save(),Date.now(),{controlGroup:group,aliases});
    }
    auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);await auth.save();
    if(socket===current&&!stopping&&enabled('minicamp'))await current.sendMessage(group,{text:response});
