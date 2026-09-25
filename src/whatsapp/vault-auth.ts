@@ -3,7 +3,7 @@ import {initAuthCreds,BufferJSON,proto,type AuthenticationState,type SignalDataT
 import {seal,unseal,type Sealed} from '../infra/security.ts';
 import type {GroupMode} from '../infra/group-modes.ts';
 import type {ControlWorkspace} from '../infra/admin-control.ts';
-export type VaultData={creds:AuthenticationState['creds'];keys:Record<string,Record<string,unknown>>;groups:string[];groupModes?:Record<string,GroupMode>;seen:string[];controls?:{enabled:boolean;resenha:boolean;minicamp:boolean};cupInbox?:PendingCupEvent[];replyHistory?:Record<string,string[]>;controlRooms?:Record<string,ControlWorkspace>};
+export type VaultData={creds:AuthenticationState['creds'];keys:Record<string,Record<string,unknown>>;groups:string[];groupModes?:Record<string,GroupMode>;panelSelection?:{group:string;templates:Record<string,string>};seen:string[];controls?:{enabled:boolean;resenha:boolean;minicamp:boolean};cupInbox?:PendingCupEvent[];replyHistory?:Record<string,string[]>;controlRooms?:Record<string,ControlWorkspace>};
 export async function vaultAuth(url:string,token:string,key:Buffer){
  async function remote(method:string,body?:unknown){
   const attempts=method==='GET'?3:1;
