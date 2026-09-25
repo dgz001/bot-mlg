@@ -66,6 +66,20 @@ test('consultas exibem edições legíveis e aceitam seu número sem revelar có
  assert.match(h.send('u0','!historico').notices[0]!,/anulada/);
 });
 
+test('sorteio e placar orientam a dupla sem exigir confirmação do adversário',()=>{
+ const h=harness();h.send('admin','!novacopa');h.send('admin','1');
+ for(let i=0;i<3;i++)h.send(`u${i}`,'!entrar');
+ const announced=h.send('u3','!entrar').notices;
+ assert.match(announced[1]!,/SORTEIO MLG.*Clubes definidos/s);
+ assert.match(announced[2]!,/SEMIFINAL · 2 jogos/);
+ assert.equal((announced[2]!.match(/^#\d+ · /gm)??[]).length,2);
+ assert.match(announced[2]!,/Os dois jogadores podem confirmar/);
+ const match=Object.values(h.state.cups)[0]!.matches[0]!;
+ const pending=h.send(match.away,`!resultado ${match.code} 0x2`).notices[0]!;
+ assert.match(pending,/Aguardando confirmação de um dos dois jogadores/);
+ assert.doesNotMatch(pending,/Falta a conferência do adversário|Um toque do outro lado/);
+});
+
 test('evento repetido não cria copa, inscrição ou confirmação duplicada', () => {
   const h = harness();
   h.send('admin', '!novacopa', 'same');
@@ -296,8 +310,8 @@ test('mensagens variam sem spam, sobrevivem a restart e final distingue campeão
     assert.match(reply.notices[0]!, /é campeão/);
     assert.match(reply.notices[0]!, /fica com o vice/);
     assert.doesNotMatch(reply.notices[0]!, /classificado|eliminado/);
-    assert.match(reply.notices[1]!, /Títulos no grupo: 1/);
-    titles.add(reply.notices[1]!.split('\n')[4]!);
+    assert.match(reply.notices[1]!, /Primeira taça registrada/);
+    titles.add(reply.notices[1]!.split('\n')[2]!);
   }
   assert.equal(cheers.size, 8);
   assert.equal(titles.size, 8);
@@ -393,12 +407,12 @@ test('teste é diagnóstico sem mutação de Copa e não declara banco verificad
  assert.match(empty,/Nenhuma Copa ativa/);assert.doesNotMatch(empty,/PostgreSQL:/);
  const cup=h.start(4);const before=JSON.stringify(h.state.cups);
  const reply=h.send('u0','!teste','diagnostic');
- assert.match(reply.notices[0]!,/Copa em andamento/);
+ assert.match(reply.notices[0]!,/Edição 1 · em andamento/);
  assert.equal(JSON.stringify(h.state.cups),before);
  assert.deepEqual(h.send('u0','!teste','diagnostic').notices,[]);
  h.state.groups.g!.clubs=['Clube'];h.state.groups.g!.admins=[];
  const warning=h.send('u0','!teste').notices[0]!;
- assert.match(warning,/⚠️ ADMs cadastrados: 0/);assert.match(warning,/⚠️ Clubes distintos: 1/);
+ assert.match(warning,/⚠️ ADMs cadastrados: 0/);assert.match(warning,/⚠️ Clubes disponíveis: 1/);
  assert.equal(h.state.cups[cup.id]!.status,'playing');
 });
 
