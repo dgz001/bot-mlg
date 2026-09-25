@@ -41,6 +41,24 @@ async function setup(db: Pool) {
   for (let i=0;i<16;i++) await db.query('INSERT INTO mlg_bot.club_pool VALUES ($1,$2)',['g',`Club ${i}`]);
 }
 
+test('nome confirmado pelo ADM persiste entre grupos e reinícios sem depender do apelido do WhatsApp',integration,async()=>{
+ const f=await fixture();try{
+  await setup(f.pool);
+  await f.pool.query("INSERT INTO mlg_bot.users(id,display_name) VALUES('u0','Apelido temporário'); INSERT INTO mlg_bot.groups(id,authorized,admins_configured) VALUES('g2',true,true); INSERT INTO mlg_bot.admins(group_id,user_id,role) VALUES('g2','admin','admin')");
+  for(let i=0;i<16;i++)await f.pool.query('INSERT INTO mlg_bot.club_pool VALUES($1,$2)',['g2',`Equipe ${i}`]);
+  let index=0;const send=(groupId:string,userId:string,text:string)=>processEvent(pgDatabase(f.pool),{id:'name-'+ ++index,groupId,userId,name:userId==='u0'?'Apelido novo':userId,text,at:Date.now()+index});
+  await send('g','admin','!cadastrarid u0 @Maria Souza');
+  await send('g2','admin','!novacopa');await send('g2','admin','!formato 4');
+  await f.restartClient();
+  assert.match((await send('g2','u0','!entrar')).notices[0]!,/Maria Souza/);
+  assert.equal((await f.pool.query("SELECT display_name FROM mlg_bot.coach_profiles WHERE group_id='g2' AND user_id='u0'")).rows[0].display_name,'Maria Souza');
+  await send('g2','admin','!editarid u0 @Maria da Silva');
+  assert.equal((await f.pool.query("SELECT display_name FROM mlg_bot.coach_profiles WHERE group_id='g' AND user_id='u0'")).rows[0].display_name,'Maria da Silva');
+  assert.equal((await f.pool.query("SELECT display_name FROM mlg_bot.users WHERE id='u0'")).rows[0].display_name,'Maria da Silva');
+  assert.match((await send('g2','u0','!participantes')).notices[0]!,/Maria da Silva/);
+ }finally{await f.close();}
+});
+
 test('três inscrições concorrentes ocupam posições únicas e duas confirmações avançam uma vez',integration,async()=>{
  const f=await fixture();try{
   await setup(f.pool);

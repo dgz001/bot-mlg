@@ -184,7 +184,7 @@ export async function processEvent(database: Database, event: Event, env: Enviro
   return database.transaction(async q => {
     const groups = await q.query<{ id: string; authorized: boolean; competitionName:string; teamKind:"clube"|"seleção"|"misto"; formatSize:number|null }>('SELECT id,authorized,competition_name AS "competitionName",team_kind AS "teamKind",format_size AS "formatSize" FROM mlg_bot.groups WHERE id=$1 FOR UPDATE', [event.groupId]);
     if (!groups.rows[0]?.authorized) throw new Error('Grupo não autorizado.');
-    await q.query('INSERT INTO mlg_bot.users(id,display_name) VALUES ($1,$2) ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name', [event.userId,event.name.slice(0,60)]);
+    await q.query('INSERT INTO mlg_bot.users(id,display_name) VALUES ($1,$2) ON CONFLICT(id) DO NOTHING', [event.userId,event.name.slice(0,60)]);
     const claimed = await q.query<{ message_id: string }>(`INSERT INTO mlg_bot.processed_messages(group_id,user_id,message_id,received_at)
       VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING message_id`, [event.groupId,event.userId,event.id,event.at]);
     if (!claimed.rows.length) return { duplicate: true, notices: [] };
@@ -216,12 +216,25 @@ export async function processEvent(database: Database, event: Event, env: Enviro
       FROM mlg_bot.match_results r JOIN mlg_bot.matches m ON m.code=r.match_code JOIN mlg_bot.cups c ON c.id=m.cup_id
       WHERE c.group_id=$1 ORDER BY r.match_code,r.revision`,[event.groupId]);
     for(const {match_code,...r} of results.rows)byCode.get(match_code)?.results.push({...r,confirmedBy:r.confirmedBy??undefined,disputedBy:r.disputedBy??undefined,reason:r.reason??undefined});
-    const profiles=await q.query<{userId:string;name:string}>('SELECT user_id AS "userId",display_name AS name FROM mlg_bot.coach_profiles WHERE group_id=$1',[event.groupId]);
-    state.profiles={[event.groupId]:Object.fromEntries(profiles.rows.map(p=>[p.userId,p.name]))};
+    const savedProfiles=await q.query<{userId:string;name:string}>('SELECT user_id AS "userId",display_name AS name FROM mlg_bot.coach_profiles WHERE group_id=$1',[event.groupId]);
+    const names=await q.query<{userId:string;name:string}>(`SELECT u.id AS "userId",COALESCE(p.display_name,u.display_name) AS name
+      FROM mlg_bot.users u LEFT JOIN mlg_bot.coach_profiles p ON p.group_id=$1 AND p.user_id=u.id
+      WHERE u.id=$2 OR p.user_id IS NOT NULL OR EXISTS (
+        SELECT 1 FROM mlg_bot.cup_participants cp JOIN mlg_bot.cups c ON c.id=cp.cup_id WHERE c.group_id=$1 AND cp.user_id=u.id)`,[event.groupId,event.userId]);
+    state.profiles={[event.groupId]:Object.fromEntries(names.rows.map(p=>[p.userId,p.name]))};
+    for(const cup of Object.values(state.cups))for(const participant of cup.participants){
+      if(state.profiles[event.groupId]?.[participant.userId])participant.name=state.profiles[event.groupId]![participant.userId]!;
+    }
     const output = apply(state,event,env);
+    const joined=Object.values(output.state.cups).some(c=>c.groupId===event.groupId&&c.participants.some(p=>p.userId===event.userId&&!state.cups[c.id]?.participants.some(old=>old.userId===event.userId)));
     for(const [id,name] of Object.entries(output.state.profiles?.[event.groupId]??{})){
-      if(state.profiles[event.groupId]?.[id]===name)continue;
+      const changed=state.profiles[event.groupId]?.[id]!==name;
+      if(!changed&&!(joined&&id===event.userId))continue;
       await q.query('INSERT INTO mlg_bot.coach_profiles(group_id,user_id,display_name) VALUES($1,$2,$3) ON CONFLICT(group_id,user_id) DO UPDATE SET display_name=excluded.display_name',[event.groupId,id,name]);
+      if(changed){
+        await q.query('UPDATE mlg_bot.users SET display_name=$2 WHERE id=$1',[id,name]);
+        await q.query('UPDATE mlg_bot.coach_profiles SET display_name=$2 WHERE user_id=$1',[id,name]);
+      }
     }
     for (const cup of Object.values(output.state.cups)) {
       if (JSON.stringify(state.cups[cup.id]) === JSON.stringify(cup)) continue;
@@ -235,7 +248,7 @@ export async function processEvent(database: Database, event: Event, env: Enviro
       }
       for (const [position,p] of cup.participants.entries()) {
         await q.query(`INSERT INTO mlg_bot.cup_participants(cup_id,user_id,display_name,position,club) VALUES ($1,$2,$3,$4,$5)
-          ON CONFLICT(cup_id,user_id) DO UPDATE SET club=excluded.club`, [cup.id,p.userId,p.name,position,p.club ?? null]);
+          ON CONFLICT(cup_id,user_id) DO UPDATE SET club=excluded.club,display_name=excluded.display_name`, [cup.id,p.userId,p.name,position,p.club ?? null]);
       }
       for (const m of cup.matches) {
         await q.query(`INSERT INTO mlg_bot.matches(code,cup_id,round,position,home,away,winner,status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)

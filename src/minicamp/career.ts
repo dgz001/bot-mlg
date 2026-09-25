@@ -1,5 +1,5 @@
 import type {Cup} from './engine.ts';
-export const normalizeName=(s:string)=>s.normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim().replace(/\s+/g,' ');
+export const normalizeName=(s:string)=>s.trim().replace(/^@+/, '').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim().replace(/\s+/g,' ');
 export function careers(cups:Cup[], names:Record<string,string>={}){
  const valid=cups.filter(c=>c.status!=='cancelled').sort((a,b)=>a.createdAt-b.createdAt);
  const people=new Map<string,string>();for(const c of valid)for(const p of c.participants)people.set(p.userId,p.name);

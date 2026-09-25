@@ -3,6 +3,7 @@ import {minicampClubs} from './clubs.ts';
 import {Pool} from 'npm:pg@8.23.0';
 import {randomUUID} from 'node:crypto';
 import {pgDatabase,processEvent,checkpointCup,cupDraw,cupRoster} from './postgres.ts';
+import {memberCommand} from './member-commands.ts';
 const EXPECTED_DIGEST='__DIGEST__';
 const pool=new Pool({connectionString:Deno.env.get('SUPABASE_DB_URL'),max:2,connectionTimeoutMillis:8000});
 const base=pgDatabase(pool);
@@ -25,7 +26,7 @@ async function identity(q,aliases,name=null){
  const existing=await q.query('SELECT DISTINCT user_id FROM mlg_bot.wa_identities WHERE jid=ANY($1::text[])',[aliases]);
  if(existing.rows.length>1)throw Error('Identity conflict');
  const id=existing.rows[0]?.user_id??randomUUID();
- await q.query('INSERT INTO mlg_bot.users(id,display_name) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET display_name=CASE WHEN $3 THEN excluded.display_name ELSE mlg_bot.users.display_name END',[id,(name??'Participante').slice(0,60),name!==null]);
+ await q.query('INSERT INTO mlg_bot.users(id,display_name) VALUES($1,$2) ON CONFLICT(id) DO NOTHING',[id,(name??'Participante').slice(0,60)]);
  for(const alias of aliases)await q.query('INSERT INTO mlg_bot.wa_identities(jid,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING',[alias,id]);
  return id;
 }
@@ -328,7 +329,7 @@ Deno.serve(async req=>{
    const allowed=await q.query('SELECT 1 FROM mlg_bot.groups WHERE id=$1 AND authorized',[e.group]);if(!allowed.rows.length)throw Error('Group not authorized');
    const id=await identity(q,e.aliases,e.name);
    let eventText=e.text;
-   if(/^!(?:contasverificadas|carreiraid|registrarid|associarid|confrontoids)(?:\s|$)/i.test(eventText))throw Error('Invalid internal command');
+   if(/^!(?:contasverificadas|carreiraid|registrarid|associarid|cadastrarid|editarid|excluirid|statsid|tituloid|confrontoids)(?:\s|$)/i.test(eventText))throw Error('Invalid internal command');
    if(/^!sincronizarcontas\s*$/i.test(eventText)){
     const admin=await q.query('SELECT 1 FROM mlg_bot.admins a JOIN mlg_bot.groups g ON g.id=a.group_id WHERE a.group_id=$1 AND a.user_id=$2 AND g.admins_configured',[e.group,id]);
     if(admin.rows.length&&Array.isArray(e.targets)&&e.targets.length<=100&&e.targets.every(validAliases)){
@@ -343,16 +344,15 @@ Deno.serve(async req=>{
      eventText=`!contasverificadas ${checked} ${linked} ${conflicts} ${e.targets.length}`;
     }
    }
-   if(/^!(?:carreira|jornada|registrar|associar)\s/i.test(eventText)&&Array.isArray(e.targets)&&e.targets.length===1&&e.targets.every(validAliases)){
+   if(/^!(?:carreira|jornada|registrar|associar|cadastrar|editar|excluir|stats|titulo|título)\s/i.test(eventText)&&Array.isArray(e.targets)&&e.targets.length===1&&e.targets.every(validAliases)){
     const command=eventText.trim().split(/\s+/)[0].toLowerCase();
-    if(command!=='!carreira'&&command!=='!jornada'){
+    if(['!cadastrar','!editar','!excluir','!registrar','!associar'].includes(command)){
      const admin=await q.query('SELECT 1 FROM mlg_bot.admins a JOIN mlg_bot.groups g ON g.id=a.group_id WHERE a.group_id=$1 AND a.user_id=$2 AND g.admins_configured',[e.group,id]);
      if(!admin.rows.length){eventText=command;}else{
-      const name=eventText.slice(command.length).split('|')[0].trim();
-      if(!eventText.includes('|')||!name)eventText=command;
-      else eventText=command+'id '+await identity(q,e.targets[0])+' '+name;
+      try{eventText=memberCommand(eventText,await identity(q,e.targets[0]));}catch{eventText=command;}
      }
-    }else eventText='!carreiraid '+await identity(q,e.targets[0]);
+    }else if(command==='!carreira'||command==='!jornada')eventText='!carreiraid '+await identity(q,e.targets[0]);
+    else eventText=(command==='!stats'?'!statsid':'!tituloid')+' '+await identity(q,e.targets[0]);
    }
    if(/^!confronto\s/i.test(eventText)&&Array.isArray(e.targets)&&e.targets.length===2&&e.targets.every(validAliases)){
     const targets=[];for(const aliases of e.targets)targets.push(await identity(q,aliases));

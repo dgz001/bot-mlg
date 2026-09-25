@@ -39,6 +39,13 @@ const menu=`🎛️ CENTRAL MLG · GUIA DOS ADMs
 !trocar posição telefone Nome | motivo — substituir sem placar
 !confirmarelenco / !cancelarelenco — decidir mudança
 
+🪪 NOMES NO GRUPO DA COPA
+!cadastrar @pessoa — guardar o nome da conta marcada
+!editar @pessoa | Nome novo — corrigir o nome
+!meunome Nome novo — corrigir o próprio nome de ADM
+!excluir @pessoa — retirar inscrição antes do sorteio
+O histórico continua na conta, sem o @ no nome.
+
 🎲 SORTEIO E CHAVE
 !sorteio — ver equipes e confrontos
 No grupo da Copa: !copa (tudo), !chave A ou !chave B
