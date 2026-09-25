@@ -18,7 +18,11 @@ test('a chave mostra lados estáveis, classificados e caminho até a final',()=>
  assert.match(a,/Vencedor jogo/);
  assert.match(a,/FINAL · Lado A × Lado B/);
  const match=first[0]!;h.send(match.home,`!resultado ${match.code} 3x1`);
- h.send(match.home,`!confirmar ${match.code}`);
+ const automatic=h.send(match.home,`!confirmar ${match.code}`).notices.join('\n');
+ assert.match(automatic,/CHAVE ATUALIZADA/);
+ assert.match(automatic,/avançou no lado A/);
+ assert.match(automatic,/Próximo adversário:/);
+ assert.match(automatic,/LADO A[\s\S]+LADO B[\s\S]+FINAL/);
  const updated=h.send('u0','!chave A').notices[0]!;
  assert.match(updated,/Avança:/);
  assert.ok(updated.includes(match.home));
@@ -66,6 +70,9 @@ for (const size of [4, 8, 16]) {
     assert.equal(cup.matches.length, size - 1);
     assert.equal(new Set(cup.matches.map(m => m.code)).size, size - 1);
     assert.equal(cup.matches.filter(m => m.winner === cup.champion).length, Math.log2(size));
+    const finished=h.send('u0','!chave A').notices[0]!;
+    assert.match(finished,/FINAL · Lado A × Lado B/);
+    assert.match(finished,/Campeão:/);
     const gallery=h.send('u0','!campeoes').notices.join('\n');
     assert.ok(gallery.includes(cup.champion!));
     assert.match(gallery,/GALERIA DOS CAMPEÕES.*Edição 1/s);
