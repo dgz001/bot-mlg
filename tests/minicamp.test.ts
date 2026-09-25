@@ -125,6 +125,35 @@ test('consultas exibem edições legíveis e aceitam seu número sem revelar có
  assert.match(h.send('u0','!historico').notices[0]!,/anulada/);
 });
 
+test('cancelar devolve o número da edição sem perder o registro auditável',()=>{
+ const h=harness();
+ h.send('admin','!novacopa');h.send('admin','1');
+ const first=Object.values(h.state.cups)[0]!;
+ const cancelled=h.send('admin','!cancelar copa').notices[0]!;
+ assert.match(cancelled,/Edição 1 cancelada/);
+ assert.match(cancelled,/número fica livre/);
+ h.restart();h.send('admin','!novacopa');
+ assert.match(h.send('admin','1').notices[0]!,/Edição 1/);
+ const second=Object.values(h.state.cups).find(c=>c.id!==first.id)!;
+ assert.notEqual(second.id,first.id);
+ assert.match(h.send('u0','!historico').notices[0]!,/Tentativa cancelada C1/);
+ assert.match(h.send('u0','!participantes 1').notices[0]!,/Edição 1/);
+ assert.match(h.send('u0','!participantes C1').notices[0]!,/Tentativa cancelada C1/);
+ assert.equal(h.state.cups[first.id]!.status,'cancelled');
+ assert.equal(h.state.cups[second.id]!.status,'open');
+});
+
+test('cancelar a segunda Copa conserva a primeira e reutiliza somente a segunda edição',()=>{
+ const h=harness();h.send('admin','!novacopa');h.send('admin','1');
+ const first=Object.values(h.state.cups)[0]!;
+ for(let i=0;i<4;i++)h.send('u'+i,'!entrar');
+ h.state.cups[first.id]!.status='completed';
+ h.send('admin','!novacopa');assert.match(h.send('admin','1').notices[0]!,/Edição 2/);
+ h.send('admin','!cancelar copa');h.send('admin','!novacopa');
+ assert.match(h.send('admin','1').notices[0]!,/Edição 2/);
+ assert.match(h.send('u0','!historico').notices[0]!,/Edição 1/);
+});
+
 test('sorteio e placar orientam a dupla sem exigir confirmação do adversário',()=>{
  const h=harness();h.send('admin','!novacopa');h.send('admin','1');
  for(let i=0;i<3;i++)h.send(`u${i}`,'!entrar');
