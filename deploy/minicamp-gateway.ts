@@ -2,7 +2,7 @@ import {minicampClubs} from './clubs.ts';
 // Private server-to-server gateway. Inject only a token digest during deployment.
 import {Pool} from 'npm:pg@8.23.0';
 import {randomUUID} from 'node:crypto';
-import {pgDatabase,processEvent,checkpointCup} from './postgres.ts';
+import {pgDatabase,processEvent,checkpointCup,cupDraw} from './postgres.ts';
 const EXPECTED_DIGEST='__DIGEST__';
 const pool=new Pool({connectionString:Deno.env.get('SUPABASE_DB_URL'),max:2,connectionTimeoutMillis:8000});
 const base=pgDatabase(pool);
@@ -60,6 +60,10 @@ Deno.serve(async req=>{
    const allowed=await q.query('SELECT 1 FROM mlg_bot.admins a JOIN mlg_bot.groups g ON g.id=a.group_id WHERE a.group_id=$1 AND a.user_id=$2 AND g.authorized AND g.admins_configured',[body.group,id]);
    return {allowed:allowed.rows.length===1};
   });
+ }
+ else if(body.action==='cup-draw'){
+  if(!groupId.test(body.group)||!groupId.test(body.controlGroup)||!validAliases(body.aliases)||body.mode!==undefined&&!['equipes','chave','completo'].includes(body.mode)||body.mode&&(typeof body.expected!=='string'||!/^[0-9a-f]{64}$/.test(body.expected)||typeof body.reason!=='string'||body.reason.trim().length<8||body.reason.length>160||/[\r\n\x00-\x1f\x7f\u202a-\u202e*_~`]/.test(body.reason)))throw Error('Invalid draw request');
+  result=await cupDraw(db,{group:body.group,controlGroup:body.controlGroup,actorAliases:body.aliases,mode:body.mode,expected:body.expected,reason:body.reason});
  }
  else if(body.action==='configure'){
   if(!groupId.test(body.group)||!Array.isArray(body.admins)||body.admins.length<1||body.admins.length>100||!body.admins.every(validAliases)||!Array.isArray(body.clubs)||body.clubs.length<16||body.clubs.length>256||body.clubs.some(c=>typeof c!=='string'||c.length<2||c.length>60)||new Set(body.clubs).size!==body.clubs.length)throw Error('Invalid configuration');
