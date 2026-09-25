@@ -1,6 +1,7 @@
 import type { Pool } from 'pg';
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { apply, emptyState, environment, type Cup, type Event, type Match, type Participant, type Result, type Environment } from '../minicamp/engine.ts';
+import {teamLabel} from '../minicamp/team-badges.ts';
 
 export interface Query {
   query<T>(sql: string, values?: unknown[]): Promise<{ rows: T[] }>;
@@ -40,7 +41,7 @@ export async function cupDraw(database:Database,request:{group:string;controlGro
   const actor=authorized.rows[0]!.id;
   const group=await q.query('SELECT 1 FROM mlg_bot.groups WHERE id=$1 AND authorized FOR UPDATE',[request.group]);
   if(!group.rows.length)return {error:'Grupo da Copa não autorizado.'};
-  const cups=await q.query<{id:string;competition_name:string;size:number;status:string}>("SELECT id,competition_name,size,status FROM mlg_bot.cups WHERE group_id=$1 AND status IN ('open','playing') ORDER BY created_at DESC LIMIT 1 FOR UPDATE",[request.group]);
+  const cups=await q.query<{id:string;competition_name:string;team_kind:'clube'|'seleção'|'misto';size:number;status:string}>("SELECT id,competition_name,team_kind,size,status FROM mlg_bot.cups WHERE group_id=$1 AND status IN ('open','playing') ORDER BY created_at DESC LIMIT 1 FOR UPDATE",[request.group]);
   const cup=cups.rows[0];if(!cup||cup.status!=='playing')return {error:'O sorteio só pode ser revisto depois que as vagas fecharem.'};
   const participants=await q.query<DrawRow>('SELECT user_id,display_name,club,position FROM mlg_bot.cup_participants WHERE cup_id=$1 ORDER BY position FOR UPDATE',[cup.id]);
   const matches=await q.query<DrawMatch>('SELECT code::float8 AS code,home,away,round,position,status FROM mlg_bot.matches WHERE cup_id=$1 ORDER BY round,position FOR UPDATE',[cup.id]);
@@ -68,7 +69,7 @@ export async function cupDraw(database:Database,request:{group:string;controlGro
   await checkpointCup(q,request.group,cup.id,actor,eventId+'-after');
   const users=new Map(participants.rows.map(p=>[p.user_id,p]));
   const kind=request.mode==='equipes'?'as equipes':request.mode==='chave'?'os confrontos':'as equipes e os confrontos';
-  const notice='🎲 SORTEIO ATUALIZADO · '+cup.competition_name+'\nA central refez '+kind+'. Motivo: '+request.reason+'\n\n⚔️ CONFRONTOS E EQUIPES\n\n'+matches.rows.map(m=>`🎮 JOGO ${m.code}\n${users.get(m.home)?.display_name} · ${users.get(m.home)?.club}\n       ×\n${users.get(m.away)?.display_name} · ${users.get(m.away)?.club}`).join('\n\n')+'\n\n📸 Os confrontos anteriores foram substituídos. Enviem o print antes de registrar o placar.';
+  const notice='🎲 SORTEIO ATUALIZADO · '+cup.competition_name+'\nA central refez '+kind+'. Motivo: '+request.reason+'\n\n⚔️ CONFRONTOS E EQUIPES\n\n'+matches.rows.map(m=>`🔹 LADO ${m.position<cup.size/4?'A':'B'} · JOGO ${m.code}\n${users.get(m.home)?.display_name} · ${teamLabel(users.get(m.home)?.club,cup.team_kind)}\n       ×\n${users.get(m.away)?.display_name} · ${teamLabel(users.get(m.away)?.club,cup.team_kind)}`).join('\n\n')+'\n\n📸 Os confrontos anteriores foram substituídos. Enviem o print antes de registrar o placar.';
   const messageId='panel-'+randomUUID();await q.query('INSERT INTO mlg_bot.processed_messages(group_id,user_id,message_id,received_at) VALUES($1,$2,$3,$4)',[request.group,'mlg-control-panel',messageId,Date.now()]);
   await q.query('INSERT INTO mlg_bot.outbox(group_id,user_id,message_id,ordinal,body) VALUES($1,$2,$3,0,$4)',[request.group,'mlg-control-panel',messageId,notice]);
   return {changed:true,cupId:cup.id,name:cup.competition_name,mode:request.mode,participants:participants.rows,matches:matches.rows};
@@ -81,7 +82,7 @@ export async function cupRoster(database:Database,request:RosterRequest):Promise
   if(!admins.rows.length)return {error:'Sua conta não está entre os ADMs da central.'};
   const actor=admins.rows[0]!.id;
   const group=await q.query('SELECT 1 FROM mlg_bot.groups WHERE id=$1 AND authorized FOR UPDATE',[request.group]);if(!group.rows.length)return {error:'Grupo da Copa não autorizado.'};
-  const cups=await q.query<{id:string;competition_name:string;size:number;status:string}>("SELECT id,competition_name,size,status FROM mlg_bot.cups WHERE group_id=$1 AND status IN ('open','playing') ORDER BY created_at DESC LIMIT 1 FOR UPDATE",[request.group]);
+  const cups=await q.query<{id:string;competition_name:string;team_kind:'clube'|'seleção'|'misto';size:number;status:string}>("SELECT id,competition_name,team_kind,size,status FROM mlg_bot.cups WHERE group_id=$1 AND status IN ('open','playing') ORDER BY created_at DESC LIMIT 1 FOR UPDATE",[request.group]);
   const cup=cups.rows[0];if(!cup)return {error:'Não há Copa aberta neste grupo.'};
   const people=await q.query<DrawRow>('SELECT user_id,display_name,club,position FROM mlg_bot.cup_participants WHERE cup_id=$1 ORDER BY position FOR UPDATE',[cup.id]);
   const matches=await q.query<DrawMatch>('SELECT code::float8 AS code,home,away,round,position,status FROM mlg_bot.matches WHERE cup_id=$1 ORDER BY round,position FOR UPDATE',[cup.id]);
@@ -147,7 +148,7 @@ export async function cupRoster(database:Database,request:RosterRequest):Promise
   const detail=request.change==='incluir'?request.targetName+' entrou na Copa.':request.change==='retirar'?current!.display_name+' saiu da Copa.':current!.display_name+' foi substituído por '+request.targetName+'.';
   const messageId='panel-'+randomUUID();await q.query('INSERT INTO mlg_bot.processed_messages(group_id,user_id,message_id,received_at) VALUES($1,$2,$3,$4)',[request.group,'mlg-control-panel',messageId,Date.now()]);
   const newlyDrawn=request.change==='incluir'&&cup.status==='playing';
-  const draw= newlyDrawn?'\n\n🎲 SORTEIO REALIZADO\n'+games.rows.map(m=>{const home=after.rows.find(p=>p.user_id===m.home)!,away=after.rows.find(p=>p.user_id===m.away)!;return `Jogo ${m.code}: ${home.display_name} (${home.club}) × ${away.display_name} (${away.club})`;}).join('\n'):'';
+  const draw= newlyDrawn?'\n\n🎲 SORTEIO REALIZADO\n'+games.rows.map(m=>{const home=after.rows.find(p=>p.user_id===m.home)!,away=after.rows.find(p=>p.user_id===m.away)!;return `Lado ${m.position<cup.size/4?'A':'B'} · jogo ${m.code}: ${home.display_name} (${teamLabel(home.club,cup.team_kind)}) × ${away.display_name} (${teamLabel(away.club,cup.team_kind)})`;}).join('\n'):'';
   const notice='📋 ELENCO ATUALIZADO · '+cup.competition_name+'\n'+detail+'\nMotivo: '+request.reason+'\n\n'+(newlyDrawn?'Última vaga preenchida: seleções e confrontos sorteados agora.':cup.status==='playing'?'A seleção e o código da partida foram mantidos. Confira o jogo com !copa.':'Inscrições: '+after.rows.length+'/'+cup.size+'. A chave será sorteada quando completar as vagas.')+draw+'\n🛡️ Alteração e estado anterior salvos no banco.';
   await q.query('INSERT INTO mlg_bot.outbox(group_id,user_id,message_id,ordinal,body) VALUES($1,$2,$3,0,$4)',[request.group,'mlg-control-panel',messageId,notice]);
   return {changed:true,cupId:cup.id,name:cup.competition_name,size:cup.size,status:cup.status,participants:after.rows};
@@ -187,10 +188,10 @@ export async function processEvent(database: Database, event: Event, env: Enviro
     const claimed = await q.query<{ message_id: string }>(`INSERT INTO mlg_bot.processed_messages(group_id,user_id,message_id,received_at)
       VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING message_id`, [event.groupId,event.userId,event.id,event.at]);
     if (!claimed.rows.length) return { duplicate: true, notices: [] };
-    // Global counter lock ensures that independent groups never allocate the same code.
-    // Small community scale: intentionally serialized. Replace with reserved sequence
-    // ranges if volume warrants it, preserving the domain's allocation contract.
-    const counter = await q.query<{ next: string }>("SELECT next_code::text AS next FROM mlg_bot.counters WHERE id='match' FOR UPDATE");
+    // Read-only commands and ordinary registrations need no cross-group lock.
+    // Commands that can allocate a match lock the counter before loading state.
+    const mayAllocate=/^!(?:entrar|confirmar|resolver|forcarresultado|forcar|forçar)(?:\s|$)/i.test(event.text.trim());
+    const counter = await q.query<{ next: string }>("SELECT next_code::text AS next FROM mlg_bot.counters WHERE id='match'"+(mayAllocate?' FOR UPDATE':''));
     if (!counter.rows[0]) throw new Error('Migration required: missing match counter');
     const state = emptyState(); state.nextCode = Number(counter.rows[0].next);
     const admins = await q.query<{ id: string }>('SELECT user_id AS id FROM mlg_bot.admins WHERE group_id=$1 AND EXISTS(SELECT 1 FROM mlg_bot.groups WHERE id=$1 AND admins_configured)', [event.groupId]);
@@ -200,17 +201,21 @@ export async function processEvent(database: Database, event: Event, env: Enviro
     if (drafts.rows[0]) state.drafts[event.groupId] = drafts.rows[0];
     const cups = await q.query<Omit<Cup,'participants'|'matches'>>(`SELECT id,group_id AS "groupId",created_by AS "createdBy",created_at::float8 AS "createdAt",
       size,competition_name AS "competitionName",team_kind AS "teamKind",status,champion,completed_at::float8 AS "completedAt",cancellation_reason AS "cancellationReason" FROM mlg_bot.cups WHERE group_id=$1 ORDER BY created_at,id`, [event.groupId]);
-    for (const row of cups.rows) {
-      const cup: Cup = { ...row, champion: row.champion ?? undefined, completedAt: row.completedAt ?? undefined, cancellationReason: row.cancellationReason ?? undefined, participants: [], matches: [] };
-      const participants = await q.query<Participant>('SELECT user_id AS "userId",display_name AS name,club FROM mlg_bot.cup_participants WHERE cup_id=$1 ORDER BY position', [cup.id]);
-      cup.participants = participants.rows.map(p => ({ ...p, club: p.club ?? undefined }));
-      const matches = await q.query<Omit<Match,'results'>>('SELECT code::float8 AS code,round,position,home,away,winner,status FROM mlg_bot.matches WHERE cup_id=$1 ORDER BY round,position', [cup.id]);
-      for (const m of matches.rows) {
-        const results = await q.query<Result>('SELECT home,away,author,created_at::float8 AS at,status,confirmed_by AS "confirmedBy",disputed_by AS "disputedBy",reason FROM mlg_bot.match_results WHERE match_code=$1 ORDER BY revision', [m.code]);
-        cup.matches.push({ ...m, winner: m.winner ?? undefined, results: results.rows.map(r => ({ ...r, confirmedBy: r.confirmedBy ?? undefined, disputedBy: r.disputedBy ?? undefined, reason: r.reason ?? undefined })) });
-      }
-      state.cups[cup.id] = cup;
-    }
+    for (const row of cups.rows) state.cups[row.id]={ ...row, champion: row.champion ?? undefined, completedAt: row.completedAt ?? undefined, cancellationReason: row.cancellationReason ?? undefined, participants: [], matches: [] };
+    const participants=await q.query<Participant&{cup_id:string}>(`SELECT p.cup_id,p.user_id AS "userId",p.display_name AS name,p.club
+      FROM mlg_bot.cup_participants p JOIN mlg_bot.cups c ON c.id=p.cup_id
+      WHERE c.group_id=$1 ORDER BY c.created_at,c.id,p.position`,[event.groupId]);
+    for(const {cup_id,...p} of participants.rows)state.cups[cup_id]?.participants.push({...p,club:p.club??undefined});
+    const matches=await q.query<Omit<Match,'results'>&{cup_id:string}>(`SELECT m.cup_id,m.code::float8 AS code,m.round,m.position,m.home,m.away,m.winner,m.status
+      FROM mlg_bot.matches m JOIN mlg_bot.cups c ON c.id=m.cup_id
+      WHERE c.group_id=$1 ORDER BY c.created_at,c.id,m.round,m.position`,[event.groupId]);
+    const byCode=new Map<number,Match>();
+    for(const {cup_id,...m} of matches.rows){const match:Match={...m,winner:m.winner??undefined,results:[]};state.cups[cup_id]?.matches.push(match);byCode.set(match.code,match);}
+    const results=await q.query<Result&{match_code:number}>(`SELECT r.match_code::float8 AS match_code,r.home,r.away,r.author,r.created_at::float8 AS at,r.status,
+      r.confirmed_by AS "confirmedBy",r.disputed_by AS "disputedBy",r.reason
+      FROM mlg_bot.match_results r JOIN mlg_bot.matches m ON m.code=r.match_code JOIN mlg_bot.cups c ON c.id=m.cup_id
+      WHERE c.group_id=$1 ORDER BY r.match_code,r.revision`,[event.groupId]);
+    for(const {match_code,...r} of results.rows)byCode.get(match_code)?.results.push({...r,confirmedBy:r.confirmedBy??undefined,disputedBy:r.disputedBy??undefined,reason:r.reason??undefined});
     const profiles=await q.query<{userId:string;name:string}>('SELECT user_id AS "userId",display_name AS name FROM mlg_bot.coach_profiles WHERE group_id=$1',[event.groupId]);
     state.profiles={[event.groupId]:Object.fromEntries(profiles.rows.map(p=>[p.userId,p.name]))};
     const output = apply(state,event,env);
@@ -247,7 +252,10 @@ export async function processEvent(database: Database, event: Event, env: Enviro
     if (draft) await q.query(`INSERT INTO mlg_bot.command_drafts(group_id,owner_id,expires_at) VALUES ($1,$2,$3)
       ON CONFLICT(group_id) DO UPDATE SET owner_id=excluded.owner_id,expires_at=excluded.expires_at`, [event.groupId,draft.ownerId,draft.expiresAt]);
     else await q.query('DELETE FROM mlg_bot.command_drafts WHERE group_id=$1',[event.groupId]);
-    await q.query("UPDATE mlg_bot.counters SET next_code=$1 WHERE id='match'", [output.state.nextCode]);
+    if(output.state.nextCode!==state.nextCode){
+      if(!mayAllocate)throw Error('Match allocation requires counter lock');
+      await q.query("UPDATE mlg_bot.counters SET next_code=$1 WHERE id='match'", [output.state.nextCode]);
+    }
     for (const a of output.state.audit) {
       await q.query(`INSERT INTO mlg_bot.audit_logs(actor,group_id,cup_id,match_code,occurred_at,action,before_state,after_state,outcome)
         VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9)`,[a.actor,a.groupId,a.cupId,a.matchCode ?? null,a.at,a.action,a.before,a.after,a.outcome]);
