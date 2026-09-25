@@ -178,8 +178,14 @@ function advance(s: State, cup: Cup, match: Match, at: number): string[] {
   const loser = player(cup, match.winner === match.home ? match.away : match.home);
   const isFinal = cup.size / 2 ** match.round === 2;
   const notices = [`✅ RESULTADO CONFIRMADO\n#${match.code}\n${player(cup, match.home).name} ${r.home} x ${r.away} ${player(cup, match.away).name}\n${isFinal ? `🏆 ${winner.name} é campeão!\n🥈 ${loser.name} fica com o vice. Valeu pela disputa até a final!` : `🏆 ${winner.name} está classificado!\n${classifiedCheers[match.code % classifiedCheers.length]}\n\n${loser.name} está eliminado.\n${eliminatedCheers[match.code % eliminatedCheers.length]}`}`];
+  const progress=()=>{
+    const side=match.position<cup.size/2**(match.round+2)?'A':'B';
+    const sibling=cup.matches.find(m=>m.round===match.round&&m.position===(match.position^1));
+    const rival=sibling?.winner?player(cup,sibling.winner).name:sibling?`${player(cup,sibling.home).name} ou ${player(cup,sibling.away).name}`:'a definir';
+    return `🗺️ CHAVE ATUALIZADA · ${cup.competitionName?.toUpperCase()??'MLG'}\n✅ ${isFinal?`${winner.name} venceu a final.`:`${winner.name} avançou no lado ${side} (${roundName(cup.size/2**match.round)}).`}\n${isFinal?'👑 Campeão confirmado.':`🎯 Próximo adversário: ${rival}.`}\n\n${bracket(cup)}\n\n📌 Use !chave A ou !chave B para consultar um lado.`;
+  };
   const current = cup.matches.filter(m => m.round === match.round).sort((a, b) => a.position - b.position);
-  if (!current.every(m => m.status === 'confirmed')) return notices;
+  if (!current.every(m => m.status === 'confirmed')) {notices.push(progress());return notices;}
   if (current.length === 1) {
     cup.champion = match.winner;
     cup.status = 'completed'; cup.completedAt = at;
@@ -195,6 +201,7 @@ function advance(s: State, cup: Cup, match: Match, at: number): string[] {
     requireThat(!cup.matches.some(m => m.round === match.round + 1), 'Rodada já existe.');
     notices.push(addRound(s, cup, current.map(m => m.winner!), match.round + 1));
   }
+  notices[notices.length-1] += '\n\n'+progress();
   return notices;
 }
 
@@ -456,6 +463,7 @@ export function apply(input: State, event: Event, env: Environment = environment
       match.winner=winner;
       if(match.round===Math.log2(cup.size)-1){cup.champion=winner;cup.completedAt=event.at;}
       notices.push('🛠️ RESULTADO CORRIGIDO PELO ADM\n'+describe(cup,match)+'\n✅ '+corrected.home+' x '+corrected.away+'\n📊 Estatísticas e títulos passam a refletir esta correção.');
+      notices.push(`🗺️ CHAVE ATUALIZADA APÓS CORREÇÃO\n${bracket(cup)}`);
     }else{
       match.results.push({...corrected,author:event.userId,at:event.at,status:'confirmed',confirmedBy:event.userId,reason:parts.slice(3).join(' ')||'Resultado imposto por ADM autorizado'});
       notices.push('🛠️ ADM confirmou o placar por intervenção administrativa.');
@@ -534,7 +542,7 @@ export function apply(input: State, event: Event, env: Environment = environment
   } else if (cmd === '!chave' || cmd === '!lado') {
     const arg=parts[1]?.toUpperCase();
     requireThat(parts.length<=2 && (!arg || arg==='A' || arg==='B'), 'Use !chave, !chave A ou !chave B.');
-    const cup=active();requireThat(cup, 'Nenhuma Copa ativa neste grupo.');
+    const cup=active()??[...groupCups].sort((a,b)=>b.createdAt-a.createdAt).find(c=>c.status==='completed');requireThat(cup, 'Nenhuma Copa sorteada neste grupo.');
     notices.push(`🗺️ CAMINHO ATÉ A TAÇA · ${cup.competitionName?.toUpperCase()??'MLG'}\n🏆 ${cupLabel(cup)} · ${cupStatus(cup)}\n\n${bracket(cup,arg as 'A'|'B'|undefined)}\n\n📌 Cada lado classifica um finalista. Um resultado só avança após confirmação.`);
   } else if (cmd === '!jogo') {
     const { cup, match } = getMatch(parts[1]);
