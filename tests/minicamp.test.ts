@@ -50,6 +50,26 @@ function harness() {
   };
 }
 
+test('ADM cadastra, corrige o próprio nome e exclui só inscrição aberta sem apagar identidade',()=>{
+ const h=harness();h.send('admin','!novacopa');h.send('admin','1');
+ assert.match(h.send('admin','!cadastrarid u0 @Maria Silva').notices[0]!,/Maria Silva/);
+ assert.equal(h.state.profiles?.g?.u0,'Maria Silva');
+ assert.throws(()=>h.send('admin','!cadastrarid u1 @Maria Silva'),/Nome já pertence/);
+ assert.match(h.send('admin','!meunome @Líder da Arena').notices[0]!,/Líder da Arena/);
+ assert.equal(h.state.profiles?.g?.admin,'Líder da Arena');
+ h.send('u0','!entrar');
+ assert.match(h.send('u1','!stats @Maria Silva').notices[0]!,/Maria Silva/);
+ assert.match(h.send('u1','!tituloid u0').notices[0]!,/Maria Silva/);
+ assert.match(h.send('admin','!editarid u0 @Maria de Souza').notices[0]!,/Maria de Souza/);
+ assert.equal(Object.values(h.state.cups)[0]!.participants[0]!.name,'Maria de Souza');
+ assert.match(h.send('admin','!excluirid u0').notices[0]!,/INSCRIÇÃO RETIRADA/);
+ assert.equal(Object.values(h.state.cups)[0]!.participants.length,0);
+ assert.equal(h.state.profiles?.g?.u0,'Maria de Souza');
+ for(let i=0;i<4;i++)h.send('u'+i,'!entrar');
+ assert.throws(()=>h.send('admin','!excluirid u0'),/antes do sorteio/);
+ assert.equal(Object.values(h.state.cups)[0]!.matches.length,2);
+});
+
 for (const size of [4, 8, 16]) {
   test(`copa completa ${size}: clubes, chaves, resultados, campanha e histórico`, () => {
     const h = harness();
@@ -329,6 +349,7 @@ test('sorteio preserva pool e retrospecto rejeita homônimos',()=>{
  for(let i=0;i<30;i++){const shuffled=environment.shuffle(pool);assert.deepEqual([...shuffled].sort(),[...pool].sort());assert.notEqual(shuffled,pool);}
  assert.deepEqual(pool,['Roma','Real Madrid','Barcelona','Liverpool','Bayern']);
  const h=harness();const c=h.start(4);h.state.cups[c.id]!.participants[0]!.name='Arthur Silva';h.state.cups[c.id]!.participants[1]!.name='Arthur Souza';
+ h.state.profiles!.g!.u0='Arthur Silva';h.state.profiles!.g!.u1='Arthur Souza';
  assert.throws(()=>h.send('visitante','!confronto Arthur x u2'),/ambíguo/);
  const a=c.participants[0]!.userId,b=c.participants[1]!.userId;
  assert.match(h.send('visitante',`!confrontoids ${a} ${b}`).notices[0]!,/Arthur Silva.*Arthur Souza/s);
@@ -458,6 +479,7 @@ test('titulo consulta conquistas reais, não concede títulos e respeita anulaç
 test('titulo distingue homônimos e aceita acentos no nome',()=>{
  const h=harness();const cup=h.start(4);
  h.state.cups[cup.id]!.participants[0]!.name='André Silva';h.state.cups[cup.id]!.participants[1]!.name='André Souza';
+ h.state.profiles!.g!.u0='André Silva';h.state.profiles!.g!.u1='André Souza';
  assert.throws(()=>h.send('u0','!titulo Andre'),/mais de uma/);
  assert.match(h.send('u0','!titulo ANDRE SILVA').notices[0]!,/André Silva/);
 });

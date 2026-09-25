@@ -4,6 +4,7 @@ import {allowsGroup,groupMode,validGroupMode} from './infra/group-modes.ts';
 import {adminControl,type ControlTarget} from './infra/admin-control.ts';
 import {whatsappControls} from './infra/whatsapp-controls.ts';
 import {minicampClient,minicampCommand,type PendingCupEvent} from './minicamp/client.ts';
+import {cupMediaFor} from './minicamp/media.ts';
 import {orderMessages} from './minicamp/message-order.ts';
 import {loadRoster} from './resenha/matchup.ts';
 import makeWASocket,{DisconnectReason,jidNormalizedUser,extractMessageContent} from '@whiskeysockets/baileys';
@@ -12,7 +13,7 @@ import {banterRequest} from './resenha/trigger.ts';
 import {requestReadyPairing} from './whatsapp/pairing.ts';
 import {createServer as httpServer} from 'node:http';
 import {createServer} from 'node:net';
-import {chmod,unlink} from 'node:fs/promises';
+import {chmod,readFile,unlink} from 'node:fs/promises';
 import {createBanterReply} from './resenha/reply.ts';
 import {vaultAuth} from './whatsapp/vault-auth.ts';
 import {privateControl} from './infra/private-control.ts';
@@ -143,8 +144,8 @@ async function connect(){
     if(socket===current&&enabled('minicamp'))try{await current.sendMessage(group,{text:'⚠️ O Minicamp está com muitas solicitações aguardando. Este comando não foi registrado; tente novamente em instantes.'});}catch{log('MINICAMP_QUEUE_NOTICE_FAILED');}
     return;
    }
-   let targets=/^!(?:confronto|carreira|jornada|registrar|associar)\s/i.test(text)&&context?.mentionedJid?.length&&context.mentionedJid.length<=2?await Promise.all(context.mentionedJid.map(j=>cupAliases(j,current))):undefined;
-   if(targets?.length&&/^!(?:registrar|associar)\s/i.test(text)){
+   let targets=/^!(?:confronto|carreira|jornada|registrar|associar|cadastrar|editar|excluir|stats|titulo|título)\s/i.test(text)&&context?.mentionedJid?.length&&context.mentionedJid.length<=2?await Promise.all(context.mentionedJid.map(j=>cupAliases(j,current))):undefined;
+   if(targets?.length&&/^!(?:registrar|associar|cadastrar|editar|excluir)\s/i.test(text)){
     const metadata=await current.groupMetadata(group);
     const members=new Set(metadata.participants.map(p=>jidNormalizedUser(p.id)));
     if(!context?.mentionedJid?.every(j=>members.has(jidNormalizedUser(j))))targets=undefined;
@@ -202,7 +203,17 @@ async function cupTick(){
   const batch=await cupApi<{messages:{id:string;group_id:string;body:string;wa_message_id:string;lease:string}[]}>({action:'poll'});
   for(const m of batch.messages){
    if(!inChannel(m.group_id,'minicamp')||socket!==current||stopping||!enabled('minicamp')){await cupApi({action:'ack',id:m.id,lease:m.lease,sent:false});continue;}
-   let sent=false;try{await current.sendMessage(m.group_id,{text:m.body},{messageId:m.wa_message_id});sent=true;}catch{log('MINICAMP_SEND_RETRY');}
+   let sent=false;
+   try{
+    const card=cupMediaFor(m.body);
+    if(card){
+     try{
+      const path=card==='sorteio'?'../assets/mlg-sorteio.jpg':'../assets/mlg-campeao.jpg';
+      await current.sendMessage(m.group_id,{image:await readFile(new URL(path,import.meta.url)),caption:m.body},{messageId:m.wa_message_id});sent=true;
+     }catch{log('MINICAMP_IMAGE_FALLBACK');}
+    }
+    if(!sent){await current.sendMessage(m.group_id,{text:m.body},{messageId:m.wa_message_id});sent=true;}
+   }catch{log('MINICAMP_SEND_RETRY');}
    await cupApi({action:'ack',id:m.id,lease:m.lease,sent});
   }
   cupHealthy=true;lastCupTick=lastCupSuccessAt=Date.now();
