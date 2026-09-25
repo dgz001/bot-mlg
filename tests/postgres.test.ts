@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
-import { processEvent, pgDatabase, checkpointCup, canonicalCheckpoint, type Database } from '../src/infra/postgres.ts';
+import { processEvent, pgDatabase, checkpointCup, canonicalCheckpoint, cupDraw, type Database } from '../src/infra/postgres.ts';
 import { authStore } from '../src/whatsapp/auth-store.ts';
 import { randomBytes } from 'node:crypto';
 
@@ -40,6 +40,28 @@ async function setup(db: Pool) {
   await db.query("INSERT INTO mlg_bot.users VALUES ('admin','Admin'); INSERT INTO mlg_bot.groups(id,authorized,admins_configured) VALUES ('g',true,true); INSERT INTO mlg_bot.admins VALUES ('g','admin','owner');");
   for (let i=0;i<16;i++) await db.query('INSERT INTO mlg_bot.club_pool VALUES ($1,$2)',['g',`Club ${i}`]);
 }
+
+test('refazer sorteio preserva participantes, códigos e checkpoints e bloqueia após placar',integration,async()=>{
+ const f=await fixture();try{
+  await setup(f.pool);
+  await f.pool.query("INSERT INTO mlg_bot.groups(id,authorized,admins_configured) VALUES('central',true,true); INSERT INTO mlg_bot.admins(group_id,user_id,role) VALUES('central','admin','admin'); INSERT INTO mlg_bot.wa_identities(jid,user_id) VALUES('123@s.whatsapp.net','admin')");
+  let index=0;const send=(userId:string,text:string)=>processEvent(pgDatabase(f.pool),{id:'draw-'+ ++index,groupId:'g',userId,name:userId,text,at:Date.now()+index});
+  await send('admin','!novacopa');await send('admin','!formato 4');
+  for(let i=0;i<4;i++)await send('u'+i,'!entrar');
+  const db=pgDatabase(f.pool);const request={group:'g',controlGroup:'central',actorAliases:['123@s.whatsapp.net']};
+  const preview=await cupDraw(db,request);assert.equal(preview.matches?.length,2);
+  const denied=await cupDraw(db,{...request,actorAliases:['999@s.whatsapp.net']});assert.match(denied.error!,/ADMs/);
+  const stale=await cupDraw(db,{...request,mode:'completo',expected:'0'.repeat(64),reason:'Corrigir o sorteio inicial'});assert.match(stale.error!,/mudou/);
+  const beforeCodes=preview.matches!.map(m=>m.code);const beforeTeams=preview.participants!.map(p=>p.club).sort();
+  const result=await cupDraw(db,{...request,mode:'completo',expected:preview.fingerprint,reason:'Corrigir o sorteio inicial'});assert.equal(result.changed,true);
+  const current=await cupDraw(db,request);assert.deepEqual(current.matches!.map(m=>m.code),beforeCodes);assert.deepEqual(current.participants!.map(p=>p.club).sort(),beforeTeams);
+  assert.notEqual(current.fingerprint,preview.fingerprint);
+  const checkpoints=await f.pool.query('SELECT event_id FROM mlg_bot.cup_checkpoints WHERE cup_id=$1 ORDER BY id DESC LIMIT 2',[preview.cupId]);assert.match(checkpoints.rows[0].event_id,/-after$/);assert.match(checkpoints.rows[1].event_id,/-before$/);
+  const match=current.matches![0]!;await send(match.home,`!resultado ${match.code} 2x1`);
+  const blocked=await cupDraw(db,request);assert.match(blocked.error!,/Sorteio bloqueado/);
+  const announced=await f.pool.query("SELECT body FROM mlg_bot.outbox WHERE message_id LIKE 'panel-%' ORDER BY id DESC LIMIT 1");assert.match(announced.rows[0].body,/SORTEIO ATUALIZADO/);
+ }finally{await f.close();}
+});
 
 test('modelos de campeonato ficam no grupo e a Copa conserva nome e sorteio após edição',integration,async()=>{
  const f=await fixture();const db=f.pool;
