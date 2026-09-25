@@ -1,4 +1,5 @@
 import type { Pool } from 'pg';
+import { createHash } from 'node:crypto';
 import { apply, emptyState, environment, type Cup, type Event, type Match, type Participant, type Result, type Environment } from '../minicamp/engine.ts';
 
 export interface Query {
@@ -6,6 +7,23 @@ export interface Query {
 }
 export interface Database {
   transaction<T>(run: (q: Query) => Promise<T>): Promise<T>;
+}
+export function canonicalCheckpoint(value:unknown):string {
+ if(Array.isArray(value))return '['+value.map(canonicalCheckpoint).join(',')+']';
+ if(value&&typeof value==='object')return '{'+Object.entries(value).sort(([a],[b])=>a.localeCompare(b)).map(([key,entry])=>JSON.stringify(key)+':'+canonicalCheckpoint(entry)).join(',')+'}';
+ return JSON.stringify(value);
+}
+// An independent, append-only recovery point in the same database transaction
+// as the changed Cup. It records the relational state, not the WhatsApp reply.
+export async function checkpointCup(q:Query,groupId:string,cupId:string,actorId:string,eventId:string):Promise<void>{
+ const cup=await q.query('SELECT * FROM mlg_bot.cups WHERE id=$1 AND group_id=$2',[cupId,groupId]);
+ if(cup.rows.length!==1)throw Error('Cup checkpoint unavailable');
+ const participants=await q.query('SELECT * FROM mlg_bot.cup_participants WHERE cup_id=$1 ORDER BY position',[cupId]);
+ const matches=await q.query('SELECT * FROM mlg_bot.matches WHERE cup_id=$1 ORDER BY round,position',[cupId]);
+ const results=await q.query('SELECT r.* FROM mlg_bot.match_results r JOIN mlg_bot.matches m ON m.code=r.match_code WHERE m.cup_id=$1 ORDER BY r.match_code,r.revision',[cupId]);
+ const state=canonicalCheckpoint({cup:cup.rows[0],participants:participants.rows,matches:matches.rows,results:results.rows});
+ const sha256=createHash('sha256').update(state).digest('hex');
+ await q.query('INSERT INTO mlg_bot.cup_checkpoints(group_id,cup_id,actor_id,event_id,recorded_at,state,sha256) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7)',[groupId,cupId,actorId,eventId,Date.now(),state,sha256]);
 }
 export function pgDatabase(pool: Pool): Database {
   return {
@@ -95,6 +113,7 @@ export async function processEvent(database: Database, event: Event, env: Enviro
           [m.code,index+1,r.home,r.away,r.author,r.at,r.status,r.confirmedBy ?? null,r.disputedBy ?? null,r.reason ?? null]);
         }
       }
+      await checkpointCup(q,event.groupId,cup.id,event.userId,event.id);
     }
     const draft = output.state.drafts[event.groupId];
     if (draft) await q.query(`INSERT INTO mlg_bot.command_drafts(group_id,owner_id,expires_at) VALUES ($1,$2,$3)

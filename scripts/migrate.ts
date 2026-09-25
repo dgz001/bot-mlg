@@ -27,6 +27,8 @@ export async function migrate() {
     await q.query('GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA mlg_bot TO mlg_bot_app');
     await q.query('GRANT DELETE ON mlg_bot.command_drafts,mlg_bot.wa_auth,mlg_bot.conversation_context TO mlg_bot_app');
     await q.query('REVOKE UPDATE ON mlg_bot.audit_logs,mlg_bot.control_audit,mlg_bot.schema_migrations FROM mlg_bot_app');
+    if((await q.query("SELECT to_regclass('mlg_bot.cup_checkpoints') AS present")).rows[0].present)
+      await q.query('REVOKE UPDATE,DELETE ON mlg_bot.cup_checkpoints FROM mlg_bot_app');
     await q.query('REVOKE INSERT ON mlg_bot.schema_migrations FROM mlg_bot_app');
   } finally { await q.query('SELECT pg_advisory_unlock(71012026)').catch(()=>undefined);q.release();await pool.end(); }
 }
