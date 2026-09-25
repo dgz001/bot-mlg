@@ -259,9 +259,10 @@ test('gateway real: menção, bloqueio de comandos internos e sincronização se
   const {createHash,webcrypto}=await import('node:crypto');const header='Bearer synthetic-test-token';
   const source=(await readFile(new URL('../deploy/minicamp-gateway.ts',import.meta.url),'utf8')).replace(/^import .*;\n/gm,'').replace('__DIGEST__',createHash('sha256').update(header).digest('hex'));
   let handler:((req:Request)=>Promise<Response>)|undefined;
-  const factory=new Function('Pool','randomUUID','pgDatabase','processEvent','checkpointCup','minicampClubs','Deno','crypto',source);
+  const {memberCommand}=await import('../src/minicamp/member-commands.ts');
+  const factory=new Function('Pool','randomUUID','pgDatabase','processEvent','checkpointCup','minicampClubs','memberCommand','Deno','crypto',source);
   const client=f.pool;
-  factory(class {constructor(){return client;}},randomUUID,pgDatabase,processEvent,checkpointCup,[],{env:{get:()=>''},serve:(fn:typeof handler)=>{handler=fn;}},webcrypto);
+  factory(class {constructor(){return client;}},randomUUID,pgDatabase,processEvent,checkpointCup,[],memberCommand,{env:{get:()=>''},serve:(fn:typeof handler)=>{handler=fn;}},webcrypto);
   let serial=0;
   const send=async(text:string,targets?:string[][],aliases=['100@s.whatsapp.net'])=>handler!(new Request('https://example.invalid',{method:'POST',headers:{authorization:header},body:JSON.stringify({action:'event',event:{group:'100@g.us',aliases,targets,id:String(++serial),name:'Test',text}})}));
   assert.equal((await send('!registrar Técnico | @conta',[['200@lid','200@s.whatsapp.net']])).status,200);
