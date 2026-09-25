@@ -480,4 +480,17 @@ test('Copa de seleções aceita 32 vagas, sorteia sem repetição e mantém hist
 test('predefinição da Copa oferece 36 seleções únicas para revisão no painel',()=>{
  assert.equal(worldCupCandidates.length,36);
  assert.equal(new Set(worldCupCandidates).size,36);
+ for(const name of ['Espanha','Holanda','Noruega','Irã','Costa do Marfim','Rússia','Polônia'])assert.ok(worldCupCandidates.includes(name),name);
+ assert.ok(!worldCupCandidates.includes('Gana'));
+});
+
+test('Minicamp aceita sorteio misto de clubes e seleções sem repetição',()=>{
+ const h=harness();h.state.groups.g={authorized:true,admins:['admin'],clubs:[...clubs,...worldCupCandidates],teamKind:'misto',competitionName:'Minicamp MLG'};
+ h.send('admin','!novacopa');h.send('admin','!formato 32');
+ for(let i=0;i<31;i++)h.send('m'+i,'!entrar');
+ const final=h.send('m31','!entrar').notices.join('\n');
+ assert.match(final,/Times definidos/);assert.match(final,/O time sorteado vale nesta edição/);
+ const cup=Object.values(h.state.cups)[0]!;
+ assert.equal(cup.participants.length,32);
+ assert.equal(new Set(cup.participants.map(p=>p.club)).size,32);
 });
