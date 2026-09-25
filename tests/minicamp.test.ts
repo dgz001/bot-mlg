@@ -4,6 +4,27 @@ import { apply, emptyState, environment, type State } from '../src/minicamp/engi
 import {worldCupCandidates} from '../src/minicamp/nations.ts';
 
 const clubs = Array.from({ length: 20 }, (_, i) => `Clube ${i + 1}`);
+test('a chave mostra lados estáveis, classificados e caminho até a final',()=>{
+ const h=harness();const cup=h.start(16);
+ const first=cup.matches.filter(m=>m.round===0).sort((a,b)=>a.position-b.position);
+ const overview=h.send('u0','!copa').notices[0]!;
+ const a=h.send('u0','!chave A').notices[0]!;
+ const b=h.send('u0','!chave B').notices[0]!;
+ assert.match(overview,/LADO A[\s\S]+LADO B[\s\S]+FINAL/);
+ assert.ok(a.includes(`JOGO ${first[0]!.code}`));
+ assert.ok(!a.includes(`JOGO ${first[4]!.code}`));
+ assert.ok(b.includes(`JOGO ${first[4]!.code}`));
+ assert.ok(!b.includes(`JOGO ${first[0]!.code}`));
+ assert.match(a,/Vencedor jogo/);
+ assert.match(a,/FINAL · Lado A × Lado B/);
+ const match=first[0]!;h.send(match.home,`!resultado ${match.code} 3x1`);
+ h.send(match.home,`!confirmar ${match.code}`);
+ const updated=h.send('u0','!chave A').notices[0]!;
+ assert.match(updated,/Avança:/);
+ assert.ok(updated.includes(match.home));
+ assert.throws(()=>h.send('u0','!chave C'),/Use !chave/);
+ assert.match(h.send('u0','!comandos').notices[0]!,/!chave A ou !chave B/);
+});
 function harness() {
   let state = emptyState();
   state.groups.g = { authorized: true, admins: ['admin', 'admin2'], clubs };

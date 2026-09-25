@@ -7,7 +7,53 @@ const clean=(value:string)=>value.trim().toLocaleLowerCase('pt-BR');
 const safeTeam=(value:string)=>value.length>=2&&value.length<=60&&!/[\r\n\x00-\x1f\x7f\u202a-\u202e*_~`]/.test(value);
 const validTeams=(teams:string[])=>teams.length<=200&&teams.every(safeTeam)&&new Set(teams.map(clean)).size===teams.length;
 const fingerprint=(d:ControlDraft)=>JSON.stringify([d.name,d.teamKind,d.teams,d.size]);
-const menu='🎛️ CENTRAL MLG · ADMs\n\n⚡ BOT\n!statusbot · !acordarbot · !desligarbot · !reiniciarbot\n!copas ligar/desligar · !resenha ligar/desligar\n\n📍 DESTINO E COPA\n!grupos · !usar número · !central · !pendencias\n!modelos · !ativarmodelo número (entre Copas)\n!novacopa · !nome · !categoria · !equipes\n!adicionar · !remover · !times · !vagas\n!revisar · !abrircopa · !descartar\n\n👥 PARTICIPANTES\n!inscritosadm — ver números da lista\n!inscrever telefone Nome | motivo (com vaga aberta)\n!retirar posição | motivo (antes do sorteio)\n!trocar posição telefone Nome | motivo (sem placar)\n!confirmarelenco · !cancelarelenco\n\n🎲 CORRIGIR SORTEIO (ANTES DO PRIMEIRO RESULTADO)\n!sorteio — consultar equipes e confrontos\n!refazersorteio equipes motivo — redistribuir os times atuais\n!refazersorteio chave motivo — refazer os confrontos\n!refazersorteio completo motivo — refazer ambos\n!confirmarsorteio · !cancelarsorteio\n\n🛡️ EDIÇÕES\n!cancelarcopa motivo · !anularcopa edição motivo\n\nUse !painel para rever esta lista. O banco guarda o estado anterior de cada correção.';
+const menu=`🎛️ CENTRAL MLG · GUIA DOS ADMs
+
+⚡ LIGAR E MÓDULOS
+!statusbot — ver o estado do bot
+!acordarbot / !desligarbot — liberar ou pausar respostas
+!reiniciarbot — reinício controlado
+!copas ligar / desligar — ativar ou pausar as Copas
+!resenha ligar / desligar — ativar ou pausar a resenha
+
+📍 ESCOLHER A COPA
+!grupos — listar destinos disponíveis
+!usar 1 — selecionar o grupo da lista
+!central — consultar a edição e o preparo salvo
+!pendencias — conferir decisões pendentes
+!modelos — listar modelos de campeonato
+!ativarmodelo 1 — selecionar modelo entre edições
+
+🏆 PREPARAR NOVA EDIÇÃO
+!novacopa — iniciar a configuração
+!nome / !categoria — definir identidade e tipo
+!equipes — ver a lista; !adicionar / !remover — editá-la
+!times / !vagas — conferir e escolher as vagas
+!revisar — conferir; !abrircopa — publicar
+!descartar — cancelar o preparo
+
+👥 ELENCO DA COPA SELECIONADA
+!inscritosadm — ver participantes e posições
+!inscrever telefone Nome | motivo — preencher vaga
+!retirar posição | motivo — remover antes do sorteio
+!trocar posição telefone Nome | motivo — substituir sem placar
+!confirmarelenco / !cancelarelenco — decidir mudança
+
+🎲 SORTEIO E CHAVE
+!sorteio — ver equipes e confrontos
+No grupo da Copa: !copa (tudo), !chave A ou !chave B
+!refazersorteio equipes motivo — redistribuir equipes
+!refazersorteio chave motivo — refazer confrontos
+!refazersorteio completo motivo — refazer ambos
+!confirmarsorteio / !cancelarsorteio — decidir correção
+Correções do sorteio exigem ausência de placares.
+
+🛡️ ENCERRAR E CORRIGIR
+!cancelarcopa motivo — cancelar edição atual
+!anularcopa edição motivo — anular edição encerrada
+No grupo da Copa: !vistoria e !resolver código 4x3 motivo.
+
+📌 Use !painel para consultar este guia. Mudanças ficam registradas.`;
 function requireSuccess<T>(value:any):T {if(value?.error)throw Error(value.error);return value as T;}
 
 export async function adminControl(text:string,room:ControlWorkspace,targets:ControlTarget[],api:Api,save:()=>Promise<void>,now=Date.now(),actor?:{controlGroup:string;aliases:string[];resolveMember?:(group:string,phone:string)=>Promise<string[]|null>}):Promise<string>{
