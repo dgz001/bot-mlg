@@ -35,8 +35,9 @@ function shuffleDifferent<T>(values:T[]):T[]{
 }
 export async function cupDraw(database:Database,request:{group:string;controlGroup:string;actorAliases:string[];mode?:DrawMode;expected?:string;reason?:string}):Promise<{error?:string;cupId?:string;name?:string;fingerprint?:string;participants?:DrawRow[];matches?:DrawMatch[];changed?:boolean;mode?:DrawMode}>{
  return database.transaction(async q=>{
-  const authorized=await q.query('SELECT 1 FROM mlg_bot.admins a JOIN mlg_bot.wa_identities w ON w.user_id=a.user_id JOIN mlg_bot.groups g ON g.id=a.group_id WHERE a.group_id=$1 AND w.jid=ANY($2::text[]) AND g.authorized AND g.admins_configured',[request.controlGroup,request.actorAliases]);
+  const authorized=await q.query<{id:string}>('SELECT DISTINCT a.user_id AS id FROM mlg_bot.admins a JOIN mlg_bot.wa_identities w ON w.user_id=a.user_id JOIN mlg_bot.groups g ON g.id=a.group_id WHERE a.group_id=$1 AND w.jid=ANY($2::text[]) AND g.authorized AND g.admins_configured',[request.controlGroup,request.actorAliases]);
   if(!authorized.rows.length)return {error:'Sua conta não está entre os ADMs da central.'};
+  const actor=authorized.rows[0]!.id;
   const group=await q.query('SELECT 1 FROM mlg_bot.groups WHERE id=$1 AND authorized FOR UPDATE',[request.group]);
   if(!group.rows.length)return {error:'Grupo da Copa não autorizado.'};
   const cups=await q.query<{id:string;competition_name:string;size:number;status:string}>("SELECT id,competition_name,size,status FROM mlg_bot.cups WHERE group_id=$1 AND status IN ('open','playing') ORDER BY created_at DESC LIMIT 1 FOR UPDATE",[request.group]);
@@ -51,17 +52,20 @@ export async function cupDraw(database:Database,request:{group:string;controlGro
   const before=structuredClone({participants:participants.rows,matches:matches.rows});
   await q.query('INSERT INTO mlg_bot.users(id,display_name) VALUES($1,$2) ON CONFLICT DO NOTHING',['mlg-control-panel','Painel MLG']);
   const eventId='redraw-'+randomUUID();
-  await checkpointCup(q,request.group,cup.id,'mlg-control-panel',eventId+'-before');
+  await checkpointCup(q,request.group,cup.id,actor,eventId+'-before');
   if(request.mode!=='chave'){
    const clubs=shuffleDifferent(participants.rows.map(p=>p.club));
+   // UNIQUE(cup_id,club) is immediate: release old assignments inside this
+   // transaction before reassigning the same pool to different players.
+   await q.query('UPDATE mlg_bot.cup_participants SET club=NULL WHERE cup_id=$1',[cup.id]);
    for(const [i,p] of participants.rows.entries()){p.club=clubs[i]!;await q.query('UPDATE mlg_bot.cup_participants SET club=$3 WHERE cup_id=$1 AND user_id=$2',[cup.id,p.user_id,p.club]);}
   }
   if(request.mode!=='equipes'){
    const ids=shuffleDifferent(matches.rows.flatMap(m=>[m.home,m.away]));
    for(const [i,m] of matches.rows.entries()){m.home=ids[i*2]!;m.away=ids[i*2+1]!;await q.query('UPDATE mlg_bot.matches SET home=$2,away=$3 WHERE code=$1 AND cup_id=$4',[m.code,m.home,m.away,cup.id]);}
   }
-  await q.query('INSERT INTO mlg_bot.audit_logs(actor,group_id,cup_id,occurred_at,action,before_state,after_state,outcome) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8)',['mlg-control-panel',request.group,cup.id,Date.now(),'redraw-'+request.mode,JSON.stringify({...before,reason:request.reason}),JSON.stringify({participants:participants.rows,matches:matches.rows}),'accepted']);
-  await checkpointCup(q,request.group,cup.id,'mlg-control-panel',eventId);
+  await q.query('INSERT INTO mlg_bot.audit_logs(actor,group_id,cup_id,occurred_at,action,before_state,after_state,outcome) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8)',[actor,request.group,cup.id,Date.now(),'redraw-'+request.mode,JSON.stringify({...before,reason:request.reason}),JSON.stringify({participants:participants.rows,matches:matches.rows}),'accepted']);
+  await checkpointCup(q,request.group,cup.id,actor,eventId+'-after');
   const users=new Map(participants.rows.map(p=>[p.user_id,p]));
   const kind=request.mode==='equipes'?'as equipes':request.mode==='chave'?'os confrontos':'as equipes e os confrontos';
   const notice='🎲 SORTEIO ATUALIZADO · '+cup.competition_name+'\nA central refez '+kind+'. Motivo: '+request.reason+'\n\n⚔️ CONFRONTOS E EQUIPES\n\n'+matches.rows.map(m=>`🎮 JOGO ${m.code}\n${users.get(m.home)?.display_name} · ${users.get(m.home)?.club}\n       ×\n${users.get(m.away)?.display_name} · ${users.get(m.away)?.club}`).join('\n\n')+'\n\n📸 Os confrontos anteriores foram substituídos. Enviem o print antes de registrar o placar.';
