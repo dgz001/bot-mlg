@@ -74,6 +74,85 @@ export async function cupDraw(database:Database,request:{group:string;controlGro
   return {changed:true,cupId:cup.id,name:cup.competition_name,mode:request.mode,participants:participants.rows,matches:matches.rows};
  });
 }
+export type RosterRequest={group:string;controlGroup:string;actorAliases:string[];change?:'incluir'|'retirar'|'trocar';position?:number;targetAliases?:string[];targetName?:string;expected?:string;reason?:string};
+export async function cupRoster(database:Database,request:RosterRequest):Promise<{error?:string;cupId?:string;name?:string;size?:number;status?:string;fingerprint?:string;participants?:DrawRow[];changed?:boolean}>{
+ return database.transaction(async q=>{
+  const admins=await q.query<{id:string}>('SELECT DISTINCT a.user_id AS id FROM mlg_bot.admins a JOIN mlg_bot.wa_identities w ON w.user_id=a.user_id JOIN mlg_bot.groups g ON g.id=a.group_id WHERE a.group_id=$1 AND w.jid=ANY($2::text[]) AND g.authorized AND g.admins_configured',[request.controlGroup,request.actorAliases]);
+  if(!admins.rows.length)return {error:'Sua conta não está entre os ADMs da central.'};
+  const actor=admins.rows[0]!.id;
+  const group=await q.query('SELECT 1 FROM mlg_bot.groups WHERE id=$1 AND authorized FOR UPDATE',[request.group]);if(!group.rows.length)return {error:'Grupo da Copa não autorizado.'};
+  const cups=await q.query<{id:string;competition_name:string;size:number;status:string}>("SELECT id,competition_name,size,status FROM mlg_bot.cups WHERE group_id=$1 AND status IN ('open','playing') ORDER BY created_at DESC LIMIT 1 FOR UPDATE",[request.group]);
+  const cup=cups.rows[0];if(!cup)return {error:'Não há Copa aberta neste grupo.'};
+  const people=await q.query<DrawRow>('SELECT user_id,display_name,club,position FROM mlg_bot.cup_participants WHERE cup_id=$1 ORDER BY position FOR UPDATE',[cup.id]);
+  const matches=await q.query<DrawMatch>('SELECT code::float8 AS code,home,away,round,position,status FROM mlg_bot.matches WHERE cup_id=$1 ORDER BY round,position FOR UPDATE',[cup.id]);
+  const results=await q.query('SELECT 1 FROM mlg_bot.match_results r JOIN mlg_bot.matches m ON m.code=r.match_code WHERE m.cup_id=$1 LIMIT 1',[cup.id]);
+  const fingerprint=createHash('sha256').update(JSON.stringify([cup.id,cup.status,people.rows,matches.rows,Boolean(results.rows.length)])).digest('hex');
+  if(!request.change)return {cupId:cup.id,name:cup.competition_name,size:cup.size,status:cup.status,fingerprint,participants:people.rows};
+  if(request.expected!==fingerprint)return {error:'A lista da Copa mudou depois da revisão. Use !inscritosadm e prepare a mudança novamente.'};
+  const current=request.position?people.rows[request.position-1]:undefined;
+  if(request.change!=='incluir'&&!current)return {error:'Jogador não encontrado nessa posição. Consulte !inscritosadm.'};
+  if(cup.status==='playing'&&(request.change!=='trocar'||results.rows.length||matches.rows.some(m=>m.round!==0||m.status!=='scheduled')||matches.rows.length!==cup.size/2))return {error:'Com partidas sorteadas, só é possível substituir antes do primeiro placar. Use !resolver para corrigir jogos já disputados.'};
+  if(cup.status==='playing'&&current&&matches.rows.flatMap(m=>[m.home,m.away]).filter(id=>id===current.user_id).length!==1)return {error:'Confronto incompleto: revise a chave antes de trocar este jogador.'};
+  if(request.change==='incluir'&&(cup.status!=='open'||people.rows.length>=cup.size))return {error:'Só há inclusão com inscrições abertas e vaga disponível.'};
+  if(request.change==='incluir'&&people.rows.length+1===cup.size){
+   const pool=await q.query('SELECT 1 FROM mlg_bot.club_pool WHERE group_id=$1 LIMIT $2',[request.group,cup.size]);
+   if(pool.rows.length<cup.size)return {error:'Não há equipes suficientes para completar o sorteio. Corrija o modelo antes da última inscrição.'};
+  }
+  let targetId:string|undefined;
+  if(request.change!=='retirar'){
+   const aliases=request.targetAliases??[];
+   await q.query('SELECT pg_advisory_xact_lock(71012027)');
+   const known=await q.query<{user_id:string}>('SELECT DISTINCT user_id FROM mlg_bot.wa_identities WHERE jid=ANY($1::text[])',[aliases]);
+   if(known.rows.length>1)return {error:'As identidades do WhatsApp estão em conflito. Corrija o vínculo no painel.'};
+   targetId=known.rows[0]?.user_id??randomUUID();
+   if(people.rows.some(p=>p.user_id===targetId))return {error:'Esta conta já está inscrita na Copa.'};
+   await q.query('INSERT INTO mlg_bot.users(id,display_name) VALUES($1,$2) ON CONFLICT DO NOTHING',[targetId,request.targetName]);
+   for(const jid of aliases)await q.query('INSERT INTO mlg_bot.wa_identities(jid,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING',[jid,targetId]);
+  }
+  const before={participants:structuredClone(people.rows),matches:structuredClone(matches.rows)};
+  const eventId='roster-'+randomUUID();await checkpointCup(q,request.group,cup.id,actor,eventId+'-before');
+  if(request.change==='incluir'){
+   const position=people.rows.length?Math.max(...people.rows.map(p=>p.position))+1:0;
+   await q.query('INSERT INTO mlg_bot.cup_participants(cup_id,user_id,display_name,position,club) VALUES($1,$2,$3,$4,NULL)',[cup.id,targetId,request.targetName,position]);
+  }else if(request.change==='retirar'){
+   await q.query('DELETE FROM mlg_bot.cup_participants WHERE cup_id=$1 AND user_id=$2',[cup.id,current!.user_id]);
+  }else if(cup.status==='open'){
+   await q.query('DELETE FROM mlg_bot.cup_participants WHERE cup_id=$1 AND user_id=$2',[cup.id,current!.user_id]);
+   await q.query('INSERT INTO mlg_bot.cup_participants(cup_id,user_id,display_name,position,club) VALUES($1,$2,$3,$4,NULL)',[cup.id,targetId,request.targetName,current!.position]);
+  }else{
+   const temporary=Math.max(...people.rows.map(p=>p.position))+1;
+   await q.query('INSERT INTO mlg_bot.cup_participants(cup_id,user_id,display_name,position,club) VALUES($1,$2,$3,$4,NULL)',[cup.id,targetId,request.targetName,temporary]);
+   await q.query('UPDATE mlg_bot.matches SET home=CASE WHEN home=$2 THEN $3 ELSE home END,away=CASE WHEN away=$2 THEN $3 ELSE away END WHERE cup_id=$1 AND (home=$2 OR away=$2)',[cup.id,current!.user_id,targetId]);
+   await q.query('DELETE FROM mlg_bot.cup_participants WHERE cup_id=$1 AND user_id=$2',[cup.id,current!.user_id]);
+   await q.query('UPDATE mlg_bot.cup_participants SET position=$3,club=$4 WHERE cup_id=$1 AND user_id=$2',[cup.id,targetId,current!.position,current!.club]);
+  }
+  if(request.change==='incluir'&&cup.status==='open'&&people.rows.length+1===cup.size){
+   const pool=await q.query<{name:string}>('SELECT name FROM mlg_bot.club_pool WHERE group_id=$1 ORDER BY name',[request.group]);
+   if(pool.rows.length<cup.size)throw Error('Draw pool changed during transaction');
+   const players=await q.query<DrawRow>('SELECT user_id,display_name,club,position FROM mlg_bot.cup_participants WHERE cup_id=$1 ORDER BY position',[cup.id]);
+   const selected=shuffleDifferent(pool.rows.map(p=>p.name)).slice(0,cup.size);
+   for(const [i,p] of players.rows.entries())await q.query('UPDATE mlg_bot.cup_participants SET club=$3 WHERE cup_id=$1 AND user_id=$2',[cup.id,p.user_id,selected[i]]);
+   const order=shuffleDifferent(players.rows.map(p=>p.user_id));
+   const counter=await q.query<{next:string}>("SELECT next_code::text AS next FROM mlg_bot.counters WHERE id='match' FOR UPDATE");
+   const first=Number(counter.rows[0]?.next);if(!Number.isSafeInteger(first)||first+cup.size/2>Number.MAX_SAFE_INTEGER)throw Error('Match counter unavailable');
+   for(let i=0;i<cup.size/2;i++)await q.query("INSERT INTO mlg_bot.matches(code,cup_id,round,position,home,away,status) VALUES($1,$2,0,$3,$4,$5,'scheduled')",[first+i,cup.id,i,order[i*2],order[i*2+1]]);
+   await q.query("UPDATE mlg_bot.counters SET next_code=$1 WHERE id='match'",[first+cup.size/2]);
+   await q.query("UPDATE mlg_bot.cups SET status='playing' WHERE id=$1",[cup.id]);cup.status='playing';
+  }
+  const after=await q.query<DrawRow>('SELECT user_id,display_name,club,position FROM mlg_bot.cup_participants WHERE cup_id=$1 ORDER BY position',[cup.id]);
+  const games=await q.query<DrawMatch>('SELECT code::float8 AS code,home,away,round,position,status FROM mlg_bot.matches WHERE cup_id=$1 ORDER BY round,position',[cup.id]);
+  await q.query('INSERT INTO mlg_bot.audit_logs(actor,group_id,cup_id,occurred_at,action,before_state,after_state,outcome) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8)',[actor,request.group,cup.id,Date.now(),'roster-'+request.change,JSON.stringify({...before,reason:request.reason}),JSON.stringify({participants:after.rows,matches:games.rows}),'accepted']);
+  await checkpointCup(q,request.group,cup.id,actor,eventId+'-after');
+  await q.query('INSERT INTO mlg_bot.users(id,display_name) VALUES($1,$2) ON CONFLICT DO NOTHING',['mlg-control-panel','Painel MLG']);
+  const detail=request.change==='incluir'?request.targetName+' entrou na Copa.':request.change==='retirar'?current!.display_name+' saiu da Copa.':current!.display_name+' foi substituído por '+request.targetName+'.';
+  const messageId='panel-'+randomUUID();await q.query('INSERT INTO mlg_bot.processed_messages(group_id,user_id,message_id,received_at) VALUES($1,$2,$3,$4)',[request.group,'mlg-control-panel',messageId,Date.now()]);
+  const newlyDrawn=request.change==='incluir'&&cup.status==='playing';
+  const draw= newlyDrawn?'\n\n🎲 SORTEIO REALIZADO\n'+games.rows.map(m=>{const home=after.rows.find(p=>p.user_id===m.home)!,away=after.rows.find(p=>p.user_id===m.away)!;return `Jogo ${m.code}: ${home.display_name} (${home.club}) × ${away.display_name} (${away.club})`;}).join('\n'):'';
+  const notice='📋 ELENCO ATUALIZADO · '+cup.competition_name+'\n'+detail+'\nMotivo: '+request.reason+'\n\n'+(newlyDrawn?'Última vaga preenchida: seleções e confrontos sorteados agora.':cup.status==='playing'?'A seleção e o código da partida foram mantidos. Confira o jogo com !copa.':'Inscrições: '+after.rows.length+'/'+cup.size+'. A chave será sorteada quando completar as vagas.')+draw+'\n🛡️ Alteração e estado anterior salvos no banco.';
+  await q.query('INSERT INTO mlg_bot.outbox(group_id,user_id,message_id,ordinal,body) VALUES($1,$2,$3,0,$4)',[request.group,'mlg-control-panel',messageId,notice]);
+  return {changed:true,cupId:cup.id,name:cup.competition_name,size:cup.size,status:cup.status,participants:after.rows};
+ });
+}
 export function pgDatabase(pool: Pool): Database {
   return {
     async transaction<T>(run: (q: Query) => Promise<T>): Promise<T> {
