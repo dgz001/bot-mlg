@@ -58,18 +58,28 @@ for (const size of [4, 8, 16]) {
     assert.equal(new Set(cup.participants.map(p => p.club)).size, size);
     assert.equal(cup.matches.length, size / 2);
     assert.equal(new Set(cup.matches.flatMap(m => [m.home, m.away])).size, size);
+    let championNotice='';
     while (h.state.cups[cupId]!.status !== 'completed') {
       cup = h.state.cups[cupId]!;
       const match = cup.matches.find(m => m.status === 'scheduled')!;
       h.send(match.home, `!resultado ${match.code} 3x2`);
       assert.equal(h.state.cups[cupId]!.matches.find(m => m.code === match.code)!.winner, undefined);
       h.restart();
-      h.send(match.away, `!confirmar ${match.code}`);
+      championNotice=h.send(match.away, `!confirmar ${match.code}`).notices.join('\n');
     }
     cup = h.state.cups[cupId]!;
     assert.equal(cup.matches.length, size - 1);
     assert.equal(new Set(cup.matches.map(m => m.code)).size, size - 1);
     assert.equal(cup.matches.filter(m => m.winner === cup.champion).length, Math.log2(size));
+    const chronicle=h.send('u0','!chave A').notices[0]!;
+    assert.match(chronicle,/LADO A/);
+    const championPath=cup.matches.filter(m=>m.winner===cup.champion).sort((a,b)=>a.round-b.round);
+    assert.equal(championPath.length,Math.log2(size));
+    for(const m of championPath){
+      const opponent=cup.participants.find(p=>p.userId===(m.home===cup.champion?m.away:m.home))!;
+      assert.ok(championNotice.includes(opponent.name));
+      assert.ok(championNotice.includes(`jogo ${m.code}`));
+    }
     const finished=h.send('u0','!chave A').notices[0]!;
     assert.match(finished,/FINAL · Lado A × Lado B/);
     assert.match(finished,/Campeão:/);
@@ -125,7 +135,27 @@ test('evento repetido não cria copa, inscrição ou confirmação duplicada', (
   assert.deepEqual(h.send(match.home, `!resultado ${match.code} 1x0`, 'score').notices, []);
   h.send(match.away, `!confirmar ${match.code}`, 'confirm');
   assert.deepEqual(h.send(match.away, `!confirmar ${match.code}`, 'confirm').notices, []);
-  assert.throws(() => h.send(match.away, `!confirmar ${match.code}`), /pendente/);
+  const once=h.send(match.away, `!confirmar ${match.code}`).notices.join('\n');
+  assert.match(once,/JÁ CONFIRMADO/);
+  assert.doesNotMatch(once,/CHAVE ATUALIZADA/);
+  assert.equal(h.state.cups[Object.keys(h.state.cups)[0]!]!.matches.find(m=>m.code===match.code)!.results.length,1);
+});
+
+test('confirmações consecutivas da dupla classificam apenas uma vez, inclusive na final',()=>{
+ const h=harness();h.start(4);
+ const cup=Object.values(h.state.cups)[0]!;
+ for(const m of [...cup.matches]){
+  h.send(m.home,`!resultado ${m.code} 2x1`);
+  assert.match(h.send(m.home,`!confirmar ${m.code}`).notices.join('\n'),/CHAVE ATUALIZADA/);
+  const second=h.send(m.away,'!confirmar 2x1').notices.join('\n');
+  assert.match(second,/JÁ CONFIRMADO/);assert.doesNotMatch(second,/CHAVE ATUALIZADA/);
+  assert.equal(h.state.cups[cup.id]!.matches.find(x=>x.code===m.code)!.results.length,1);
+ }
+ const final=h.state.cups[cup.id]!.matches.find(m=>m.round===1)!;
+ h.send(final.home,`!resultado ${final.code} 3x2`);
+ assert.match(h.send(final.home,`!confirmar ${final.code}`).notices.join('\n'),/CAMPEÃO DO/);
+ assert.match(h.send(final.away,`!confirmar ${final.code}`).notices.join('\n'),/JÁ CONFIRMADO/);
+ assert.equal(h.state.cups[cup.id]!.matches.find(m=>m.code===final.code)!.results.length,1);
 });
 
 test('permissões e validação de resultado/contestação', () => {

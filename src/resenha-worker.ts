@@ -4,6 +4,7 @@ import {allowsGroup,groupMode,validGroupMode} from './infra/group-modes.ts';
 import {adminControl,type ControlTarget} from './infra/admin-control.ts';
 import {whatsappControls} from './infra/whatsapp-controls.ts';
 import {minicampClient,minicampCommand,type PendingCupEvent} from './minicamp/client.ts';
+import {orderMessages} from './minicamp/message-order.ts';
 import {loadRoster} from './resenha/matchup.ts';
 import makeWASocket,{DisconnectReason,jidNormalizedUser,extractMessageContent} from '@whiskeysockets/baileys';
 import pino from 'pino';
@@ -56,7 +57,7 @@ async function connect(){
  });
  current.ev.on('messages.upsert',event=>{
  if(event.type!=='notify'||socket!==current)return;
- for(const message of event.messages){queue=queue.then(async()=>{
+ for(const message of orderMessages(event.messages)){queue=queue.then(async()=>{
  const group=message.key.remoteJid,id=message.key.id;if(stopping||!group?.endsWith('@g.us')||!id||message.key.fromMe)return;
  const body=extractMessageContent(message.message);const text=body?.conversation??body?.extendedTextMessage?.text??'';const context=body?.extendedTextMessage?.contextInfo;
  const self=[current.user?.id,current.user?.lid].filter(Boolean).map(v=>jidNormalizedUser(v!));

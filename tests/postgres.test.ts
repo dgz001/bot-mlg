@@ -41,6 +41,28 @@ async function setup(db: Pool) {
   for (let i=0;i<16;i++) await db.query('INSERT INTO mlg_bot.club_pool VALUES ($1,$2)',['g',`Club ${i}`]);
 }
 
+test('três inscrições concorrentes ocupam posições únicas e duas confirmações avançam uma vez',integration,async()=>{
+ const f=await fixture();try{
+  await setup(f.pool);
+  const db=pgDatabase(f.pool);let id=0;
+  const send=(userId:string,text:string)=>processEvent(db,{id:'race-'+ ++id,groupId:'g',userId,name:userId,text,at:Date.now()});
+  await send('admin','!novacopa');await send('admin','!formato 16');
+  const arrivals=await Promise.all(['u0','u1','u2'].map(who=>send(who,'!entrar')));
+  assert.equal(arrivals.filter(r=>!r.duplicate).length,3);
+  const first=await f.pool.query<{user_id:string;position:number}>("SELECT user_id,position FROM mlg_bot.cup_participants ORDER BY position");
+  assert.deepEqual(first.rows.map(p=>p.position),[0,1,2]);
+  assert.deepEqual(new Set(first.rows.map(p=>p.user_id)),new Set(['u0','u1','u2']));
+  for(let i=3;i<16;i++)await send('u'+i,'!entrar');
+  const match=(await f.pool.query<{code:string;home:string;away:string}>("SELECT code,home,away FROM mlg_bot.matches WHERE round=0 ORDER BY position LIMIT 1")).rows[0]!;
+  await send(match.home,`!resultado ${match.code} 3x2`);
+  const results=await Promise.all([send(match.home,`!confirmar ${match.code}`),send(match.away,`!confirmar ${match.code}`)]);
+  assert.equal(results.filter(r=>r.notices.join('\n').includes('CHAVE ATUALIZADA')).length,1);
+  assert.equal(results.filter(r=>r.notices.join('\n').includes('JÁ CONFIRMADO')).length,1);
+  const registered=await f.pool.query<{total:number;winner:string;status:string}>("SELECT count(r.revision)::int AS total,max(m.winner) AS winner,max(m.status) AS status FROM mlg_bot.matches m JOIN mlg_bot.match_results r ON r.match_code=m.code WHERE m.code=$1 GROUP BY m.code",[match.code]);
+  assert.equal(registered.rows[0]?.total,1);assert.equal(registered.rows[0]?.status,'confirmed');
+ }finally{await f.close();}
+});
+
 test('refazer sorteio preserva participantes, códigos e checkpoints e bloqueia após placar',integration,async()=>{
  const f=await fixture();try{
   await setup(f.pool);
