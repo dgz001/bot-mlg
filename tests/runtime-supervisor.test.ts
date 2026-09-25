@@ -35,6 +35,17 @@ test('supervisor recupera crash sem depender do painel',async()=>{
   await until(()=>f.supervisor.ready&&f.supervisor.pid!==old);
  }finally{await f.close();}
 });
+test('supervisor recebe reinício solicitado pela central sem abrir uma segunda sessão',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'mlg-wa-restart-'));
+ const worker=join(root,'worker.mjs'),marker=join(root,'requested');
+ await writeFile(worker,`import {existsSync,writeFileSync} from 'node:fs';
+setInterval(()=>process.send?.({type:'health',phase:'CONNECTED',ready:true}),30);
+if(!existsSync(process.env.MLG_TEST_RESTART_MARKER)){writeFileSync(process.env.MLG_TEST_RESTART_MARKER,'1');setTimeout(()=>process.send?.({type:'restart-request'}),100);}
+process.on('SIGTERM',()=>process.exit(0));`);
+ const supervisor=new RuntimeSupervisor({worker:pathToFileURL(worker),env:{PATH:process.env.PATH,MLG_TEST_RESTART_MARKER:marker},graceMs:200,retryMs:50,heartbeatMs:1000,checkMs:50});
+ try{supervisor.start();const first=supervisor.pid;await until(()=>supervisor.ready&&supervisor.pid!==first);assert.ok(supervisor.pid);}
+ finally{await supervisor.stop();await rm(root,{recursive:true,force:true});}
+});
 test('supervisor detecta processo travado e força encerramento antes de substituí-lo',{skip:process.platform==='win32'},async()=>{
  const f=await fixture();try{
   const old=f.supervisor.pid!;process.kill(old,'SIGSTOP');

@@ -69,3 +69,21 @@ test('sorteio exige confirmação, bloqueia mudança concorrente e preserva o mo
  await send('!refazersorteio chave inverter sorteio');
  assert.match(await send('!confirmarsorteio',302_000),/Não há sorteio/);assert.equal(draws,1);
 });
+
+test('central prepara substituição de jogador e confirma só o elenco revisado',async()=>{
+ const room:ControlWorkspace={targetId:'world@g.us'};let fingerprint='a'.repeat(64),updated=0;
+ const api=async(body:Record<string,unknown>)=>{
+  if(body.action!=='cup-roster')throw Error('Ação inesperada');
+  if(body.change){if(body.expected!==fingerprint)return {error:'A lista da Copa mudou depois da revisão.'};updated++;return {changed:true};}
+  return {cupId:'cup',name:'Copa do Mundo',status:'playing',size:4,fingerprint,participants:[{display_name:'Ana',club:'Brasil'},{display_name:'Beto',club:'França'},{display_name:'Caio',club:'Portugal'},{display_name:'Duda',club:'Japão'}]};
+ };
+ const actor={controlGroup:'central@g.us',aliases:['123@s.whatsapp.net'],resolveMember:async(_group:string,phone:string)=>phone==='5511999999999'?['5511999999999@s.whatsapp.net']:null};
+ const send=(s:string)=>adminControl(s,room,[{id:'world@g.us',name:'Copa'}],api,async()=>{},1000,actor);
+ assert.match(await send('!inscritosadm'),/2\. Beto/);
+ assert.match(await send('!retirar 2 | pediu para sair'),/apenas a substituição/);
+ assert.match(await send('!trocar 2 5511999999999 Eduardo | trocou de aparelho'),/Beto por Eduardo/);
+ fingerprint='b'.repeat(64);
+ assert.match(await send('!confirmarelenco'),/mudou depois/);assert.equal(updated,0);
+ await send('!trocar 2 5511999999999 Eduardo | trocou de aparelho');
+ assert.match(await send('!confirmarelenco'),/Participantes atualizados/);assert.equal(updated,1);
+});

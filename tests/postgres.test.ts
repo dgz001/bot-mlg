@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
-import { processEvent, pgDatabase, checkpointCup, canonicalCheckpoint, cupDraw, type Database } from '../src/infra/postgres.ts';
+import { processEvent, pgDatabase, checkpointCup, canonicalCheckpoint, cupDraw, cupRoster, type Database } from '../src/infra/postgres.ts';
 import { authStore } from '../src/whatsapp/auth-store.ts';
 import { randomBytes } from 'node:crypto';
 
@@ -60,6 +60,30 @@ test('refazer sorteio preserva participantes, códigos e checkpoints e bloqueia 
   const match=current.matches![0]!;await send(match.home,`!resultado ${match.code} 2x1`);
   const blocked=await cupDraw(db,request);assert.match(blocked.error!,/Sorteio bloqueado/);
   const announced=await f.pool.query("SELECT body FROM mlg_bot.outbox WHERE message_id LIKE 'panel-%' ORDER BY id DESC LIMIT 1");assert.match(announced.rows[0].body,/SORTEIO ATUALIZADO/);
+ }finally{await f.close();}
+});
+
+test('central inclui última vaga com sorteio e substitui sem mudar código ou seleção',integration,async()=>{
+ const f=await fixture();try{
+  await setup(f.pool);
+  await f.pool.query("INSERT INTO mlg_bot.groups(id,authorized,admins_configured) VALUES('central',true,true); INSERT INTO mlg_bot.admins(group_id,user_id,role) VALUES('central','admin','admin'); INSERT INTO mlg_bot.wa_identities(jid,user_id) VALUES('123@s.whatsapp.net','admin')");
+  let id=0;const send=(userId:string,text:string)=>processEvent(pgDatabase(f.pool),{id:'roster-'+ ++id,groupId:'g',userId,name:userId,text,at:Date.now()+id});
+  await send('admin','!novacopa');await send('admin','!formato 4');for(let i=0;i<3;i++)await send('u'+i,'!entrar');
+  const db=pgDatabase(f.pool),request={group:'g',controlGroup:'central',actorAliases:['123@s.whatsapp.net']};
+  const first=await cupRoster(db,request);assert.equal(first.status,'open');assert.equal(first.participants?.length,3);
+  const included=await cupRoster(db,{...request,change:'incluir',targetAliases:['5511000000001@s.whatsapp.net'],targetName:'Lia',expected:first.fingerprint,reason:'ADM liberou a última vaga'});
+  assert.equal(included.status,'playing');assert.equal(included.participants?.length,4);
+  const before=await cupRoster(db,request);const match=(await f.pool.query<{code:string;home:string;away:string}>('SELECT code,home,away FROM mlg_bot.matches WHERE cup_id=$1 ORDER BY code LIMIT 1',[before.cupId])).rows[0]!;
+  const index=before.participants!.findIndex(p=>p.user_id===match.home)+1;const club=before.participants![index-1]!.club;
+  const changed=await cupRoster(db,{...request,change:'trocar',position:index,targetAliases:['5511000000002@s.whatsapp.net'],targetName:'Novo jogador',expected:before.fingerprint,reason:'O titular precisou sair'});
+  assert.equal(changed.changed,true);assert.equal(changed.participants![index-1]!.club,club);
+  assert.equal((await f.pool.query('SELECT count(*)::int AS count FROM mlg_bot.matches WHERE cup_id=$1',[before.cupId])).rows[0].count,2);
+  const active=await cupRoster(db,request);assert.notEqual(active.fingerprint,before.fingerprint);
+  const newMatch=(await f.pool.query<{code:string;home:string}>('SELECT code,home FROM mlg_bot.matches WHERE code=$1',[match.code])).rows[0]!;
+  assert.equal(newMatch.code,match.code);assert.notEqual(newMatch.home,match.home);
+  await send(newMatch.home,`!resultado ${newMatch.code} 2x1`);
+  const blocked=await cupRoster(db,{...request,change:'trocar',position:index,targetAliases:['5511000000003@s.whatsapp.net'],targetName:'Terceiro',expected:(await cupRoster(db,request)).fingerprint,reason:'Mais uma troca solicitada'});
+  assert.match(blocked.error!,/antes do primeiro placar/);
  }finally{await f.close();}
 });
 
