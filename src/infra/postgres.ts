@@ -35,7 +35,7 @@ export function pgDatabase(pool: Pool): Database {
 export async function processEvent(database: Database, event: Event, env: Environment = environment): Promise<{ duplicate: boolean; notices: string[] }> {
   const startedAt=Date.now();
   return database.transaction(async q => {
-    const groups = await q.query<{ id: string; authorized: boolean }>('SELECT id,authorized FROM mlg_bot.groups WHERE id=$1 FOR UPDATE', [event.groupId]);
+    const groups = await q.query<{ id: string; authorized: boolean; competitionName:string; teamKind:"clube"|"seleção"; formatSize:number|null }>('SELECT id,authorized,competition_name AS "competitionName",team_kind AS "teamKind",format_size AS "formatSize" FROM mlg_bot.groups WHERE id=$1 FOR UPDATE', [event.groupId]);
     if (!groups.rows[0]?.authorized) throw new Error('Grupo não autorizado.');
     await q.query('INSERT INTO mlg_bot.users(id,display_name) VALUES ($1,$2) ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name', [event.userId,event.name.slice(0,60)]);
     const claimed = await q.query<{ message_id: string }>(`INSERT INTO mlg_bot.processed_messages(group_id,user_id,message_id,received_at)
@@ -49,11 +49,11 @@ export async function processEvent(database: Database, event: Event, env: Enviro
     const state = emptyState(); state.nextCode = Number(counter.rows[0].next);
     const admins = await q.query<{ id: string }>('SELECT user_id AS id FROM mlg_bot.admins WHERE group_id=$1 AND EXISTS(SELECT 1 FROM mlg_bot.groups WHERE id=$1 AND admins_configured)', [event.groupId]);
     const clubs = await q.query<{ name: string }>('SELECT name FROM mlg_bot.club_pool WHERE group_id=$1 ORDER BY name', [event.groupId]);
-    state.groups[event.groupId] = { authorized: true, admins: admins.rows.map(r => r.id), clubs: clubs.rows.map(r => r.name) };
+    state.groups[event.groupId] = { authorized: true, admins: admins.rows.map(r => r.id), clubs: clubs.rows.map(r => r.name), competitionName:groups.rows[0]!.competitionName,teamKind:groups.rows[0]!.teamKind,formatSize:groups.rows[0]!.formatSize };
     const drafts = await q.query<{ ownerId: string; expiresAt: number }>('SELECT owner_id AS "ownerId",expires_at::float8 AS "expiresAt" FROM mlg_bot.command_drafts WHERE group_id=$1', [event.groupId]);
     if (drafts.rows[0]) state.drafts[event.groupId] = drafts.rows[0];
     const cups = await q.query<Omit<Cup,'participants'|'matches'>>(`SELECT id,group_id AS "groupId",created_by AS "createdBy",created_at::float8 AS "createdAt",
-      size,status,champion,completed_at::float8 AS "completedAt",cancellation_reason AS "cancellationReason" FROM mlg_bot.cups WHERE group_id=$1 ORDER BY created_at,id`, [event.groupId]);
+      size,competition_name AS "competitionName",team_kind AS "teamKind",status,champion,completed_at::float8 AS "completedAt",cancellation_reason AS "cancellationReason" FROM mlg_bot.cups WHERE group_id=$1 ORDER BY created_at,id`, [event.groupId]);
     for (const row of cups.rows) {
       const cup: Cup = { ...row, champion: row.champion ?? undefined, completedAt: row.completedAt ?? undefined, cancellationReason: row.cancellationReason ?? undefined, participants: [], matches: [] };
       const participants = await q.query<Participant>('SELECT user_id AS "userId",display_name AS name,club FROM mlg_bot.cup_participants WHERE cup_id=$1 ORDER BY position', [cup.id]);
@@ -74,9 +74,9 @@ export async function processEvent(database: Database, event: Event, env: Enviro
     }
     for (const cup of Object.values(output.state.cups)) {
       if (JSON.stringify(state.cups[cup.id]) === JSON.stringify(cup)) continue;
-      await q.query(`INSERT INTO mlg_bot.cups(id,group_id,created_by,created_at,size,status,champion,completed_at,cancellation_reason)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(id) DO UPDATE SET status=excluded.status,champion=excluded.champion,completed_at=excluded.completed_at,cancellation_reason=excluded.cancellation_reason`,
-      [cup.id,cup.groupId,cup.createdBy,cup.createdAt,cup.size,cup.status,cup.champion ?? null,cup.completedAt ?? null,cup.cancellationReason ?? null]);
+      await q.query(`INSERT INTO mlg_bot.cups(id,group_id,created_by,created_at,size,competition_name,team_kind,status,champion,completed_at,cancellation_reason)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(id) DO UPDATE SET status=excluded.status,champion=excluded.champion,completed_at=excluded.completed_at,cancellation_reason=excluded.cancellation_reason`,
+      [cup.id,cup.groupId,cup.createdBy,cup.createdAt,cup.size,cup.competitionName??"Minicamp MLG",cup.teamKind??"clube",cup.status,cup.champion ?? null,cup.completedAt ?? null,cup.cancellationReason ?? null]);
       // Withdrawal is allowed only before the draw, so no match references exist.
       if(cup.status==='open'){
         await q.query('DELETE FROM mlg_bot.cup_participants WHERE cup_id=$1',[cup.id]);

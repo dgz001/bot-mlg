@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { apply, emptyState, environment, type State } from '../src/minicamp/engine.ts';
+import {worldCupCandidates} from '../src/minicamp/nations.ts';
 
 const clubs = Array.from({ length: 20 }, (_, i) => `Clube ${i + 1}`);
 function harness() {
@@ -459,4 +460,24 @@ test('arquivo não mistura grupos nem mostra Copa anulada',()=>{
  const cup=Object.values(h.state.cups)[0]!;
  h.send('admin',`!anularcopa ${cup.id}`);
  assert.match(h.send('admin','!arquivo').notices[0]!,/Ainda não há inscrições/);
+});
+
+
+test('Copa de seleções aceita 32 vagas, sorteia sem repetição e mantém histórico do grupo',()=>{
+ const h=harness();h.state.groups.g={authorized:true,admins:['admin'],clubs:Array.from({length:36},(_,i)=>`Seleção ${i+1}`),competitionName:'Copa do Mundo MLG',teamKind:'seleção'};
+ h.send('admin','!novacopa');h.send('admin','!formato 32');
+ for(let i=0;i<32;i++)h.send(`j${i}`,'!entrar');
+ const cup=Object.values(h.state.cups)[0]!;
+ assert.equal(cup.size,32);assert.equal(cup.matches.length,16);assert.equal(new Set(cup.participants.map(p=>p.club)).size,32);
+ assert.match(h.send('j0','!copa').notices[0]!,/COPA DO MUNDO MLG/);
+ assert.match(h.send('j0','!times').notices[0]!,/SELEÇÕES/);
+ assert.match(h.send('j0','!comandos').notices[0]!,/COPA DO MUNDO MLG/);
+ h.state.groups.outro={authorized:true,admins:['admin'],clubs,competitionName:'Copa dos Clubes'};
+ assert.match(h.send('admin','!teste',undefined,'outro').notices[0]!,/Nenhuma Copa ativa/);
+ assert.equal(Object.values(h.state.cups).filter(c=>c.groupId==='outro').length,0);
+});
+
+test('predefinição da Copa oferece 36 seleções únicas para revisão no painel',()=>{
+ assert.equal(worldCupCandidates.length,36);
+ assert.equal(new Set(worldCupCandidates).size,36);
 });
