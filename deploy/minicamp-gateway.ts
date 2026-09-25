@@ -10,6 +10,8 @@ const db={transaction:run=>base.transaction(async q=>{await q.query('SET LOCAL R
 const jid=/^[0-9]+@(lid|s\.whatsapp\.net)$/;
 const groupId=/^[0-9-]+@g\.us$/;
 function validAliases(v){return Array.isArray(v)&&v.length>=1&&v.length<=2&&v.every(x=>typeof x==='string'&&jid.test(x));}
+function validCompetition(body){return typeof body.name==='string'&&body.name.trim().length>=3&&body.name.length<=60&&['clube','seleção'].includes(body.teamKind)&&Array.isArray(body.teams)&&body.teams.length>=4&&body.teams.length<=100&&body.teams.every(t=>typeof t==='string'&&t.length>=2&&t.length<=60&&t.trim()===t&&!/[\r\n\x00-\x1f\x7f\u202a-\u202e*_~`]/.test(t))&&new Set(body.teams.map(t=>t.toLocaleLowerCase('pt-BR'))).size===body.teams.length;}
+const templateId=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 async function identity(q,aliases,name=null){
  if(!validAliases(aliases))throw Error('Invalid identity');
  await q.query('SELECT pg_advisory_xact_lock(71012027)');
@@ -66,8 +68,63 @@ Deno.serve(async req=>{
    return {competition:{name:g.rows[0].competition_name,teamKind:g.rows[0].team_kind,formatSize:g.rows[0].format_size,teams:t.rows.map(r=>r.name)}};
   });
  }
+ else if(body.action==='templates-list'){
+  if(!groupId.test(body.group))throw Error('Invalid group');
+  result=await db.transaction(async q=>{
+   const g=await q.query('SELECT competition_name,team_kind,active_template_id FROM mlg_bot.groups WHERE id=$1 AND authorized',[body.group]);
+   if(!g.rows.length)throw Error('Unauthorized group');
+   const templates=await q.query('SELECT id,name,team_kind AS "teamKind",cardinality(teams) AS "teamCount",updated_at AS "updatedAt" FROM mlg_bot.competition_templates WHERE group_id=$1 ORDER BY lower(name)',[body.group]);
+   const cup=await q.query("SELECT c.id,c.competition_name AS name,c.status,c.size,(SELECT count(*) FROM mlg_bot.cup_participants p WHERE p.cup_id=c.id) AS participants,(SELECT count(*) FROM mlg_bot.matches m WHERE m.cup_id=c.id AND m.status='pending') AS pending,(SELECT count(*) FROM mlg_bot.matches m WHERE m.cup_id=c.id AND m.status='disputed') AS disputed FROM mlg_bot.cups c WHERE c.group_id=$1 AND c.status IN ('open','playing') ORDER BY c.created_at DESC LIMIT 1",[body.group]);
+   return {templates:templates.rows,activeTemplateId:g.rows[0].active_template_id,activeCompetition:g.rows[0].competition_name,activeCup:cup.rows[0]??null};
+  });
+ }
+ else if(body.action==='template-get'){
+  if(!groupId.test(body.group)||!templateId.test(body.templateId??''))throw Error('Invalid template');
+  result=await db.transaction(async q=>{
+   const t=await q.query('SELECT t.id,t.name,t.team_kind AS "teamKind",t.teams FROM mlg_bot.competition_templates t JOIN mlg_bot.groups g ON g.id=t.group_id WHERE t.group_id=$1 AND t.id=$2 AND g.authorized',[body.group,body.templateId]);
+   if(!t.rows.length)throw Error('Template unavailable');return {competition:t.rows[0]};
+  });
+ }
+ else if(body.action==='template-save'){
+  if(!groupId.test(body.group)||!validCompetition(body)||body.templateId!==null&&body.templateId!==undefined&&!templateId.test(body.templateId))throw Error('Invalid template');
+  result=await db.transaction(async q=>{
+   const g=await q.query('SELECT id FROM mlg_bot.groups WHERE id=$1 AND authorized FOR UPDATE',[body.group]);if(!g.rows.length)throw Error('Unauthorized group');
+   const dup=await q.query('SELECT id FROM mlg_bot.competition_templates WHERE group_id=$1 AND lower(name)=lower($2) AND ($3::uuid IS NULL OR id<>$3::uuid)',[body.group,body.name.trim(),body.templateId??null]);
+   if(dup.rows.length)return {error:'Já existe um modelo com esse nome neste grupo.'};
+   let row;
+   if(body.templateId){row=await q.query('UPDATE mlg_bot.competition_templates SET name=$3,team_kind=$4,teams=$5,updated_at=now() WHERE group_id=$1 AND id=$2 RETURNING id,name,team_kind AS "teamKind",teams',[body.group,body.templateId,body.name.trim(),body.teamKind,body.teams]);}
+   else {row=await q.query('INSERT INTO mlg_bot.competition_templates(group_id,name,team_kind,teams) VALUES($1,$2,$3,$4) RETURNING id,name,team_kind AS "teamKind",teams',[body.group,body.name.trim(),body.teamKind,body.teams]);}
+   if(!row.rows.length)return {error:'Modelo não encontrado neste grupo.'};
+   await q.query("INSERT INTO mlg_bot.control_audit(action,group_id) VALUES('panel-save-template',$1)",[body.group]);return {saved:true,competition:row.rows[0]};
+  });
+ }
+ else if(body.action==='template-activate'){
+  if(!groupId.test(body.group)||!templateId.test(body.templateId??''))throw Error('Invalid template');
+  result=await db.transaction(async q=>{
+   const g=await q.query('SELECT id FROM mlg_bot.groups WHERE id=$1 AND authorized FOR UPDATE',[body.group]);if(!g.rows.length)throw Error('Unauthorized group');
+   const active=await q.query("SELECT id FROM mlg_bot.cups WHERE group_id=$1 AND status IN ('open','playing') LIMIT 1",[body.group]);
+   if(active.rows.length)return {error:'Termine ou cancele a Copa aberta antes de trocar o modelo ativo.'};
+   const t=await q.query('SELECT id,name,team_kind AS "teamKind",teams FROM mlg_bot.competition_templates WHERE group_id=$1 AND id=$2',[body.group,body.templateId]);
+   if(!t.rows.length)return {error:'Modelo não encontrado neste grupo.'};
+   const chosen=t.rows[0];
+   await q.query('UPDATE mlg_bot.groups SET competition_name=$2,team_kind=$3,format_size=NULL,active_template_id=$4 WHERE id=$1',[body.group,chosen.name,chosen.teamKind,chosen.id]);
+   await q.query('DELETE FROM mlg_bot.club_pool WHERE group_id=$1',[body.group]);
+   for(const team of chosen.teams)await q.query('INSERT INTO mlg_bot.club_pool(group_id,name) VALUES($1,$2)',[body.group,team]);
+   await q.query("INSERT INTO mlg_bot.control_audit(action,group_id) VALUES('panel-activate-template',$1)",[body.group]);return {activated:true,competition:chosen};
+  });
+ }
+ else if(body.action==='template-delete'){
+  if(!groupId.test(body.group)||!templateId.test(body.templateId??''))throw Error('Invalid template');
+  result=await db.transaction(async q=>{
+   const g=await q.query('SELECT active_template_id FROM mlg_bot.groups WHERE id=$1 AND authorized FOR UPDATE',[body.group]);if(!g.rows.length)throw Error('Unauthorized group');
+   if(g.rows[0].active_template_id===body.templateId)return {error:'Modelo ativo: ative outro antes de excluir este.'};
+   const deleted=await q.query('DELETE FROM mlg_bot.competition_templates WHERE group_id=$1 AND id=$2 RETURNING id',[body.group,body.templateId]);
+   if(!deleted.rows.length)return {error:'Modelo não encontrado neste grupo.'};
+   await q.query("INSERT INTO mlg_bot.control_audit(action,group_id) VALUES('panel-delete-template',$1)",[body.group]);return {deleted:true};
+  });
+ }
  else if(body.action==='competition-save'){
-  if(!groupId.test(body.group)||typeof body.name!=='string'||body.name.trim().length<3||body.name.length>60||!['clube','seleção'].includes(body.teamKind)||!(body.formatSize===null||[4,8,16,32].includes(body.formatSize))||!Array.isArray(body.teams)||body.teams.length<Math.max(4,body.formatSize??4)||body.teams.length>100||body.teams.some(t=>typeof t!=='string'||t.length<2||t.length>60||t.trim()!==t||/[\r\n\x00-\x1f\x7f\u202a-\u202e*_~`]/.test(t))||new Set(body.teams.map(t=>t.toLocaleLowerCase('pt-BR'))).size!==body.teams.length)throw Error('Invalid competition');
+  if(!groupId.test(body.group)||!validCompetition(body)||!(body.formatSize===null||[4,8,16,32].includes(body.formatSize))||body.teams.length<Math.max(4,body.formatSize??4))throw Error('Invalid competition');
   result=await db.transaction(async q=>{
    const g=await q.query('SELECT id FROM mlg_bot.groups WHERE id=$1 AND authorized FOR UPDATE',[body.group]);
    if(!g.rows.length)throw Error('Unauthorized group');
@@ -76,6 +133,9 @@ Deno.serve(async req=>{
    await q.query('UPDATE mlg_bot.groups SET competition_name=$2,team_kind=$3,format_size=$4 WHERE id=$1',[body.group,body.name.trim(),body.teamKind,body.formatSize]);
    await q.query('DELETE FROM mlg_bot.club_pool WHERE group_id=$1',[body.group]);
    for(const team of body.teams)await q.query('INSERT INTO mlg_bot.club_pool(group_id,name) VALUES($1,$2)',[body.group,team]);
+   const existing=await q.query('SELECT id FROM mlg_bot.competition_templates WHERE group_id=$1 AND lower(name)=lower($2)',[body.group,body.name.trim()]);
+   const template=existing.rows.length?await q.query('UPDATE mlg_bot.competition_templates SET name=$3,team_kind=$4,teams=$5,updated_at=now() WHERE group_id=$1 AND id=$2 RETURNING id',[body.group,existing.rows[0].id,body.name.trim(),body.teamKind,body.teams]):await q.query('INSERT INTO mlg_bot.competition_templates(group_id,name,team_kind,teams) VALUES($1,$2,$3,$4) RETURNING id',[body.group,body.name.trim(),body.teamKind,body.teams]);
+   await q.query('UPDATE mlg_bot.groups SET active_template_id=$2 WHERE id=$1',[body.group,template.rows[0].id]);
    await q.query("INSERT INTO mlg_bot.control_audit(action,group_id) VALUES('panel-save-competition',$1)",[body.group]);
    return {updated:true,competition:{name:body.name.trim(),teamKind:body.teamKind,formatSize:body.formatSize,teams:body.teams}};
   });
