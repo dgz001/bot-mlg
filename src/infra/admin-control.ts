@@ -56,8 +56,8 @@ No grupo da Copa: !copa (tudo), !chave A ou !chave B
 Correções do sorteio exigem ausência de placares.
 
 🛡️ ENCERRAR E CORRIGIR
-!cancelarcopa motivo — cancelar edição atual
-!anularcopa edição motivo — anular edição encerrada
+!cancelarcopa motivo — cancelar e liberar o número da edição
+!anularcopa edição motivo — anular edição encerrada; use o número do !historico
 No grupo da Copa: !vistoria e !resolver código 4x3 motivo.
 
 📌 Use !painel para consultar este guia. Mudanças ficam registradas.`;
@@ -141,7 +141,7 @@ export async function adminControl(text:string,room:ControlWorkspace,targets:Con
  }
  if(cmd==='!central'){
   const current=requireSuccess<any>(await api({action:'templates-list',group}));
-  return '🎛️ CENTRAL MLG\n📍 '+target.name+'\n🏆 Modelo ativo: '+current.activeCompetition+'\n'+(current.activeCup?'🎮 Copa em andamento: '+current.activeCup.participants+'/'+current.activeCup.size+' inscritos.':current.preparing?'⏳ Um ADM está escolhendo o formato no grupo da Copa.':'📣 Nenhuma Copa aberta.')+'\n'+(room.draft?'📝 Preparação salva: '+room.draft.name+(room.draft.size?' · '+room.draft.size+' vagas':' · vagas a definir'):'📝 Sem preparação em andamento.')+'\n\n!painel mostra os comandos.';
+  return '🎛️ CENTRAL MLG\n📍 '+target.name+'\n🏆 Modelo ativo: '+current.activeCompetition+'\n'+(current.activeCup?'🎮 Copa em andamento: '+current.activeCup.participants+'/'+current.activeCup.size+' inscritos.':current.preparing?'⏳ Um ADM está escolhendo o formato no grupo da Copa.':'📣 Nenhuma Copa aberta.')+'\n'+(current.nextEdition?'🔢 Próxima edição: '+current.nextEdition+' (tentativas canceladas não ocupam número).\n':'')+(room.draft?'📝 Preparação salva: '+room.draft.name+(room.draft.size?' · '+room.draft.size+' vagas':' · vagas a definir'):'📝 Sem preparação em andamento.')+'\n\n!painel mostra os comandos.';
  }
  if(cmd==='!novacopa'){
   const [config,list]=await Promise.all([api({action:'competition-get',group}),api({action:'templates-list',group})]);
@@ -155,13 +155,13 @@ export async function adminControl(text:string,room:ControlWorkspace,targets:Con
  if(cmd==='!cancelarcopa'){
   if(arg.length<8)return 'Informe um motivo: !cancelarcopa motivo com ao menos 8 caracteres.';
   const result=requireSuccess<any>(await api({action:'cup-cancel',group,reason:arg}));
-  return result.draft?'🚫 Escolha de formato iniciada no grupo da Copa cancelada. Nenhuma partida foi apagada.':result.cancelled?'🚫 Copa cancelada em '+target.name+'. Histórico e registros de recuperação preservados; o aviso será enviado ao grupo.':'⚠️ Não foi possível cancelar a Copa.';
+  return result.draft?'🚫 Escolha de formato iniciada no grupo da Copa cancelada. Nenhuma partida foi apagada.':result.cancelled?'🚫 Edição '+result.edition+' cancelada em '+target.name+'. O número fica livre para a próxima Copa; histórico e recuperação preservados. O aviso será enviado ao grupo.':'⚠️ Não foi possível cancelar a Copa.';
  }
  if(cmd==='!anularcopa'){
   const match=arg.match(/^(\d+)\s+(.{8,160})$/s);if(!match)return 'Formato: !anularcopa número-da-edição motivo (mínimo 8 caracteres).';
   const edition=Number(match[1]);if(!Number.isSafeInteger(edition)||edition<1)return 'Número de edição inválido. Veja as edições com !historico no grupo da Copa.';
   const result=requireSuccess<any>(await api({action:'cup-void',group,edition,reason:match[2]!.trim()}));
-  return result.cancelled?'📋 Edição '+edition+' anulada em '+target.name+'. O histórico permanece; a edição sai das estatísticas.':'⚠️ Edição não encontrada ou não encerrada.';
+  return result.cancelled?'📋 Edição '+edition+' anulada em '+target.name+'. Número liberado; histórico preservado e jogos fora das estatísticas.':'⚠️ Edição não encontrada ou não encerrada.';
  }
  if(cmd==='!descartar'){if(!room.draft)return 'Não há preparação para descartar.';delete room.draft;await save();return '🗑️ Preparação descartada. Nenhuma Copa ou modelo salvo foi apagado.';}
  const draft=room.draft;
@@ -208,7 +208,7 @@ export async function adminControl(text:string,room:ControlWorkspace,targets:Con
   const proposal=changed?{name:draft.name,teamKind:draft.teamKind,teams:draft.teams}:undefined;
   const opened=requireSuccess<any>(await api({action:'cup-open',group,size:draft.size,...(proposal?{proposal}:{})}));
   if(!opened.opened)return '⚠️ O banco não confirmou a abertura. Consulte !central.';
-  delete room.draft;await save();return '🏆 '+draft.name+' aberta em '+target.name+' com '+draft.size+' vagas! O bot anunciará as inscrições no grupo da Copa. Lá os jogadores usam !entrar.';
+  delete room.draft;await save();return '🏆 '+draft.name+(opened.edition?' · Edição '+opened.edition:'')+' aberta em '+target.name+' com '+draft.size+' vagas! O bot anunciará as inscrições no grupo da Copa. Lá os jogadores usam !entrar.';
  }
  return 'Comando da central não reconhecido. Use !painel para ver os comandos deste grupo.';
 }
