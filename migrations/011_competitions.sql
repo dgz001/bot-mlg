@@ -1,0 +1,14 @@
+BEGIN;
+ALTER TABLE mlg_bot.groups ADD COLUMN IF NOT EXISTS competition_name text NOT NULL DEFAULT 'Minicamp MLG';
+ALTER TABLE mlg_bot.groups ADD COLUMN IF NOT EXISTS team_kind text NOT NULL DEFAULT 'clube';
+ALTER TABLE mlg_bot.groups ADD COLUMN IF NOT EXISTS format_size integer;
+ALTER TABLE mlg_bot.groups ADD CONSTRAINT group_competition_name CHECK (length(trim(competition_name)) BETWEEN 3 AND 60);
+ALTER TABLE mlg_bot.groups ADD CONSTRAINT group_team_kind CHECK (team_kind IN ('clube','seleção'));
+ALTER TABLE mlg_bot.groups ADD CONSTRAINT group_format_size CHECK (format_size IS NULL OR format_size IN (4,8,16,32));
+ALTER TABLE mlg_bot.cups ADD COLUMN IF NOT EXISTS competition_name text NOT NULL DEFAULT 'Minicamp MLG';
+ALTER TABLE mlg_bot.cups ADD COLUMN IF NOT EXISTS team_kind text NOT NULL DEFAULT 'clube';
+ALTER TABLE mlg_bot.cups DROP CONSTRAINT IF EXISTS cups_size_check;
+ALTER TABLE mlg_bot.cups ADD CONSTRAINT cups_size_check CHECK (size IN (4,8,16,32));
+GRANT DELETE ON mlg_bot.club_pool TO mlg_bot_gateway;
+INSERT INTO mlg_bot.schema_migrations(version) VALUES(11) ON CONFLICT DO NOTHING;
+COMMIT;
