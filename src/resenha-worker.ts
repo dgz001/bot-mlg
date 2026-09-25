@@ -1,6 +1,7 @@
 import {minicampClubs} from './minicamp/clubs.ts';
 import {moduleEnabled,parseControls} from './infra/bot-controls.ts';
 import {allowsGroup,groupMode,validGroupMode} from './infra/group-modes.ts';
+import {adminControl,type ControlTarget} from './infra/admin-control.ts';
 import {minicampClient,minicampCommand,type PendingCupEvent} from './minicamp/client.ts';
 import {loadRoster} from './resenha/matchup.ts';
 import makeWASocket,{DisconnectReason,jidNormalizedUser,extractMessageContent} from '@whiskeysockets/baileys';
@@ -60,6 +61,27 @@ async function connect(){
  const self=[current.user?.id,current.user?.lid].filter(Boolean).map(v=>jidNormalizedUser(v!));
  const mention=context?.mentionedJid?.some(j=>self.includes(jidNormalizedUser(j)));
  const reply=context?.participant&&self.includes(jidNormalizedUser(context.participant));
+ if(auth.data.groups.includes(group)&&groupMode(auth.data.groupModes,group)==='controle'){
+  if(!text.trim().startsWith('!')||!enabled('minicamp')||!cupApi||!message.key.participant)return;
+  if(text.length>10000){await current.sendMessage(group,{text:'⚠️ Mensagem muito longa. Envie até 200 times em mensagens menores com !adicionar.'});return;}
+  const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
+  try{
+   const aliases=await cupAliases(message.key.participant,current);
+   const members=(await current.groupMetadata(group)).participants;
+   if(!members.some(p=>aliases.includes(jidNormalizedUser(p.id))))return;
+   const permission=await cupApi<{allowed:boolean}>({action:'control-check',group,aliases});
+   let response='🔒 Só as contas selecionadas como ADMs deste grupo no painel podem usar a central.';
+   if(permission.allowed){
+    const participating=Object.values(await current.groupFetchAllParticipating());
+    const targets:ControlTarget[]=participating.filter(g=>g.id!==group&&auth.data.groups.includes(g.id)&&groupMode(auth.data.groupModes,g.id)==='minicamp').map(g=>({id:g.id,name:g.subject})).sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
+    auth.data.controlRooms??={};const room=auth.data.controlRooms[group]??={};auth.data.controlRooms[group]=room;
+    response=await adminControl(text,room,targets,cupApi,()=>auth.save());
+   }
+   auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);await auth.save();
+   if(socket===current&&!stopping&&enabled('minicamp'))await current.sendMessage(group,{text:response});
+  }catch{log('ADMIN_CONTROL_RETRY');if(socket===current&&!stopping)await current.sendMessage(group,{text:'⚠️ A central não confirmou este comando no banco. Use !central para conferir a situação antes de repetir.'});}
+  return;
+ }
  if(/^!supabase\s*$/i.test(text)&&inChannel(group,'minicamp')&&enabled('minicamp')){
   const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
   auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);await auth.save();
@@ -180,6 +202,7 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  if(typeof req.group!=='string'||!auth.data.groups.includes(req.group))throw Error('Invalid group');
  auth.data.groups=auth.data.groups.filter(g=>g!==req.group);
  if(auth.data.groupModes)delete auth.data.groupModes[req.group];
+ if(auth.data.controlRooms)delete auth.data.controlRooms[req.group];
  auth.data.cupInbox=auth.data.cupInbox?.filter(e=>e.group!==req.group);
  await auth.save();log('GROUP_REVOKED');return {revoked:true};
  }
@@ -192,6 +215,7 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  }
  if(['setadmins','history-candidates','history-review','competition-get','competition-save','templates-list','template-get','template-save','template-activate','template-delete','cup-open','cup-cancel','cup-void'].includes(req.action)){
  if(!cupApi||!socket||!auth.data.groups.includes(req.group))throw Error('Group unavailable');
+ if(groupMode(auth.data.groupModes,req.group)==='controle'&&!['setadmins','history-candidates','history-review'].includes(req.action))throw Error('Control group cannot host a Cup');
  await configureCup(req.group,socket);
  if(req.action==='setadmins'){
   const metadata=await socket.groupMetadata(req.group);

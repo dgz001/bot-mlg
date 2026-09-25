@@ -197,6 +197,8 @@ test('gateway real: menção, bloqueio de comandos internos e sincronização se
    const response=await handler!(new Request('https://example.invalid',{method:'POST',headers:{authorization:header},body:JSON.stringify({action,group:'100@g.us',...extra})}));
    assert.equal(response.status,200);return response.json() as Promise<Record<string,unknown>>;
   };
+  assert.equal((await call('control-check',{aliases:['100@s.whatsapp.net']})).allowed,true);
+  assert.equal((await call('control-check',{aliases:['300@s.whatsapp.net']})).allowed,false);
   assert.equal((await call('cup-open',{size:4})).opened,true);
   assert.match(String((await call('cup-open',{size:4})).error),/Já existe/);
   const opened=await call('templates-list');
@@ -207,5 +209,19 @@ test('gateway real: menção, bloqueio de comandos internos e sincronização se
   assert.deepEqual(snapshots.rows.map(r=>r.state.cup.status),['open','cancelled']);
   for(const point of snapshots.rows)assert.equal(createHash('sha256').update(canonicalCheckpoint(point.state)).digest('hex'),point.sha256);
   assert.equal((await call('templates-list')).activeCup,null);
+  const editionId=randomUUID();
+  await f.pool.query("INSERT INTO mlg_bot.users(id,display_name) VALUES ('winner','Vencedor') ON CONFLICT DO NOTHING");
+  await f.pool.query("INSERT INTO mlg_bot.cups(id,group_id,created_by,created_at,size,status,competition_name,team_kind) VALUES($1,'100@g.us','admin',$2,4,'open','Copa de Teste','clube')",[editionId,Date.now()+1]);
+  await f.pool.query("INSERT INTO mlg_bot.cup_participants(cup_id,user_id,display_name,position) VALUES($1,'winner','Vencedor',0)",[editionId]);
+  await f.pool.query("UPDATE mlg_bot.cups SET status='completed',champion='winner',completed_at=$2 WHERE id=$1",[editionId,Date.now()+2]);
+  assert.equal((await call('cup-void',{edition:2,reason:'Correção da edição de teste'})).cancelled,true);
+  assert.equal((await f.pool.query('SELECT status FROM mlg_bot.cups WHERE id=$1',[editionId])).rows[0].status,'cancelled');
+  assert.equal((await call('cup-open',{size:4,proposal:{name:'Copa Administração MLG',teamKind:'seleção',teams:['Brasil','França','Portugal','Argentina']}})).opened,true);
+  const updated=await f.pool.query<{competition_name:string;team_kind:string;teams:string}>("SELECT g.competition_name,g.team_kind,(SELECT string_agg(name,', ' ORDER BY name) FROM mlg_bot.club_pool WHERE group_id=g.id) AS teams FROM mlg_bot.groups g WHERE g.id='100@g.us'");
+  assert.equal(updated.rows[0]!.competition_name,'Copa Administração MLG');
+  assert.equal(updated.rows[0]!.team_kind,'seleção');
+  assert.equal(updated.rows[0]!.teams,'Argentina, Brasil, França, Portugal');
+  assert.match(String((await call('cup-open',{size:4,proposal:{name:'Outra Copa MLG',teamKind:'clube',teams:['Time A','Time B','Time C','Time D']}})).error),/Já existe/);
+  assert.equal((await f.pool.query("SELECT competition_name FROM mlg_bot.groups WHERE id='100@g.us'")).rows[0].competition_name,'Copa Administração MLG');
  }finally{await f.close();}
 });
