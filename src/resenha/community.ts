@@ -9,7 +9,7 @@ const lore=[
   'GS contra Amério é daqueles assuntos que voltam no grupo. Manda o jogo, não só a provocação 🎮',
   'A arquibancada pediu GS x Amério. Placar de resenha não entra na tabela, combinado? 😂',
   'Pode provocar GS e Amério à vontade; resultado oficial só vem de partida confirmada 🏆',
-  'Já vi essa dupla render conversa. Quem marcar a revanche avisa antes da coletiva 🍿'
+  'GS e Amério já renderam conversa por aqui. Quem marcar a revanche avisa antes da coletiva 🍿'
  ]},
  {match:/\bgs\b/,lines:[
   'Chamaram o GS? A mesa da resenha já prepara o microfone pro pós-jogo 😂',

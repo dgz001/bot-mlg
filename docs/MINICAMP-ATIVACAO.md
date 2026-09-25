@@ -10,8 +10,8 @@ No grupo já autorizado no painel privado:
 2. Mesmo ADM: `!formato 4`, `!formato 8` ou `!formato 16`. Também aceita 1, 2 ou 3.
 3. Cada jogador: `!entrar`.
 4. Ao lotar: sorteio de clubes sem repetição e confrontos com códigos.
-5. Jogador do confronto ou ADM: `!resultado 100 3x2`, sempre mandante x visitante.
-6. Adversário ou vencedor: `!confirmar 100`. O vencedor que informou o placar pode confirmar a própria proposta sem esperar o adversário. Se discordar, conteste antes da confirmação; o ADM pode corrigir o placar depois de conferir o print.
+5. Após mandar o print no grupo, um dos jogadores registra `!resultado 100 3x2`, sempre mandante x visitante. O bot não lê nem valida o print automaticamente.
+6. Qualquer um dos dois jogadores: `!confirmar 100`, inclusive quem registrou o resultado. A partida avança após a confirmação. Se discordar, conteste antes; o ADM pode corrigir depois se identificar erro no print.
 7. Discordância: `!contestar 100`. ADM distinto do autor resolve com `!resolver 100 3x2 motivo detalhado`.
 8. Final confirmada registra campeão e campanha automaticamente.
 
@@ -48,7 +48,7 @@ Sem integração de IA generativa; a busca cobre somente trechos importados e ap
 
 O painel privado permite ligar/desligar respostas, pausar Resenha e Minicamp separadamente e desautorizar grupos. Configurações persistem cifradas após reinício. Desligar não derruba o servidor nem encerra a sessão: o painel permanece acessível. Mensagem já em transporte pode terminar. Comandos enviados durante a pausa são ignorados; fila anterior fica preservada e retoma ao ligar.
 
-Somente os jogadores do confronto registram `!resultado 4x3` (também aceita espaços em `4 x 3`). Placar sempre mandante x visitante, inclusive se o visitante enviar. O bot anota e aguarda `!confirmar` do adversário, do vencedor que informou o placar ou de ADM diferente do autor. O vencedor pode confirmar a própria proposta imediatamente; o autor derrotado não confirma o próprio resultado. A confirmação pelo vencedor fica identificada no histórico para eventual revisão do print por ADM. Se houver várias partidas possíveis, pede o código. Formatos explícitos continuam disponíveis. Nomes de jogadores de futebol que marcaram gols não são informados no placar; gols pró/contra são estatísticas do treinador.
+Somente os jogadores do confronto registram `!resultado 4x3` (também aceita espaços em `4 x 3`). Placar sempre mandante x visitante, inclusive se o visitante enviar. O bot anota e aguarda `!confirmar` de qualquer um dos dois jogadores ou de ADM diferente do autor. Ambos podem confirmar a própria proposta imediatamente, independentemente de quem venceu. A confirmação pelo autor fica identificada no histórico para eventual correção por ADM. O print é compartilhado e conferido pelas pessoas no grupo; o bot não o lê automaticamente. Se houver várias partidas possíveis, pede o código. Formatos explícitos continuam disponíveis. Nomes de jogadores de futebol que marcaram gols não são informados no placar; gols pró/contra são estatísticas do treinador.
 
 O painel opera sem ChatGPT Plus. Alteração de código e deploy continuam via GitHub/Render; não há execução arbitrária de código pelo painel. Os históricos não são consultados integralmente por IA, nem usados para atribuir traços pessoais automaticamente.
 

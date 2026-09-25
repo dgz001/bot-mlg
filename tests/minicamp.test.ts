@@ -92,7 +92,7 @@ test('permissões e validação de resultado/contestação', () => {
   assert.throws(() => h.send(m.home, `!resultado ${m.code} -1x2`), /Formato/);
   h.send(m.home, `!resultado ${m.code} 0x2`);
   const before = JSON.stringify(h.state);
-  assert.throws(() => h.send(m.home, `!confirmar ${m.code}`), /próprio/);
+  assert.throws(() => h.send(m.home, `!confirmar ${m.code} 2x0`), /Placar diferente/);
   assert.throws(() => h.send('stranger', `!confirmar ${m.code}`), /confronto/);
   assert.equal(JSON.stringify(h.state), before);
   h.send(m.away, `!contestar ${m.code}`);
@@ -114,27 +114,29 @@ test('vencedor confirma o placar informado imediatamente sem depender do advers�
  assert.throws(()=>h.send(match.home,`!confirmar ${match.code} 0x2`),/Placar diferente/);
  assert.equal(h.state.cups[cup.id]!.matches[0]!.status,'pending');
  h.restart();const done=h.send(match.home,`!confirmar ${match.code} 2x0`);
- assert.match(done.notices.join('\n'),/Vencedor confirmou/);
+ assert.match(done.notices.join('\n'),/Jogador confirmou/);
  assert.equal(h.state.cups[cup.id]!.matches[0]!.winner,match.home);
  assert.equal(h.state.cups[cup.id]!.matches[0]!.results[0]!.confirmedBy,match.home);
- assert.match(h.state.cups[cup.id]!.matches[0]!.results[0]!.reason!,/próprio vencedor/);
+ assert.match(h.state.cups[cup.id]!.matches[0]!.results[0]!.reason!,/próprio jogador/);
  assert.throws(()=>h.send(match.away,`!contestar ${match.code}`),/pendente/);
 });
 
-test('autor derrotado não confirma o próprio placar',()=>{
+test('jogador que perdeu também pode registrar e confirmar a própria partida',()=>{
  const h=harness(),cup=h.start(4),match=cup.matches[0]!;
  h.send(match.home,`!resultado ${match.code} 0x2`);
- const reported=h.state.cups[cup.id]!.matches[0]!.results[0]!;
- assert.throws(()=>apply(h.state,{id:'loser',at:reported.at+1,groupId:'g',userId:match.home,name:match.home,text:`!confirmar ${match.code}`},environment),/não venceu/);
- assert.equal(h.state.cups[cup.id]!.matches[0]!.status,'pending');
+ h.restart();h.send(match.home,`!confirmar ${match.code}`);
+ const confirmed=h.state.cups[cup.id]!.matches[0]!;
+ assert.equal(confirmed.status,'confirmed');
+ assert.equal(confirmed.winner,match.away);
+ assert.equal(confirmed.results[0]!.confirmedBy,match.home);
+ assert.match(confirmed.results[0]!.reason!,/próprio jogador/);
 });
 
-test('ADM proponente não confirma nem resolve sozinho sua proposta', () => {
+test('ADM proponente não resolve sozinho uma contestação', () => {
   const h = harness();
   const m = h.start(4).matches[0]!;
   h.state.groups.g!.admins.push(m.home);
   h.send(m.home, `!resultado ${m.code} 0x2`);
-  assert.throws(() => h.send(m.home, `!confirmar ${m.code}`), /próprio/);
   h.send(m.away, `!contestar ${m.code}`);
   assert.throws(() => h.send(m.home, `!resolver ${m.code} 2x0 conferido novamente`), /próprio/);
   h.send('admin2', `!resolver ${m.code} 2x0 conferido novamente`);
@@ -205,7 +207,7 @@ test('placar sem código, visitante, confirmação e ambiguidade de ADM', () => 
  const h=harness();const cup=h.start(4),[a,b]=cup.matches;
  assert.throws(()=>h.send('admin',`!resultado ${a!.code} 4x3`),/jogadores/);
  h.send(a!.away,'!resultado 4 x 3');
- assert.throws(()=>h.send(a!.away,'!confirmar'),/próprio/);
+ assert.throws(()=>h.send(a!.away,'!confirmar 3x4'),/Placar diferente/);
  h.send(b!.home,'!resultado 2x1');
  assert.throws(()=>h.send('admin','!confirmar'),/código/);
  h.send(a!.home,'!confirmar');
@@ -312,7 +314,7 @@ test('confirmação por placar, anulação e limpeza de Copa preservam estatíst
  const h=harness();const cup=h.start(4);
  for(const m of cup.matches){
   h.send(m.away,`!resultado ${m.code} 4x3`);
-  assert.throws(()=>h.send(m.away,'!confirmar 4x3'),/próprio/);
+  assert.throws(()=>h.send(m.away,'!confirmar 3x4'),/Placar diferente/);
   assert.throws(()=>h.send(m.home,'!confirmar 3x4'),/Placar diferente/);
   h.send(m.home,'!confirmar 4 x 3');
  }
@@ -339,7 +341,7 @@ test('sair libera vaga antes do sorteio e propõe WO confirmado por outra pessoa
  const cup=Object.values(h.state.cups)[0]!;const m=cup.matches[0]!;
  h.send(m.home,'!sair','withdraw');assert.deepEqual(h.send(m.home,'!sair','withdraw').notices,[]);
  assert.equal(h.state.cups[cup.id]!.matches[0]!.winner,undefined);
- assert.throws(()=>h.send(m.home,'!confirmar 0x3'),/próprio/);
+ assert.throws(()=>h.send(m.home,'!confirmar 3x0'),/Placar diferente/);
  h.restart();h.send(m.away,'!confirmar 0x3');
  assert.equal(h.state.cups[cup.id]!.matches[0]!.winner,m.away);
  assert.throws(()=>h.send(m.home,'!sair'),/não tem partida/);
