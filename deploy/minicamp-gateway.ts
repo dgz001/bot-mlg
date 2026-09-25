@@ -10,7 +10,7 @@ const db={transaction:run=>base.transaction(async q=>{await q.query('SET LOCAL R
 const jid=/^[0-9]+@(lid|s\.whatsapp\.net)$/;
 const groupId=/^[0-9-]+@g\.us$/;
 function validAliases(v){return Array.isArray(v)&&v.length>=1&&v.length<=2&&v.every(x=>typeof x==='string'&&jid.test(x));}
-function validCompetition(body){return typeof body.name==='string'&&body.name.trim().length>=3&&body.name.length<=60&&['clube','seleção'].includes(body.teamKind)&&Array.isArray(body.teams)&&body.teams.length>=4&&body.teams.length<=100&&body.teams.every(t=>typeof t==='string'&&t.length>=2&&t.length<=60&&t.trim()===t&&!/[\r\n\x00-\x1f\x7f\u202a-\u202e*_~`]/.test(t))&&new Set(body.teams.map(t=>t.toLocaleLowerCase('pt-BR'))).size===body.teams.length;}
+function validCompetition(body){return typeof body.name==='string'&&body.name.trim().length>=3&&body.name.length<=60&&['clube','seleção','misto'].includes(body.teamKind)&&Array.isArray(body.teams)&&body.teams.length>=4&&body.teams.length<=100&&body.teams.every(t=>typeof t==='string'&&t.length>=2&&t.length<=60&&t.trim()===t&&!/[\r\n\x00-\x1f\x7f\u202a-\u202e*_~`]/.test(t))&&new Set(body.teams.map(t=>t.toLocaleLowerCase('pt-BR'))).size===body.teams.length;}
 const templateId=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 async function identity(q,aliases,name=null){
  if(!validAliases(aliases))throw Error('Invalid identity');
@@ -131,7 +131,7 @@ Deno.serve(async req=>{
    if(!permission.rows.length)return {text:'🔒 Só os ADMs selecionados no painel podem trocar o campeonato.'};
    const g=await q.query('SELECT active_template_id FROM mlg_bot.groups WHERE id=$1 FOR UPDATE',[e.group]);
    const rows=await q.query('SELECT id,name,team_kind,teams FROM mlg_bot.competition_templates WHERE group_id=$1 ORDER BY lower(name)',[e.group]);
-   if(/^!modelos\s*$/i.test(e.text))return {text:'🏆 CAMPEONATOS DESTE GRUPO\n'+(rows.rows.map(t=>(t.id===g.rows[0].active_template_id?'● ':'○ ')+t.name+' · '+t.teams.length+' '+(t.team_kind==='seleção'?'seleções':'clubes')).join('\n')||'Nenhum modelo salvo. Configure um no painel.')+'\n\nADM: !ativarmodelo Nome exato do campeonato. A Copa aberta não será alterada.'};
+   if(/^!modelos\s*$/i.test(e.text))return {text:'🏆 CAMPEONATOS DESTE GRUPO\n'+(rows.rows.map(t=>(t.id===g.rows[0].active_template_id?'● ':'○ ')+t.name+' · '+t.teams.length+' '+(t.team_kind==='seleção'?'seleções':t.team_kind==='misto'?'times':'clubes')).join('\n')||'Nenhum modelo salvo. Configure um no painel.')+'\n\nADM: !ativarmodelo Nome exato do campeonato. A Copa aberta não será alterada.'};
    const name=e.text.match(/^!ativarmodelo\s+(.+)$/i)?.[1]?.trim();
    if(!name)return {text:'⚙️ Use !modelos para ver as opções. Depois envie !ativarmodelo Nome exato do campeonato.'};
    const chosen=rows.rows.find(t=>t.name.toLocaleLowerCase('pt-BR')===name.toLocaleLowerCase('pt-BR'));
