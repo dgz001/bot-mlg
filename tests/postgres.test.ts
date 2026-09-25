@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
-import { processEvent, pgDatabase, type Database } from '../src/infra/postgres.ts';
+import { processEvent, pgDatabase, checkpointCup, canonicalCheckpoint, type Database } from '../src/infra/postgres.ts';
 import { authStore } from '../src/whatsapp/auth-store.ts';
 import { randomBytes } from 'node:crypto';
 
@@ -36,6 +36,7 @@ async function setup(db: Pool) {
   await db.query(await readFile(new URL('../migrations/011_competitions.sql',import.meta.url),'utf8'));
   await db.query(await readFile(new URL('../migrations/012_competition_templates.sql',import.meta.url),'utf8'));
   await db.query(await readFile(new URL('../migrations/013_mixed_draw_pools.sql',import.meta.url),'utf8'));
+  await db.query(await readFile(new URL('../migrations/014_cup_checkpoints.sql',import.meta.url),'utf8'));
   await db.query("INSERT INTO mlg_bot.users VALUES ('admin','Admin'); INSERT INTO mlg_bot.groups(id,authorized,admins_configured) VALUES ('g',true,true); INSERT INTO mlg_bot.admins VALUES ('g','admin','owner');");
   for (let i=0;i<16;i++) await db.query('INSERT INTO mlg_bot.club_pool VALUES ($1,$2)',['g',`Club ${i}`]);
 }
@@ -81,6 +82,10 @@ test('PostgreSQL real: copa completa, estado relacional, reconexão de cliente e
       assert.deepEqual((await db.query('SELECT count(*) FROM mlg_bot.outbox')).rows,before);
     }
     assert.equal((await db.query<{status:string}>('SELECT status FROM mlg_bot.cups')).rows[0]!.status,'completed');
+    const checkpoints=await db.query<{state:unknown;sha256:string}>('SELECT state,sha256 FROM mlg_bot.cup_checkpoints ORDER BY id');
+    assert.equal(checkpoints.rows.length,11); // creation, four entrants, six result/confirmation events
+    for(const item of checkpoints.rows)assert.equal((await import('node:crypto')).createHash('sha256').update(canonicalCheckpoint(item.state)).digest('hex'),item.sha256);
+    assert.equal((checkpoints.rows.at(-1)!.state as {cup:{status:string}}).cup.status,'completed');
     assert.equal((await db.query('SELECT * FROM mlg_bot.matches')).rows.length,3);
     assert.equal((await db.query('SELECT DISTINCT club FROM mlg_bot.cup_participants')).rows.length,4);
     assert.match((await send('u0','!campeoes')).notices.join(''),/campe[ãõ]/i);
@@ -114,6 +119,7 @@ test('rollback antes de outbox: nada é marcado processado nem inscrito', integr
     await assert.rejects(processEvent(fail,event),/injected/);
     assert.equal((await db.query('SELECT * FROM mlg_bot.processed_messages')).rows.length,0);
     assert.equal((await db.query('SELECT * FROM mlg_bot.command_drafts')).rows.length,0);
+    assert.equal((await db.query('SELECT * FROM mlg_bot.cup_checkpoints')).rows.length,0);
     await processEvent(pgDatabase(db),event);
     assert.equal((await db.query('SELECT * FROM mlg_bot.command_drafts')).rows.length,1);
     assert.equal((await db.query('SELECT * FROM mlg_bot.processed_messages')).rows.length,1);
@@ -167,9 +173,9 @@ test('gateway real: menção, bloqueio de comandos internos e sincronização se
   const {createHash,webcrypto}=await import('node:crypto');const header='Bearer synthetic-test-token';
   const source=(await readFile(new URL('../deploy/minicamp-gateway.ts',import.meta.url),'utf8')).replace(/^import .*;\n/gm,'').replace('__DIGEST__',createHash('sha256').update(header).digest('hex'));
   let handler:((req:Request)=>Promise<Response>)|undefined;
-  const factory=new Function('Pool','randomUUID','pgDatabase','processEvent','minicampClubs','Deno','crypto',source);
+  const factory=new Function('Pool','randomUUID','pgDatabase','processEvent','checkpointCup','minicampClubs','Deno','crypto',source);
   const client=f.pool;
-  factory(class {constructor(){return client;}},randomUUID,pgDatabase,processEvent,[],{env:{get:()=>''},serve:(fn:typeof handler)=>{handler=fn;}},webcrypto);
+  factory(class {constructor(){return client;}},randomUUID,pgDatabase,processEvent,checkpointCup,[],{env:{get:()=>''},serve:(fn:typeof handler)=>{handler=fn;}},webcrypto);
   let serial=0;
   const send=async(text:string,targets?:string[][],aliases=['100@s.whatsapp.net'])=>handler!(new Request('https://example.invalid',{method:'POST',headers:{authorization:header},body:JSON.stringify({action:'event',event:{group:'100@g.us',aliases,targets,id:String(++serial),name:'Test',text}})}));
   assert.equal((await send('!registrar Técnico | @conta',[['200@lid','200@s.whatsapp.net']])).status,200);
@@ -186,5 +192,20 @@ test('gateway real: menção, bloqueio de comandos internos e sincronização se
   assert.equal(after.rows.length,before.rows.length+1);
   for(const old of before.rows)assert.deepEqual(after.rows.find(r=>r.jid===old.jid),old);
   assert.match((await f.pool.query("SELECT body FROM mlg_bot.outbox WHERE body LIKE '%CONEXÕES%' ORDER BY id DESC LIMIT 1")).rows[0].body,/1 conflitos/);
+  await f.pool.query("INSERT INTO mlg_bot.club_pool(group_id,name) SELECT '100@g.us',name FROM mlg_bot.club_pool WHERE group_id='g'");
+  const call=async(action:string,extra:Record<string,unknown>={})=>{
+   const response=await handler!(new Request('https://example.invalid',{method:'POST',headers:{authorization:header},body:JSON.stringify({action,group:'100@g.us',...extra})}));
+   assert.equal(response.status,200);return response.json() as Promise<Record<string,unknown>>;
+  };
+  assert.equal((await call('cup-open',{size:4})).opened,true);
+  assert.match(String((await call('cup-open',{size:4})).error),/Já existe/);
+  const opened=await call('templates-list');
+  assert.equal((opened.activeCup as {checkpointCount:number}).checkpointCount,1);
+  assert.ok((opened.activeCup as {checkpointAt:number}).checkpointAt);
+  assert.equal((await call('cup-cancel',{reason:'Edição cancelada por manutenção'})).cancelled,true);
+  const snapshots=await f.pool.query<{state:{cup:{status:string}};sha256:string}>("SELECT state,sha256 FROM mlg_bot.cup_checkpoints WHERE group_id='100@g.us' ORDER BY id");
+  assert.deepEqual(snapshots.rows.map(r=>r.state.cup.status),['open','cancelled']);
+  for(const point of snapshots.rows)assert.equal(createHash('sha256').update(canonicalCheckpoint(point.state)).digest('hex'),point.sha256);
+  assert.equal((await call('templates-list')).activeCup,null);
  }finally{await f.close();}
 });
