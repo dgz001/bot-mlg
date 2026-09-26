@@ -147,7 +147,7 @@ async function tick() {
         // Domain errors never contain transport/session objects. Avoid exposing
         // unknown exception text even when it has no SQLSTATE.
         const msg=error instanceof Error?error.message:'';
-        const safe=/^(Somente|Não |Nenhum|Nenhuma|Já |Você |Grupo |Partida |Resultado |Copa |Mata-mata|Formato:|Informe|Código |Inscrições|Escolha |Comando desconhecido)/.test(msg)?msg:'Comando não aceito. Confira os dados e tente novamente.';
+        const safe=/^(Somente|Não |Nenhum|Nenhuma|Já |Você |Grupo |Partida |Resultado |Copa |Mata-mata|Formato:|Informe|Código |Inscrições|Escolha |Comando desconhecido|Use |Complete |Ida e volta|Configuração expirada|A lista deste grupo)/.test(msg)?msg:'Comando não aceito. Confira os dados e tente novamente.';
         await finishSpecial(row,safe);
       }
     }
