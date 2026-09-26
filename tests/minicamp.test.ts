@@ -5,6 +5,29 @@ import {worldCupCandidates} from '../src/minicamp/nations.ts';
 import {allowedDrawTeam} from '../src/minicamp/nations.ts';
 
 const clubs = Array.from({ length: 20 }, (_, i) => `Clube ${i + 1}`);
+test('cada dupla classificada recebe código e joga sem esperar a outra metade da chave',()=>{
+ const h=harness();const cup=h.start(16);
+ const first=cup.matches.filter(m=>m.round===0).sort((a,b)=>a.position-b.position);
+ for(const m of first.slice(4,6)){
+   h.send(m.home,`!resultado ${m.code} 3x2`);
+   h.send(m.away,`!confirmar ${m.code}`);
+ }
+ const quarter=h.state.cups[cup.id]!.matches.find(m=>m.round===1&&m.position===2)!;
+ assert.ok(quarter.code>first.at(-1)!.code);
+ assert.equal(quarter.home,first[4]!.home);assert.equal(quarter.away,first[5]!.home);
+ assert.equal(h.state.cups[cup.id]!.matches.filter(m=>m.round===1).length,1);
+ assert.match(h.send(quarter.away,'!resultado 2x3').notices.join(''),new RegExp(`Partida #${quarter.code}`));
+ assert.equal(h.state.cups[cup.id]!.matches.find(m=>m.code===quarter.code)!.status,'pending');
+ h.send(quarter.home,`!confirmar ${quarter.code}`);
+ assert.equal(h.state.cups[cup.id]!.matches.find(m=>m.code===quarter.code)!.status,'confirmed');
+ for(const m of first.slice(6,8)){h.send(m.home,`!resultado ${m.code} 3x2`);h.send(m.away,`!confirmar ${m.code}`);}
+ const other=h.state.cups[cup.id]!.matches.find(m=>m.round===1&&m.position===3)!;
+ h.send(other.home,`!resultado ${other.code} 2x1`);h.send(other.away,`!confirmar ${other.code}`);
+ const semi=h.state.cups[cup.id]!.matches.find(m=>m.round===2&&m.position===1)!;
+ assert.equal(semi.home,quarter.away);assert.equal(semi.away,other.home);
+ assert.equal(h.state.cups[cup.id]!.matches.filter(m=>m.round===2).length,1);
+ assert.throws(()=>h.send('admin',`!deletar ${first[4]!.code}`),/próximo confronto/);
+});
 test('a chave mostra lados estáveis, classificados e caminho até a final',()=>{
  const h=harness();const cup=h.start(16);
  const first=cup.matches.filter(m=>m.round===0).sort((a,b)=>a.position-b.position);
