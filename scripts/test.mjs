@@ -14,14 +14,16 @@ async function run(args, extra={}, cwd=process.cwd()) {
   return new Promise((resolve,reject)=>{
     const suite=args.includes('--test');
     const child=spawn(process.execPath,args,{stdio:suite?['inherit','pipe','pipe']:'inherit',cwd,env:{...env,...extra}});
-    let output='';
+    let output='',failedSummary=false;
     if(suite)for(const [stream,dest] of [[child.stdout,process.stdout],[child.stderr,process.stderr]])stream.on('data',chunk=>{
       dest.write(chunk);
-      output=(output+chunk.toString()).slice(-16384);
+      const text=chunk.toString();
+      failedSummary ||= /ℹ fail [1-9]\d*/.test(output.slice(-80)+text);
+      output=(output+text).slice(-16384);
     });
     const deadline=setTimeout(()=>child.kill('SIGKILL'),180000);
     child.once('error',reject);
-    child.once('close',code=>{clearTimeout(deadline);resolve(code===0&&suite&&/ℹ fail [1-9]\d*/.test(output)?1:code??1);});
+    child.once('close',code=>{clearTimeout(deadline);resolve(code===0&&suite&&failedSummary?1:code??1);});
   });
 }
 if (!isolated) {
