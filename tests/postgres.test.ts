@@ -37,6 +37,7 @@ async function setup(db: Pool) {
   await db.query(await readFile(new URL('../migrations/012_competition_templates.sql',import.meta.url),'utf8'));
   await db.query(await readFile(new URL('../migrations/013_mixed_draw_pools.sql',import.meta.url),'utf8'));
   await db.query(await readFile(new URL('../migrations/014_cup_checkpoints.sql',import.meta.url),'utf8'));
+  await db.query(await readFile(new URL('../migrations/015_member_blocks.sql',import.meta.url),'utf8'));
   await db.query("INSERT INTO mlg_bot.users VALUES ('admin','Admin'); INSERT INTO mlg_bot.groups(id,authorized,admins_configured) VALUES ('g',true,true); INSERT INTO mlg_bot.admins VALUES ('g','admin','owner');");
   for (let i=0;i<16;i++) await db.query('INSERT INTO mlg_bot.club_pool VALUES ($1,$2)',['g',`Club ${i}`]);
 }
@@ -100,6 +101,23 @@ test('refazer sorteio preserva participantes, códigos e checkpoints e bloqueia 
   const match=current.matches![0]!;await send(match.home,`!resultado ${match.code} 2x1`);
   const blocked=await cupDraw(db,request);assert.match(blocked.error!,/Sorteio bloqueado/);
   const announced=await f.pool.query("SELECT body FROM mlg_bot.outbox WHERE message_id LIKE 'panel-%' ORDER BY id DESC LIMIT 1");assert.match(announced.rows[0].body,/SORTEIO ATUALIZADO/);
+ }finally{await f.close();}
+});
+
+test('membro bloqueado não cria inscrição nem resultado e mensagens repetidas continuam idempotentes',integration,async()=>{
+ const f=await fixture();try{
+  await setup(f.pool);const db=pgDatabase(f.pool);
+  await f.pool.query("INSERT INTO mlg_bot.users(id,display_name) VALUES('u0','Jogador de teste')");
+  await f.pool.query("INSERT INTO mlg_bot.member_blocks(user_id,blocked_by,reason) VALUES('u0','admin','Quebra das regras do grupo')");
+  const event={id:'blocked-1',groupId:'g',userId:'u0',name:'u0',text:'!entrar',at:Date.now()};
+  await processEvent(db,{...event,id:'open',userId:'admin',text:'!novacopa'});
+  await processEvent(db,{...event,id:'format',userId:'admin',text:'!formato 4'});
+  const first=await processEvent(db,event);assert.deepEqual(first.notices,[]);
+  assert.equal((await processEvent(db,event)).duplicate,true);
+  assert.equal((await f.pool.query("SELECT count(*)::int AS total FROM mlg_bot.cup_participants WHERE user_id='u0'")).rows[0].total,0);
+  await f.pool.query("DELETE FROM mlg_bot.member_blocks WHERE user_id='u0'");
+  const restored=await processEvent(db,{...event,id:'unblocked-1'});
+  assert.match(restored.notices.join(' '),/INSCRIÇÃO CONFIRMADA/);
  }finally{await f.close();}
 });
 

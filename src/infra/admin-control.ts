@@ -39,6 +39,12 @@ const menu=`🎛️ CENTRAL MLG · GUIA DOS ADMs
 !trocar posição telefone Nome | motivo — substituir sem placar
 !confirmarelenco / !cancelarelenco — decidir mudança
 
+🚫 MODERAÇÃO
+!bloquear telefone | motivo — impede comandos e novas inscrições
+!desbloquear telefone | motivo — restaura o acesso
+!bloqueados — lista contas bloqueadas
+Membro em Copa ativa deve ser substituído antes do bloqueio.
+
 🪪 NOMES NO GRUPO DA COPA
 !cadastrar @pessoa — guardar o nome da conta marcada
 !editar @pessoa | Nome novo — corrigir o nome
@@ -74,6 +80,21 @@ export async function adminControl(text:string,room:ControlWorkspace,targets:Con
  const target=targets.find(g=>g.id===room.targetId);
  if(!target)return 'Escolha primeiro o destino: !grupos e !usar número. Apenas grupos de Copa autorizados aparecem.';
  const group=target.id;
+ if(['!bloquear','!desbloquear','!bloqueados'].includes(cmd)){
+  if(!actor)return 'Não foi possível validar o ADM desta central.';
+  const request={action:'member-block',group:actor.controlGroup,aliases:actor.aliases};
+  if(cmd==='!bloqueados'){
+   const result=await api({...request,operation:'list'});
+   if(result.error)return '⚠️ '+result.error;
+   return '🚫 CONTAS BLOQUEADAS\n'+(result.members?.map((m:{display_name:string;reason:string},i:number)=>`${i+1}. ${m.display_name} · ${m.reason}`).join('\n')||'Nenhuma conta bloqueada.');
+  }
+  const parsed=arg.match(/^(\d{10,15})\s*\|\s*(.{8,160})$/s);
+  if(!parsed||/[\r\n\x00-\x1f\x7f\u202a-\u202e*_~`]/.test(parsed[2]!))return `Use ${cmd} telefone com DDI e DDD | motivo (8 a 160 caracteres).`;
+  const aliases=cmd==='!bloquear'?await actor.resolveMember?.(group,parsed[1]!)??null:[parsed[1]+'@s.whatsapp.net'];
+  if(!aliases)return 'Conta não localizada no grupo selecionado. Confira DDI, DDD e a lista de participantes.';
+  const result=await api({...request,operation:cmd==='!bloquear'?'block':'unblock',targetAliases:aliases,reason:parsed[2]!.trim()});
+  return result.error?'⚠️ '+result.error:cmd==='!bloquear'?'🚫 Conta bloqueada. A ação ficou registrada.':'✅ Conta desbloqueada. A ação ficou registrada.';
+ }
  if(cmd==='!cancelarelenco'){delete room.roster;await save();return '🗑️ Mudança de participantes descartada. A Copa permanece como estava.';}
  if(['!inscritosadm','!inscrever','!retirar','!trocar','!confirmarelenco'].includes(cmd)){
   if(!actor)return 'Não foi possível validar o ADM desta central.';

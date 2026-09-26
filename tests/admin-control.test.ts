@@ -2,6 +2,22 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {adminControl,type ControlWorkspace} from '../src/infra/admin-control.ts';
 
+test('bloqueio exige ADM, conta verificada, motivo e permite reversão auditável',async()=>{
+ const room:ControlWorkspace={targetId:'copa@g.us'};
+ const calls:Record<string,unknown>[]=[];
+ const api=async(body:Record<string,unknown>)=>{calls.push(body);return body.operation==='list'?{members:[]}:{updated:true};};
+ const actor={controlGroup:'central@g.us',aliases:['123@s.whatsapp.net'],resolveMember:async(_group:string,phone:string)=>phone==='5511999999999'?['5511999999999@s.whatsapp.net']:null};
+ const send=(text:string,withActor=true)=>adminControl(text,room,[{id:'copa@g.us',name:'Copa'}],api,async()=>{},Date.now(),withActor?actor:undefined);
+ assert.match(await send('!bloquear 5511999999999 | Quebra das regras',false),/validar o ADM/);
+ assert.match(await send('!bloquear 5511888888888 | Quebra das regras'),/não localizada/);
+ assert.match(await send('!bloquear 5511999999999 | curto'),/8 a 160/);
+ assert.match(await send('!bloquear 5511999999999 | Quebra das regras'),/bloqueada/);
+ assert.equal(calls.at(-1)?.operation,'block');assert.equal(calls.at(-1)?.group,'central@g.us');
+ assert.match(await send('!desbloquear 5511999999999 | Reintegração aprovada'),/desbloqueada/);
+ assert.equal(calls.at(-1)?.operation,'unblock');
+ assert.match(await send('!bloqueados'),/Nenhuma conta bloqueada/);
+});
+
 test('central dos ADMs prepara, revisa e abre a Copa somente no grupo escolhido',async()=>{
  const room:ControlWorkspace={};let saves=0,opened=0,active=false,model='Copa do Mundo MLG';
  const calls:{action:string;group?:string}[]=[];

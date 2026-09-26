@@ -11,6 +11,14 @@ O processo do painel supervisiona um único processo WhatsApp. Ausência de hear
 
 O painel também permite ligar/desligar Resenha e Minicamp separadamente, autorizar grupos, selecionar ADMs e revisar memórias. Configurações são persistidas no cofre cifrado; Copas e resultados continuam no PostgreSQL.
 
+## Moderação na central dos ADMs
+
+Selecione o grupo da Copa com `!grupos` e `!usar número`. Os ADMs cadastrados podem usar `!bloquear telefone | motivo`, `!desbloquear telefone | motivo` e `!bloqueados`. Informe o número completo com DDI e DDD. O bloqueio impede novos comandos de Copa e resenha em todos os grupos e registra a conta, o ADM e o motivo. A conta precisa estar presente no grupo selecionado ao bloquear. Para não deixar um confronto sem participante, substitua primeiro qualquer membro inscrito em Copa ativa. Retire a permissão de ADM no painel antes de bloquear outro ADM.
+
+Esses comandos dependem da migração `015_member_blocks.sql` no banco do Minicamp e de uma versão compatível da função `mlg-bot-minicamp`. Faça a migração antes de atualizar a função e o worker. Não publique o worker isoladamente: ele consulta a função para aplicar o bloqueio à resenha.
+
+O `!resultado` já rejeita uma segunda proposta para o mesmo jogo enquanto o placar está pendente; `!confirmar` não avança uma partida confirmada outra vez. Em caso de erro, `!contestar código` suspende a classificação, `!resolver código placar motivo` decide a contestação e `!forcarresultado código placar motivo` corrige uma partida, com auditoria. Confira o código e o print antes da intervenção.
+
 Limite: supervisor e bot estão na mesma hospedagem gratuita. Uma indisponibilidade do Render inteiro, suspensão da conta ou perda de rede pode deixar ambos inacessíveis. Não é failover externo nem garantia de 100% de disponibilidade.
 
 ## Testes de banco

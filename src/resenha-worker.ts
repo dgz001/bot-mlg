@@ -61,6 +61,10 @@ async function connect(){
  for(const message of orderMessages(event.messages)){queue=queue.then(async()=>{
  const group=message.key.remoteJid,id=message.key.id;if(stopping||!group?.endsWith('@g.us')||!id||message.key.fromMe)return;
  const body=extractMessageContent(message.message);const text=body?.conversation??body?.extendedTextMessage?.text??'';const context=body?.extendedTextMessage?.contextInfo;
+ if(cupApi&&text.trim().startsWith('!')&&message.key.participant&&auth.data.groups.includes(group)){
+  const checked=await cupApi<{blocked:boolean}>({action:'block-check',aliases:await cupAliases(message.key.participant,current)});
+  if(checked.blocked)return;
+ }
  const self=[current.user?.id,current.user?.lid].filter(Boolean).map(v=>jidNormalizedUser(v!));
  const mention=context?.mentionedJid?.some(j=>self.includes(jidNormalizedUser(j)));
  const reply=context?.participant&&self.includes(jidNormalizedUser(context.participant));
@@ -182,6 +186,10 @@ async function connect(){
  }
  if(!enabled('resenha')||!inChannel(group,'resenha'))return;
  const request=/^!palpite(?:\s|$)/i.test(text)?text.replace(/^!palpite\s*/i,'')+' quem ganha':/^!tecnicos\s*$/i.test(text)?'__LIST_COACHES__':banterRequest(text,Boolean(mention),Boolean(reply));if(request===null)return;
+ if(cupApi&&message.key.participant&&!text.trim().startsWith('!')){
+  const checked=await cupApi<{blocked:boolean}>({action:'block-check',aliases:await cupAliases(message.key.participant,current)});
+  if(checked.blocked)return;
+ }
   const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
  auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);
  let archive='';
@@ -230,7 +238,7 @@ async function cupTick(){
     const card=cupMediaFor(m.body);
     if(card){
      try{
-      const path=card==='sorteio'?'../assets/mlg-sorteio.jpg':'../assets/mlg-campeao.jpg';
+      const path=card==='sorteio'?'../assets/mlg-sorteio.jpg':card==='campeao'?'../assets/mlg-campeao.jpg':'../assets/mlg-partida.jpg';
       await current.sendMessage(m.group_id,{image:await readFile(new URL(path,import.meta.url)),caption:m.body},{messageId:m.wa_message_id});sent=true;
      }catch{log('MINICAMP_IMAGE_FALLBACK');}
     }
