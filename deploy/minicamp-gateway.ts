@@ -58,8 +58,44 @@ Deno.serve(async req=>{
   if(!groupId.test(body.group)||!validAliases(body.aliases))throw Error('Invalid control identity');
   result=await db.transaction(async q=>{
    const id=await identity(q,body.aliases);
-   const allowed=await q.query('SELECT 1 FROM mlg_bot.admins a JOIN mlg_bot.groups g ON g.id=a.group_id WHERE a.group_id=$1 AND a.user_id=$2 AND g.authorized AND g.admins_configured',[body.group,id]);
+   const allowed=await q.query('SELECT 1 FROM mlg_bot.admins a JOIN mlg_bot.groups g ON g.id=a.group_id WHERE a.user_id=$1 AND g.authorized AND g.admins_configured AND NOT EXISTS(SELECT 1 FROM mlg_bot.member_blocks b WHERE b.user_id=a.user_id) LIMIT 1',[id]);
    return {allowed:allowed.rows.length===1};
+  });
+ }
+ else if(body.action==='block-check'){
+  if(!validAliases(body.aliases))throw Error('Invalid member identity');
+  result=await db.transaction(async q=>{
+   const match=await q.query('SELECT 1 FROM mlg_bot.member_blocks b JOIN mlg_bot.wa_identities w ON w.user_id=b.user_id WHERE w.jid=ANY($1::text[]) LIMIT 1',[body.aliases]);
+   return {blocked:match.rows.length>0};
+  });
+ }
+ else if(body.action==='member-block'){
+  if(!groupId.test(body.group)||!validAliases(body.aliases)||body.operation!=='list'&&body.operation!=='block'&&body.operation!=='unblock'||body.operation!=='list'&&(!validAliases(body.targetAliases)||typeof body.reason!=='string'||body.reason.trim().length<8||body.reason.length>160||/[\r\n\x00-\x1f\x7f\u202a-\u202e*_~`]/.test(body.reason)))throw Error('Invalid block request');
+  result=await db.transaction(async q=>{
+   const actor=await identity(q,body.aliases);
+   const permission=await q.query('SELECT 1 FROM mlg_bot.admins a JOIN mlg_bot.groups g ON g.id=a.group_id WHERE a.user_id=$1 AND g.authorized AND g.admins_configured AND NOT EXISTS(SELECT 1 FROM mlg_bot.member_blocks b WHERE b.user_id=a.user_id) LIMIT 1',[actor]);
+   if(!permission.rows.length)return {error:'Somente ADMs selecionados podem bloquear membros.'};
+   if(body.operation==='list'){
+    const rows=await q.query('SELECT u.display_name,b.reason FROM mlg_bot.member_blocks b JOIN mlg_bot.users u ON u.id=b.user_id ORDER BY b.blocked_at LIMIT 30');
+    return {members:rows.rows};
+   }
+   const target=await q.query('SELECT DISTINCT user_id FROM mlg_bot.wa_identities WHERE jid=ANY($1::text[])',[body.targetAliases]);
+   if(target.rows.length!==1)return {error:'Conta não identificada. Marque um membro presente no grupo.'};
+   const targetId=target.rows[0].user_id;
+   if(targetId===actor)return {error:'Você não pode bloquear sua própria conta.'};
+   if(body.operation==='block'){
+    const adm=await q.query('SELECT 1 FROM mlg_bot.admins WHERE user_id=$1 LIMIT 1',[targetId]);
+    if(adm.rows.length)return {error:'Retire primeiro a permissão de ADM dessa conta no painel.'};
+    const active=await q.query("SELECT 1 FROM mlg_bot.cup_participants p JOIN mlg_bot.cups c ON c.id=p.cup_id WHERE p.user_id=$1 AND c.status IN ('open','playing') LIMIT 1",[targetId]);
+    if(active.rows.length)return {error:'Membro em Copa ativa: faça a substituição ou termine a Copa antes de bloquear.'};
+    const inserted=await q.query('INSERT INTO mlg_bot.member_blocks(user_id,blocked_by,reason) VALUES($1,$2,$3) ON CONFLICT DO NOTHING RETURNING user_id',[targetId,actor,body.reason.trim()]);
+    if(!inserted.rows.length)return {error:'Esta conta já está bloqueada.'};
+   }else{
+    const removed=await q.query('DELETE FROM mlg_bot.member_blocks WHERE user_id=$1 RETURNING user_id',[targetId]);
+    if(!removed.rows.length)return {error:'Esta conta não está bloqueada.'};
+   }
+   await q.query('INSERT INTO mlg_bot.member_block_events(actor_id,target_id,action,reason) VALUES($1,$2,$3,$4)',[actor,targetId,body.operation,body.reason.trim()]);
+   return {updated:true,operation:body.operation};
   });
  }
  else if(body.action==='cup-draw'){
@@ -231,7 +267,7 @@ Deno.serve(async req=>{
   const e=body.event;if(!e||!groupId.test(e.group)||!validAliases(e.aliases)||typeof e.text!=='string'||e.text.length>90)throw Error('Invalid admin request');
   result=await db.transaction(async q=>{
    const id=await identity(q,e.aliases);
-   const permission=await q.query('SELECT 1 FROM mlg_bot.admins a JOIN mlg_bot.groups g ON g.id=a.group_id WHERE g.id=$1 AND g.authorized AND g.admins_configured AND a.user_id=$2',[e.group,id]);
+   const permission=await q.query('SELECT 1 FROM mlg_bot.admins a JOIN mlg_bot.groups g ON g.id=a.group_id WHERE g.authorized AND g.admins_configured AND a.user_id=$1 LIMIT 1',[id]);
    if(!permission.rows.length)return {text:'🔒 Só os ADMs selecionados no painel podem trocar o campeonato.'};
    const g=await q.query('SELECT active_template_id FROM mlg_bot.groups WHERE id=$1 FOR UPDATE',[e.group]);
    const rows=await q.query('SELECT id,name,team_kind,teams FROM mlg_bot.competition_templates WHERE group_id=$1 ORDER BY lower(name)',[e.group]);
@@ -291,7 +327,7 @@ Deno.serve(async req=>{
   result=await db.transaction(async q=>{
    await q.query('SELECT id FROM mlg_bot.groups WHERE id=$1 FOR UPDATE',[e.group]);
    const id=await identity(q,e.aliases,e.name??'ADM');
-   const adm=await q.query('SELECT 1 FROM mlg_bot.admins a JOIN mlg_bot.groups g ON g.id=a.group_id WHERE g.id=$1 AND a.user_id=$2 AND g.admins_configured AND g.authorized',[e.group,id]);
+   const adm=await q.query('SELECT 1 FROM mlg_bot.admins a JOIN mlg_bot.groups g ON g.id=a.group_id WHERE a.user_id=$1 AND g.admins_configured AND g.authorized LIMIT 1',[id]);
    if(!adm.rows.length)return {text:'🔒 Somente ADMs selecionados pelo dono no painel podem configurar.'};
    const claimed=await q.query('INSERT INTO mlg_bot.processed_messages VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING message_id',[e.group,id,e.id,Date.now()]);
    if(!claimed.rows.length)return {text:null};
