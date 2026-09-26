@@ -366,7 +366,7 @@ export function apply(input: State, event: Event, env: Environment = environment
     const draft = s.drafts[event.groupId];
     requireThat(!draft || draft.expiresAt <= event.at, 'Escolha de formato já está em andamento.');
     s.drafts[event.groupId] = { ownerId: event.userId, expiresAt: event.at + 900_000 };
-    notices.push(`🏆 NOVA COPA NESTE GRUPO\n1. !nome Nome da Copa\n2. !categoria clube, seleção ou misto\n3. !formato 4, 8, 16 ou 32\n4. !jogos 1 ou 2\n5. !abrircopa (confere os dados e abre inscrições)\n⏳ Configuração válida por 15 minutos. Para desistir: !cancelar copa.`);
+    notices.push(`🏆 ${competitionName.toUpperCase()} · NOVA COPA NESTE GRUPO\n1. !nome Nome da Copa\n2. !categoria clube, seleção ou misto\n3. !formato 4, 8, 16 ou 32\n4. !jogos 1 (jogo único)\n5. !abrircopa (confere os dados e abre inscrições)\n⏳ Configuração válida por 15 minutos. Para desistir: !cancelar copa.`);
   } else if (['!nome','!categoria','!jogos','!abrircopa'].includes(cmd)) {
     needAdmin();const draft=s.drafts[event.groupId];
     requireThat(draft&&draft.expiresAt>event.at,'Configuração expirada. Comece com !novacopa.');
