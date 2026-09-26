@@ -46,6 +46,15 @@ test('central mostra a próxima edição e confirma o número liberado ao cancel
  assert.match(await send('!cancelarcopa Erro no sorteio'),/Edição 8 cancelada.*número fica livre/);
 });
 
+test('central não anula edição enquanto banco usa a numeração antiga',async()=>{
+ const room:ControlWorkspace={targetId:'world@g.us'};
+ const targets=[{id:'world@g.us',name:'Copa do Mundo'}];let voids=0;
+ const api=async(body:Record<string,unknown>)=>{if(body.action==='cup-void')voids++;return {recentCups:[]};};
+ const answer=await adminControl('!anularcopa 8 Corrigir a copa',room,targets,api,async()=>{});
+ assert.match(answer,/aguardando a atualização da numeração/);
+ assert.equal(voids,0);
+});
+
 test('central impede times repetidos, evita destino removido e preserva a Copa ao descartar rascunho',async()=>{
  const room:ControlWorkspace={targetId:'world@g.us'};
  const targets=[{id:'world@g.us',name:'Copa'}];let calls=0;
