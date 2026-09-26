@@ -1,4 +1,4 @@
-export type ControlDraft={name:string;teamKind:'clube'|'seleção'|'misto';teams:string[];size:number|null;reviewed?:string;reviewedAt?:number};
+export type ControlDraft={name:string;teamKind:'clube'|'seleção'|'misto';teams:string[];size:number|null;playMode?:'single'|'home-and-away';reviewed?:string;reviewedAt?:number};
 export type ControlWorkspace={targetId?:string;draft?:ControlDraft;draw?:{group:string;cupId:string;fingerprint:string;mode:'equipes'|'chave'|'completo';reason:string;expiresAt:number};roster?:{group:string;fingerprint:string;change:'incluir'|'retirar'|'trocar';position?:number;targetAliases?:string[];targetName?:string;reason:string;expiresAt:number}};
 export type ControlTarget={id:string;name:string};
 type Api=(body:Record<string,unknown>)=>Promise<any>;
@@ -6,7 +6,7 @@ const label=(kind:ControlDraft['teamKind'])=>kind==='seleção'?'seleções':kin
 const clean=(value:string)=>value.trim().toLocaleLowerCase('pt-BR');
 const safeTeam=(value:string)=>value.length>=2&&value.length<=60&&!/[\r\n\x00-\x1f\x7f\u202a-\u202e*_~`]/.test(value);
 const validTeams=(teams:string[])=>teams.length<=200&&teams.every(safeTeam)&&new Set(teams.map(clean)).size===teams.length;
-const fingerprint=(d:ControlDraft)=>JSON.stringify([d.name,d.teamKind,d.teams,d.size]);
+const fingerprint=(d:ControlDraft)=>JSON.stringify([d.name,d.teamKind,d.teams,d.size,d.playMode??'single']);
 const menu=`🎛️ CENTRAL MLG · GUIA DOS ADMs
 
 ⚡ LIGAR E MÓDULOS
@@ -27,6 +27,7 @@ const menu=`🎛️ CENTRAL MLG · GUIA DOS ADMs
 🏆 PREPARAR NOVA EDIÇÃO
 !novacopa — iniciar a configuração
 !nome / !categoria — definir identidade e tipo
+!modalidade unico / ida-e-volta — definir o número de jogos
 !equipes — ver a lista; !adicionar / !remover — editá-la
 !times / !vagas — conferir e escolher as vagas
 !revisar — conferir; !abrircopa — publicar
@@ -149,8 +150,8 @@ export async function adminControl(text:string,room:ControlWorkspace,targets:Con
   if(list.activeCup)return '⚠️ Já há uma Copa aberta em '+target.name+'. Consulte !central ou cancele com um motivo.';
   if(list.preparing)return '⏳ Um ADM já iniciou !novacopa no grupo dos jogadores. Termine ou cancele aquela preparação antes de começar outra.';
   if(room.draft)return '📝 Já existe uma preparação salva: '+room.draft.name+'. Use !revisar para continuar ou !descartar para começar outra.';
-  room.draft={name:config.competition.name,teamKind:config.competition.teamKind,teams:config.competition.teams,size:null};await save();
-  return '🏆 PREPARAÇÃO INICIADA\n📍 '+target.name+'\n'+room.draft.name+' · '+room.draft.teams.length+' '+label(room.draft.teamKind)+'\n\nAjuste com !nome, !categoria, !equipes ou !adicionar. Depois !vagas 4/8/16/32 e !revisar. Nenhuma inscrição foi aberta.';
+  room.draft={name:config.competition.name,teamKind:config.competition.teamKind,teams:config.competition.teams,size:null,playMode:config.competition.playMode??'single'};await save();
+  return '🏆 PREPARAÇÃO INICIADA\n📍 '+target.name+'\n'+room.draft.name+' · '+room.draft.teams.length+' '+label(room.draft.teamKind)+'\n\nAjuste com !nome, !categoria, !modalidade, !equipes ou !adicionar. Depois !vagas 4/8/16/32 e !revisar. Nenhuma inscrição foi aberta.';
  }
  if(cmd==='!cancelarcopa'){
   if(arg.length<8)return 'Informe um motivo: !cancelarcopa motivo com ao menos 8 caracteres.';
@@ -178,6 +179,12 @@ export async function adminControl(text:string,room:ControlWorkspace,targets:Con
   if(!kind)return 'Use !categoria clubes, !categoria seleções ou !categoria misto.';
   draft.teamKind=kind;delete draft.reviewed;await save();return '✅ Categoria: '+label(kind)+'. Confira se os times da lista combinam com a categoria.';
  }
+ if(cmd==='!modalidade'){
+  const mode=arg.toLowerCase();
+  if(!['unico','único','ida-e-volta'].includes(mode))return 'Use !modalidade unico ou !modalidade ida-e-volta.';
+  draft.playMode=mode==='ida-e-volta'?'home-and-away':'single';delete draft.reviewed;await save();
+  return draft.playMode==='single'?'✅ Modalidade: partida única. Use !revisar antes de abrir.':'✅ Modalidade: ida e volta, com classificação pelo agregado e pênaltis no empate. Use !revisar antes de abrir.';
+ }
  if(cmd==='!equipes'||cmd==='!adicionar'){
   const entries=arg.split(/\||\n/).map(x=>x.trim()).filter(Boolean);
   const teams=cmd==='!equipes'?entries:[...draft.teams,...entries];
@@ -200,15 +207,15 @@ export async function adminControl(text:string,room:ControlWorkspace,targets:Con
  if(cmd==='!revisar'){
   if(draft.teams.length<4||!validTeams(draft.teams)||!draft.size||draft.size>draft.teams.length)return '⚠️ Revise a lista (mínimo 4 times diferentes) e escolha !vagas 4, 8, 16 ou 32.';
   draft.reviewed=fingerprint(draft);draft.reviewedAt=now;await save();
-  return '🔎 CONFERÊNCIA ANTES DE ABRIR\n📍 Grupo: '+target.name+'\n🏆 Nome: '+draft.name+'\n🎲 Categoria: '+label(draft.teamKind)+'\n👥 Vagas: '+draft.size+'\n⚽ Times ('+draft.teams.length+'): '+draft.teams.slice(0,20).join(' · ')+(draft.teams.length>20?'\nVeja os demais com !times 2.':'')+'\n\nSe estiver correto, envie !abrircopa em até 10 minutos. Qualquer alteração exige nova revisão. Os jogadores entram no grupo da Copa.';
+  return '🔎 CONFERÊNCIA ANTES DE ABRIR\n📍 Grupo: '+target.name+'\n🏆 Nome: '+draft.name+'\n🎲 Categoria: '+label(draft.teamKind)+'\n⚔️ Modalidade: '+(draft.playMode==='home-and-away'?'ida e volta':'partida única')+'\n👥 Vagas: '+draft.size+'\n⚽ Times ('+draft.teams.length+'): '+draft.teams.slice(0,20).join(' · ')+(draft.teams.length>20?'\nVeja os demais com !times 2.':'')+'\n\nSe estiver correto, envie !abrircopa em até 10 minutos. Qualquer alteração exige nova revisão. Os jogadores entram no grupo da Copa.';
  }
  if(cmd==='!abrircopa'){
   if(!draft.size||draft.reviewed!==fingerprint(draft)||!draft.reviewedAt||now-draft.reviewedAt>600_000)return 'Antes de abrir, defina !vagas e envie !revisar. A revisão vale 10 minutos e expira ao editar.';
   const current=requireSuccess<any>(await api({action:'templates-list',group}));if(current.activeCup||current.preparing)return '⚠️ Este grupo já tem Copa ativa ou formato em preparação. Nenhuma outra foi aberta.';
   const original=requireSuccess<any>(await api({action:'competition-get',group})).competition;
-  const changed=original.name!==draft.name||original.teamKind!==draft.teamKind||JSON.stringify(original.teams)!==JSON.stringify(draft.teams);
-  const proposal=changed?{name:draft.name,teamKind:draft.teamKind,teams:draft.teams}:undefined;
-  const opened=requireSuccess<any>(await api({action:'cup-open',group,size:draft.size,...(proposal?{proposal}:{})}));
+  const changed=original.name!==draft.name||original.teamKind!==draft.teamKind||JSON.stringify(original.teams)!==JSON.stringify(draft.teams)||original.playMode!==undefined&&original.playMode!==(draft.playMode??'single');
+  const proposal=changed?{name:draft.name,teamKind:draft.teamKind,teams:draft.teams,playMode:draft.playMode??'single'}:undefined;
+  const opened=requireSuccess<any>(await api({action:'cup-open',group,size:draft.size,playMode:draft.playMode??'single',...(proposal?{proposal}:{})}));
   if(!opened.opened)return '⚠️ O banco não confirmou a abertura. Consulte !central.';
   delete room.draft;await save();return '🏆 '+draft.name+(opened.edition?' · Edição '+opened.edition:'')+' aberta em '+target.name+' com '+draft.size+' vagas! O bot anunciará as inscrições no grupo da Copa. Lá os jogadores usam !entrar.';
  }
