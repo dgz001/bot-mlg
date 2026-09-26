@@ -1,0 +1,12 @@
+BEGIN;
+ALTER TABLE mlg_bot.command_drafts ADD COLUMN name text;
+ALTER TABLE mlg_bot.command_drafts ADD COLUMN team_kind text;
+ALTER TABLE mlg_bot.command_drafts ADD COLUMN cup_size integer;
+ALTER TABLE mlg_bot.command_drafts ADD COLUMN legs integer;
+ALTER TABLE mlg_bot.command_drafts ADD CONSTRAINT draft_name CHECK (name IS NULL OR length(trim(name)) BETWEEN 3 AND 60);
+ALTER TABLE mlg_bot.command_drafts ADD CONSTRAINT draft_kind CHECK (team_kind IS NULL OR team_kind IN ('clube','seleção','misto'));
+ALTER TABLE mlg_bot.command_drafts ADD CONSTRAINT draft_size CHECK (cup_size IS NULL OR cup_size IN (4,8,16,32));
+ALTER TABLE mlg_bot.command_drafts ADD CONSTRAINT draft_legs CHECK (legs IS NULL OR legs IN (1,2));
+ALTER TABLE mlg_bot.cups ADD COLUMN legs integer NOT NULL DEFAULT 1 CHECK (legs IN (1,2));
+INSERT INTO mlg_bot.schema_migrations(version) VALUES(17) ON CONFLICT DO NOTHING;
+COMMIT;
