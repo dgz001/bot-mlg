@@ -2,6 +2,24 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {adminControl,type ControlWorkspace} from '../src/infra/admin-control.ts';
 
+test('central exige revisão nova quando ADM troca de partida única para ida e volta',async()=>{
+ const room:ControlWorkspace={};let proposed:Record<string,unknown>|undefined;
+ const api=async(body:Record<string,unknown>)=>{
+  if(body.action==='competition-get')return {competition:{name:'Copa da Comunidade',teamKind:'clube',teams:['Arsenal','Barcelona','Milan','Ajax'],playMode:'single'}};
+  if(body.action==='templates-list')return {activeCup:null,preparing:false};
+  if(body.action==='cup-open'){proposed=body;return {opened:true};}
+  throw Error('Unexpected action');
+ };
+ const send=(message:string)=>adminControl(message,room,[{id:'cup@g.us',name:'Copa'}],api,async()=>{},1000);
+ await send('!usar 1');await send('!novacopa');await send('!vagas 4');await send('!revisar');
+ assert.match(await send('!modalidade ida-e-volta'),/ida e volta/);
+ assert.match(await send('!abrircopa'),/Antes de abrir/);
+ assert.match(await send('!revisar'),/Modalidade: ida e volta/);
+ assert.match(await send('!abrircopa'),/aberta em Copa/);
+ assert.equal(proposed?.playMode,'home-and-away');
+ assert.equal((proposed?.proposal as {playMode:string}).playMode,'home-and-away');
+});
+
 test('central dos ADMs prepara, revisa e abre a Copa somente no grupo escolhido',async()=>{
  const room:ControlWorkspace={};let saves=0,opened=0,active=false,model='Copa do Mundo MLG';
  const calls:{action:string;group?:string}[]=[];

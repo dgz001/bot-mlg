@@ -37,9 +37,26 @@ async function setup(db: Pool) {
   await db.query(await readFile(new URL('../migrations/012_competition_templates.sql',import.meta.url),'utf8'));
   await db.query(await readFile(new URL('../migrations/013_mixed_draw_pools.sql',import.meta.url),'utf8'));
   await db.query(await readFile(new URL('../migrations/014_cup_checkpoints.sql',import.meta.url),'utf8'));
+  await db.query(await readFile(new URL('../migrations/015_two_leg_cups.sql',import.meta.url),'utf8'));
   await db.query("INSERT INTO mlg_bot.users VALUES ('admin','Admin'); INSERT INTO mlg_bot.groups(id,authorized,admins_configured) VALUES ('g',true,true); INSERT INTO mlg_bot.admins VALUES ('g','admin','owner');");
   for (let i=0;i<16;i++) await db.query('INSERT INTO mlg_bot.club_pool VALUES ($1,$2)',['g',`Club ${i}`]);
 }
+
+test('migração preserva Copas antigas e impede duas pernas para a mesma partida',integration,async()=>{
+ const f=await fixture();try{
+  await setup(f.pool);
+  const db=pgDatabase(f.pool);let count=0;
+  const send=(userId:string,text:string)=>processEvent(db,{id:'legacy-'+ ++count,groupId:'g',userId,name:userId,text,at:Date.now()+count});
+  await send('admin','!novacopa');await send('admin','!formato 4');
+  for(let i=0;i<4;i++)await send('u'+i,'!entrar');
+  const row=(await f.pool.query("SELECT c.play_mode AS cup_mode,g.play_mode AS group_mode,t.play_mode AS template_mode FROM mlg_bot.cups c JOIN mlg_bot.groups g ON g.id=c.group_id LEFT JOIN mlg_bot.competition_templates t ON t.id=g.active_template_id WHERE c.group_id='g' LIMIT 1")).rows[0];
+  assert.equal(row.cup_mode,'single');assert.equal(row.group_mode,'single');
+  if(row.template_mode!==null)assert.equal(row.template_mode,'single');
+  const code=(await f.pool.query("SELECT code FROM mlg_bot.matches ORDER BY code LIMIT 1")).rows[0].code;
+  await f.pool.query("INSERT INTO mlg_bot.tie_legs(match_code,leg,score_home,score_away,status,author,updated_at) VALUES($1,1,1,1,'pending','admin',1000)",[code]);
+  await assert.rejects(f.pool.query("INSERT INTO mlg_bot.tie_legs(match_code,leg,score_home,score_away,status,author,updated_at) VALUES($1,1,2,2,'pending','admin',1001)",[code]),/duplicate key/);
+ }finally{await f.close();}
+});
 
 test('nome confirmado pelo ADM persiste entre grupos e reinícios sem depender do apelido do WhatsApp',integration,async()=>{
  const f=await fixture();try{
@@ -113,14 +130,12 @@ test('sorteio individual troca só seleções livres, preserva placares e bloque
   for(let i=0;i<4;i++)await send('u'+i,'!entrar');
   const cup=(await f.pool.query('SELECT id FROM mlg_bot.cups WHERE group_id=$1 AND status=$2',['g','playing'])).rows[0].id;
   await f.pool.query("INSERT INTO mlg_bot.club_pool(group_id,name) VALUES('g','Ucrânia'),('g','Rússia')");
+  await f.pool.query("UPDATE mlg_bot.cup_participants SET display_name=CASE user_id WHEN 'u0' THEN 'Samuel' WHEN 'u1' THEN 'Rafael' WHEN 'u2' THEN 'Alex Junior' ELSE 'Alex Silva' END WHERE cup_id=$1",[cup]);
   await f.pool.query('UPDATE mlg_bot.cup_participants SET club=NULL WHERE cup_id=$1 AND user_id=ANY($2::text[])',[cup,['u0','u1']]);
   await f.pool.query("UPDATE mlg_bot.cup_participants SET club=CASE user_id WHEN 'u0' THEN 'Ucrânia' ELSE 'Rússia' END WHERE cup_id=$1 AND user_id IN ('u0','u1')",[cup]);
   for(const i of [0,1])await f.pool.query('INSERT INTO mlg_bot.wa_identities(jid,user_id) VALUES($1,$2)',[`${200+i}@s.whatsapp.net`,`u${i}`]);
   const match=(await f.pool.query<{code:string;home:string;away:string}>("SELECT code,home,away FROM mlg_bot.matches WHERE cup_id=$1 AND round=0 AND (home='u0' OR away='u0')",[cup])).rows[0]!;
   await send(match.home,`!resultado ${match.code} 3x1`);await send(match.home,`!confirmar ${match.code}`);
-  // Recording a result synchronizes stored profile names. Set these fixture
-  // names afterwards so the ambiguity check sees the intended participants.
-  await f.pool.query("UPDATE mlg_bot.cup_participants SET display_name=CASE user_id WHEN 'u0' THEN 'Samuel' WHEN 'u1' THEN 'Rafael' WHEN 'u2' THEN 'Alex Junior' ELSE 'Alex Silva' END WHERE cup_id=$1",[cup]);
   const before=(await f.pool.query('SELECT code,round,position,home,away,winner,status FROM mlg_bot.matches WHERE cup_id=$1 ORDER BY code',[cup])).rows;
   const base={group:'g',actorAliases:['123@s.whatsapp.net'],reason:'Seleção indisponível no jogo'};
   assert.match((await cupRerollTeam(db,{...base,actorAliases:['999@s.whatsapp.net'],targetAliases:['200@s.whatsapp.net'],messageId:'deny'})).error!,/ADMs/);

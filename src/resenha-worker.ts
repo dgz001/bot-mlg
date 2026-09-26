@@ -230,7 +230,7 @@ async function cupTick(){
     const card=cupMediaFor(m.body);
     if(card){
      try{
-      const path=card==='sorteio'?'../assets/mlg-sorteio.jpg':'../assets/mlg-campeao.jpg';
+      const path=card==='inscricoes'?'../assets/mlg-inscricoes.png':card==='sorteio'?'../assets/mlg-sorteio.jpg':'../assets/mlg-campeao.jpg';
       await current.sendMessage(m.group_id,{image:await readFile(new URL(path,import.meta.url)),caption:m.body},{messageId:m.wa_message_id});sent=true;
      }catch{log('MINICAMP_IMAGE_FALLBACK');}
     }
