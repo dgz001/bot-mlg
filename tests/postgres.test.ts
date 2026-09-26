@@ -38,9 +38,25 @@ async function setup(db: Pool) {
   await db.query(await readFile(new URL('../migrations/013_mixed_draw_pools.sql',import.meta.url),'utf8'));
   await db.query(await readFile(new URL('../migrations/014_cup_checkpoints.sql',import.meta.url),'utf8'));
   await db.query(await readFile(new URL('../migrations/015_member_blocks.sql',import.meta.url),'utf8'));
+  await db.query(await readFile(new URL('../migrations/016_progressive_bracket.sql',import.meta.url),'utf8'));
+  await db.query(await readFile(new URL('../migrations/017_cup_setup.sql',import.meta.url),'utf8'));
   await db.query("INSERT INTO mlg_bot.users VALUES ('admin','Admin'); INSERT INTO mlg_bot.groups(id,authorized,admins_configured) VALUES ('g',true,true); INSERT INTO mlg_bot.admins VALUES ('g','admin','owner');");
   for (let i=0;i<16;i++) await db.query('INSERT INTO mlg_bot.club_pool VALUES ($1,$2)',['g',`Club ${i}`]);
 }
+
+test('configuração nomeada persiste entre comandos e novo grupo não mistura campeões',integration,async()=>{
+ const f=await fixture();try{
+  await setup(f.pool);let id=0;
+  const send=(userId:string,text:string)=>processEvent(pgDatabase(f.pool),{id:'setup-'+ ++id,groupId:'g',userId,name:userId,text,at:Date.now()+id});
+  await send('admin','!novacopa');await send('admin','!nome Copa Nova');
+  await f.restartClient();await send('admin','!categoria clube');await send('admin','!formato 8');
+  await send('admin','!jogos 1');await send('admin','!abrircopa');
+  const current=(await f.pool.query<{competition_name:string;size:number;legs:number;status:string}>('SELECT competition_name,size,legs,status FROM mlg_bot.cups')).rows[0]!;
+  assert.deepEqual(current,{competition_name:'Copa Nova',size:8,legs:1,status:'open'});
+  assert.equal((await f.pool.query('SELECT * FROM mlg_bot.command_drafts')).rows.length,0);
+  assert.match((await send('u0','!entrar')).notices.join(''),/INSCRIÇÃO CONFIRMADA/);
+ }finally{await f.close();}
+});
 
 test('nome confirmado pelo ADM persiste entre grupos e reinícios sem depender do apelido do WhatsApp',integration,async()=>{
  const f=await fixture();try{

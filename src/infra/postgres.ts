@@ -255,10 +255,10 @@ export async function processEvent(database: Database, event: Event, env: Enviro
     const admins = await q.query<{ id: string }>('SELECT DISTINCT a.user_id AS id FROM mlg_bot.admins a JOIN mlg_bot.groups g ON g.id=a.group_id WHERE g.authorized AND g.admins_configured');
     const clubs = await q.query<{ name: string }>('SELECT name FROM mlg_bot.club_pool WHERE group_id=$1 ORDER BY name', [event.groupId]);
     state.groups[event.groupId] = { authorized: true, admins: admins.rows.map(r => r.id), clubs: clubs.rows.map(r => r.name), competitionName:groups.rows[0]!.competitionName,teamKind:groups.rows[0]!.teamKind,formatSize:groups.rows[0]!.formatSize };
-    const drafts = await q.query<{ ownerId: string; expiresAt: number }>('SELECT owner_id AS "ownerId",expires_at::float8 AS "expiresAt" FROM mlg_bot.command_drafts WHERE group_id=$1', [event.groupId]);
-    if (drafts.rows[0]) state.drafts[event.groupId] = drafts.rows[0];
+    const drafts = await q.query<{ ownerId: string; expiresAt: number; name:string|null; teamKind:'clube'|'seleção'|'misto'|null; size:number|null; legs:1|2|null }>('SELECT owner_id AS "ownerId",expires_at::float8 AS "expiresAt",name,team_kind AS "teamKind",cup_size AS size,legs FROM mlg_bot.command_drafts WHERE group_id=$1', [event.groupId]);
+    if (drafts.rows[0]) {const {name,teamKind,size,legs,...draft}=drafts.rows[0];state.drafts[event.groupId]={...draft,name:name??undefined,teamKind:teamKind??undefined,size:size??undefined,legs:legs??undefined};}
     const cups = await q.query<Omit<Cup,'participants'|'matches'>>(`SELECT id,group_id AS "groupId",created_by AS "createdBy",created_at::float8 AS "createdAt",
-      size,competition_name AS "competitionName",team_kind AS "teamKind",status,champion,completed_at::float8 AS "completedAt",cancellation_reason AS "cancellationReason" FROM mlg_bot.cups WHERE group_id=$1 ORDER BY created_at,id`, [event.groupId]);
+      size,competition_name AS "competitionName",team_kind AS "teamKind",legs,status,champion,completed_at::float8 AS "completedAt",cancellation_reason AS "cancellationReason" FROM mlg_bot.cups WHERE group_id=$1 ORDER BY created_at,id`, [event.groupId]);
     for (const row of cups.rows) state.cups[row.id]={ ...row, champion: row.champion ?? undefined, completedAt: row.completedAt ?? undefined, cancellationReason: row.cancellationReason ?? undefined, participants: [], matches: [] };
     const participants=await q.query<Participant&{cup_id:string}>(`SELECT p.cup_id,p.user_id AS "userId",p.display_name AS name,p.club
       FROM mlg_bot.cup_participants p JOIN mlg_bot.cups c ON c.id=p.cup_id
@@ -296,9 +296,9 @@ export async function processEvent(database: Database, event: Event, env: Enviro
     }
     for (const cup of Object.values(output.state.cups)) {
       if (JSON.stringify(state.cups[cup.id]) === JSON.stringify(cup)) continue;
-      await q.query(`INSERT INTO mlg_bot.cups(id,group_id,created_by,created_at,size,competition_name,team_kind,status,champion,completed_at,cancellation_reason)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(id) DO UPDATE SET status=excluded.status,champion=excluded.champion,completed_at=excluded.completed_at,cancellation_reason=excluded.cancellation_reason`,
-      [cup.id,cup.groupId,cup.createdBy,cup.createdAt,cup.size,cup.competitionName??"Minicamp MLG",cup.teamKind??"clube",cup.status,cup.champion ?? null,cup.completedAt ?? null,cup.cancellationReason ?? null]);
+      await q.query(`INSERT INTO mlg_bot.cups(id,group_id,created_by,created_at,size,competition_name,team_kind,legs,status,champion,completed_at,cancellation_reason)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(id) DO UPDATE SET status=excluded.status,champion=excluded.champion,completed_at=excluded.completed_at,cancellation_reason=excluded.cancellation_reason`,
+      [cup.id,cup.groupId,cup.createdBy,cup.createdAt,cup.size,cup.competitionName??"Minicamp MLG",cup.teamKind??"clube",cup.legs??1,cup.status,cup.champion ?? null,cup.completedAt ?? null,cup.cancellationReason ?? null]);
       // Withdrawal is allowed only before the draw, so no match references exist.
       if(cup.status==='open'){
         await q.query('DELETE FROM mlg_bot.cup_participants WHERE cup_id=$1',[cup.id]);
@@ -320,8 +320,8 @@ export async function processEvent(database: Database, event: Event, env: Enviro
       await checkpointCup(q,event.groupId,cup.id,event.userId,event.id);
     }
     const draft = output.state.drafts[event.groupId];
-    if (draft) await q.query(`INSERT INTO mlg_bot.command_drafts(group_id,owner_id,expires_at) VALUES ($1,$2,$3)
-      ON CONFLICT(group_id) DO UPDATE SET owner_id=excluded.owner_id,expires_at=excluded.expires_at`, [event.groupId,draft.ownerId,draft.expiresAt]);
+    if (draft) await q.query(`INSERT INTO mlg_bot.command_drafts(group_id,owner_id,expires_at,name,team_kind,cup_size,legs) VALUES ($1,$2,$3,$4,$5,$6,$7)
+      ON CONFLICT(group_id) DO UPDATE SET owner_id=excluded.owner_id,expires_at=excluded.expires_at,name=excluded.name,team_kind=excluded.team_kind,cup_size=excluded.cup_size,legs=excluded.legs`, [event.groupId,draft.ownerId,draft.expiresAt,draft.name??null,draft.teamKind??null,draft.size??null,draft.legs??null]);
     else await q.query('DELETE FROM mlg_bot.command_drafts WHERE group_id=$1',[event.groupId]);
     if(output.state.nextCode!==state.nextCode){
       if(!mayAllocate)throw Error('Match allocation requires counter lock');

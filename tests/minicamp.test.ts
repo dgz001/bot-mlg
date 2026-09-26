@@ -5,6 +5,27 @@ import {worldCupCandidates} from '../src/minicamp/nations.ts';
 import {allowedDrawTeam} from '../src/minicamp/nations.ts';
 
 const clubs = Array.from({ length: 20 }, (_, i) => `Clube ${i + 1}`);
+test('ADM abre nova Copa nomeada no mesmo grupo e histórico mantém campeão e vice',()=>{
+ const h=harness();const old=h.start(4);
+ for(const m of old.matches.filter(m=>m.round===0)){h.send(m.home,`!resultado ${m.code} 2x1`);h.send(m.away,`!confirmar ${m.code}`);}
+ const final=h.state.cups[old.id]!.matches.find(m=>m.round===1)!;
+ h.send(final.home,`!resultado ${final.code} 3x2`);h.send(final.away,`!confirmar ${final.code}`);
+ assert.equal(h.state.cups[old.id]!.status,'completed');
+ h.send('admin','!novacopa');
+ assert.throws(()=>h.send('admin2','!nome Copa Nova'),/Somente o ADM/);
+ h.send('admin','!nome Copa Novos Desafios');h.send('admin','!categoria clube');
+ h.send('admin','!formato 8');
+ assert.throws(()=>h.send('admin','!jogos 2'),/desempate seguro/);
+ assert.equal(Object.values(h.state.cups).length,1);
+ h.send('admin','!jogos 1');
+ assert.match(h.send('admin','!abrircopa').notices.join(''),/Inscrições abertas/);
+ const now=Object.values(h.state.cups).find(c=>c.id!==old.id)!;
+ assert.equal(now.competitionName,'Copa Novos Desafios');assert.equal(now.size,8);
+ assert.equal(now.status,'open');assert.equal(h.state.cups[old.id]!.matches.length,3);
+ const history=h.send('u0','!historico').notices.join('');
+ assert.match(history,/Copa Novos Desafios/);assert.match(history,/🥈/);
+ assert.match(h.send('u0','!entrar').notices.join(''),/INSCRIÇÃO CONFIRMADA/);
+});
 test('cada dupla classificada recebe código e joga sem esperar a outra metade da chave',()=>{
  const h=harness();const cup=h.start(16);
  const first=cup.matches.filter(m=>m.round===0).sort((a,b)=>a.position-b.position);

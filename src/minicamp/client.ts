@@ -1,6 +1,6 @@
 export type PendingCupEvent={group:string;aliases:string[];targets?:string[][];id:string;name:string;text:string};
 export function minicampCommand(text:string):boolean {
- return /^(?:![a-zçí]+(?:\s|$)|[1234]$)/i.test(text)&&/^(?:!(?:cadastrar|editar|excluir|meunome|chave|lado|jornada|arquivo|vistoria|carreira|moral|participantes|registrar|associar|sincronizarcontas|revisarnumeros|supabase|teste|titulo|título|sair|deletar|deletartitulo|anularcopa|clubes|times|selecoes|comandos|confronto|forcarresultado|forcar|forçar|cancelarcopa|config|novacopa|formato|entrar|resultado|confirmar|contestar|resolver|cancelar|copa|sorteio|jogo|historico|minhascopas|campeoes|ranking|stats|ajuda|minicamp)(?:\s|$)|[1234]$)/i.test(text);
+ return /^(?:![a-zçí]+(?:\s|$)|[1234]$)/i.test(text)&&/^(?:!(?:cadastrar|editar|excluir|meunome|chave|lado|jornada|arquivo|vistoria|carreira|moral|participantes|registrar|associar|sincronizarcontas|revisarnumeros|supabase|teste|titulo|título|sair|deletar|deletartitulo|anularcopa|clubes|times|selecoes|comandos|confronto|forcarresultado|forcar|forçar|cancelarcopa|config|novacopa|nome|categoria|jogos|abrircopa|formato|entrar|resultado|confirmar|contestar|resolver|cancelar|copa|sorteio|jogo|historico|minhascopas|campeoes|ranking|stats|ajuda|minicamp)(?:\s|$)|[1234]$)/i.test(text);
 }
 export function minicampClient(url:string,token:string){
  return async function call<T=Record<string,unknown>>(body:unknown):Promise<T>{
