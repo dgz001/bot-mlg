@@ -140,13 +140,19 @@ async function connect(){
   if(/^!sorteio\s+/i.test(text.trim())){
    const mentioned=context?.mentionedJid??[];
    const reason=text.includes('|')?text.slice(text.lastIndexOf('|')+1).trim():'Nova seleção solicitada pelo ADM';
-   let answer='Use !sorteio @pessoa ou !sorteio @pessoa | motivo (mínimo 8 caracteres). Marque somente um participante desta Copa. O bot troca apenas o time, sem mexer nos jogos.';
-   if(mentioned.length===1&&reason.length>=8&&reason.length<=160){
-    const metadata=await current.groupMetadata(group);
-    if(metadata.participants.some(p=>jidNormalizedUser(p.id)===jidNormalizedUser(mentioned[0]!))){
+   const name=text.trim().replace(/^!sorteio\s+/i,'').split('|')[0]!.trim().replace(/^@+/,'').trim();
+   let answer='Use !sorteio Samuel ou !sorteio @pessoa [| motivo]. Informe o nome salvo na Copa ou marque uma conta; a chave e os placares ficam como estão.';
+   if(mentioned.length<=1&&name.length>=2&&name.length<=60&&reason.length>=8&&reason.length<=160){
+    let valid=true;
+    if(mentioned.length){
+     const metadata=await current.groupMetadata(group);
+     valid=metadata.participants.some(p=>jidNormalizedUser(p.id)===jidNormalizedUser(mentioned[0]!));
+    }
+    if(valid){
      await configureCup(group,current);
      try{
-      const result=await cupApi<{error?:string;changed?:boolean;duplicate?:boolean}>({action:'cup-reroll-team',group,aliases,targetAliases:await cupAliases(mentioned[0]!,current),messageId:id,reason});
+      const target=mentioned.length?{targetAliases:await cupAliases(mentioned[0]!,current)}:{targetName:name};
+      const result=await cupApi<{error?:string;changed?:boolean;duplicate?:boolean}>({action:'cup-reroll-team',group,aliases,...target,messageId:id,reason});
       answer=result.error?'⚠️ '+result.error:result.changed?'🎲 Sorteio registrado. O novo time e a chave serão anunciados aqui em instantes.':'✅ Pedido já processado. Confira !sorteio.';
      }catch{answer='⚠️ Não foi possível registrar a troca agora. Tente novamente; a mesma mensagem não gera dois sorteios.';}
     }else answer='⚠️ Marque uma pessoa que esteja neste grupo da Copa.';

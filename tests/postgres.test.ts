@@ -113,6 +113,7 @@ test('sorteio individual troca só seleções livres, preserva placares e bloque
   for(let i=0;i<4;i++)await send('u'+i,'!entrar');
   const cup=(await f.pool.query('SELECT id FROM mlg_bot.cups WHERE group_id=$1 AND status=$2',['g','playing'])).rows[0].id;
   await f.pool.query("INSERT INTO mlg_bot.club_pool(group_id,name) VALUES('g','Ucrânia'),('g','Rússia')");
+  await f.pool.query("UPDATE mlg_bot.cup_participants SET display_name=CASE user_id WHEN 'u0' THEN 'Samuel' WHEN 'u1' THEN 'Rafael' WHEN 'u2' THEN 'Alex Junior' ELSE 'Alex Silva' END WHERE cup_id=$1",[cup]);
   await f.pool.query('UPDATE mlg_bot.cup_participants SET club=NULL WHERE cup_id=$1 AND user_id=ANY($2::text[])',[cup,['u0','u1']]);
   await f.pool.query("UPDATE mlg_bot.cup_participants SET club=CASE user_id WHEN 'u0' THEN 'Ucrânia' ELSE 'Rússia' END WHERE cup_id=$1 AND user_id IN ('u0','u1')",[cup]);
   for(const i of [0,1])await f.pool.query('INSERT INTO mlg_bot.wa_identities(jid,user_id) VALUES($1,$2)',[`${200+i}@s.whatsapp.net`,`u${i}`]);
@@ -121,10 +122,11 @@ test('sorteio individual troca só seleções livres, preserva placares e bloque
   const before=(await f.pool.query('SELECT code,round,position,home,away,winner,status FROM mlg_bot.matches WHERE cup_id=$1 ORDER BY code',[cup])).rows;
   const base={group:'g',actorAliases:['123@s.whatsapp.net'],reason:'Seleção indisponível no jogo'};
   assert.match((await cupRerollTeam(db,{...base,actorAliases:['999@s.whatsapp.net'],targetAliases:['200@s.whatsapp.net'],messageId:'deny'})).error!,/ADMs/);
-  const first=await cupRerollTeam(db,{...base,targetAliases:['200@s.whatsapp.net'],messageId:'change-1'});
+  assert.match((await cupRerollTeam(db,{...base,targetName:'Alex',messageId:'ambiguous'})).error!,/mais de um participante/);
+  const first=await cupRerollTeam(db,{...base,targetName:'samuel',messageId:'change-1'});
   assert.equal(first.oldTeam,'Ucrânia');assert.ok(first.newTeam&&!['Ucrânia','Rússia'].includes(first.newTeam));
-  assert.equal((await cupRerollTeam(db,{...base,targetAliases:['200@s.whatsapp.net'],messageId:'change-1'})).duplicate,true);
-  const second=await cupRerollTeam(db,{...base,targetAliases:['201@s.whatsapp.net'],messageId:'change-2'});
+  assert.equal((await cupRerollTeam(db,{...base,targetName:'Samuel',messageId:'change-1'})).duplicate,true);
+  const second=await cupRerollTeam(db,{...base,targetName:'Rafael',messageId:'change-2'});
   assert.equal(second.oldTeam,'Rússia');assert.ok(second.newTeam&&!['Ucrânia','Rússia',first.newTeam].includes(second.newTeam));
   assert.deepEqual((await f.pool.query('SELECT code,round,position,home,away,winner,status FROM mlg_bot.matches WHERE cup_id=$1 ORDER BY code',[cup])).rows,before);
   assert.equal((await f.pool.query('SELECT count(*)::int AS total FROM mlg_bot.match_results WHERE match_code=$1',[match.code])).rows[0].total,1);

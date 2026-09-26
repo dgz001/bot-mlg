@@ -48,7 +48,7 @@ O histórico continua na conta, sem o @ no nome.
 
 🎲 SORTEIO E CHAVE
 !sorteio — ver equipes e confrontos
-No grupo da Copa: !copa, !chave A/B e !sorteio @pessoa [| motivo] para trocar só o time durante a disputa
+No grupo da Copa: !copa, !chave A/B e !sorteio Samuel ou !sorteio @pessoa [| motivo] para trocar só o time durante a disputa
 !refazersorteio equipes motivo — redistribuir equipes
 !refazersorteio chave motivo — refazer confrontos
 !refazersorteio completo motivo — refazer ambos
@@ -155,11 +155,13 @@ export async function adminControl(text:string,room:ControlWorkspace,targets:Con
  if(cmd==='!cancelarcopa'){
   if(arg.length<8)return 'Informe um motivo: !cancelarcopa motivo com ao menos 8 caracteres.';
   const result=requireSuccess<any>(await api({action:'cup-cancel',group,reason:arg}));
-  return result.draft?'🚫 Escolha de formato iniciada no grupo da Copa cancelada. Nenhuma partida foi apagada.':result.cancelled?'🚫 Edição '+result.edition+' cancelada em '+target.name+'. O número fica livre para a próxima Copa; histórico e recuperação preservados. O aviso será enviado ao grupo.':'⚠️ Não foi possível cancelar a Copa.';
+  return result.draft?'🚫 Escolha de formato iniciada no grupo da Copa cancelada. Nenhuma partida foi apagada.':result.cancelled?'🚫 '+(result.edition?'Edição '+result.edition:'Copa')+' cancelada em '+target.name+'. O número fica livre para a próxima Copa; histórico e recuperação preservados. O aviso será enviado ao grupo.':'⚠️ Não foi possível cancelar a Copa.';
  }
  if(cmd==='!anularcopa'){
   const match=arg.match(/^(\d+)\s+(.{8,160})$/s);if(!match)return 'Formato: !anularcopa número-da-edição motivo (mínimo 8 caracteres).';
   const edition=Number(match[1]);if(!Number.isSafeInteger(edition)||edition<1)return 'Número de edição inválido. Veja as edições com !historico no grupo da Copa.';
+  const numbering=requireSuccess<any>(await api({action:'templates-list',group}));
+  if(!Number.isSafeInteger(numbering.nextEdition))return '⚠️ A central está aguardando a atualização da numeração no banco. Para anular com segurança, use !anularcopa '+edition+' diretamente no grupo da Copa.';
   const result=requireSuccess<any>(await api({action:'cup-void',group,edition,reason:match[2]!.trim()}));
   return result.cancelled?'📋 Edição '+edition+' anulada em '+target.name+'. Número liberado; histórico preservado e jogos fora das estatísticas.':'⚠️ Edição não encontrada ou não encerrada.';
  }

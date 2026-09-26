@@ -77,7 +77,7 @@ export async function cupDraw(database:Database,request:{group:string;controlGro
 }
 // Replace only a participant's team. The group lock serializes this with match
 // results, draw changes and other replacements; the message ID makes retries safe.
-export async function cupRerollTeam(database:Database,request:{group:string;actorAliases:string[];targetAliases:string[];messageId:string;reason:string}):Promise<{error?:string;changed?:boolean;duplicate?:boolean;name?:string;oldTeam?:string;newTeam?:string}>{
+export async function cupRerollTeam(database:Database,request:{group:string;actorAliases:string[];targetAliases?:string[];targetName?:string;messageId:string;reason:string}):Promise<{error?:string;changed?:boolean;duplicate?:boolean;name?:string;oldTeam?:string;newTeam?:string}>{
  return database.transaction(async q=>{
   const actor=await q.query<{user_id:string}>(`SELECT DISTINCT a.user_id FROM mlg_bot.admins a
     JOIN mlg_bot.wa_identities w ON w.user_id=a.user_id JOIN mlg_bot.groups g ON g.id=a.group_id
@@ -90,10 +90,21 @@ export async function cupRerollTeam(database:Database,request:{group:string;acto
   if(previous.rows.length)return {duplicate:true};
   const cups=await q.query<{id:string;competition_name:string;team_kind:'clube'|'seleção'|'misto'}>("SELECT id,competition_name,team_kind FROM mlg_bot.cups WHERE group_id=$1 AND status='playing' FOR UPDATE",[request.group]);
   const cup=cups.rows[0];if(!cup)return {error:'Não há Copa sorteada em andamento. A troca de time só vale durante a disputa.'};
-  const targets=await q.query<{user_id:string}>('SELECT DISTINCT user_id FROM mlg_bot.wa_identities WHERE jid=ANY($1::text[])',[request.targetAliases]);
-  if(targets.rows.length!==1)return {error:'Menção não reconhecida. Marque a conta do participante que recebeu a seleção.'};
-  const participant=await q.query<DrawRow>('SELECT user_id,display_name,club,position FROM mlg_bot.cup_participants WHERE cup_id=$1 AND user_id=$2 FOR UPDATE',[cup.id,targets.rows[0]!.user_id]);
-  const player=participant.rows[0];if(!player?.club)return {error:'Esta pessoa não tem time sorteado nesta Copa.'};
+  const participants=await q.query<DrawRow>('SELECT user_id,display_name,club,position FROM mlg_bot.cup_participants WHERE cup_id=$1 ORDER BY position FOR UPDATE',[cup.id]);
+  let player:DrawRow|undefined;
+  if(request.targetAliases){
+   const targets=await q.query<{user_id:string}>('SELECT DISTINCT user_id FROM mlg_bot.wa_identities WHERE jid=ANY($1::text[])',[request.targetAliases]);
+   if(targets.rows.length!==1)return {error:'Menção não reconhecida. Marque a conta do participante que recebeu a seleção.'};
+   player=participants.rows.find(p=>p.user_id===targets.rows[0]!.user_id);
+  }else{
+   const normalized=(name:string)=>name.trim().replace(/^@+/,'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLocaleLowerCase('pt-BR').replace(/\s+/g,' ');
+   const wanted=normalized(request.targetName??'');
+   const exact=participants.rows.filter(p=>normalized(p.display_name)===wanted);
+   const choices=exact.length?exact:participants.rows.filter(p=>normalized(p.display_name).startsWith(wanted+' '));
+   if(choices.length>1)return {error:'Há mais de um participante com esse nome. Marque a conta no comando: !sorteio @pessoa.'};
+   player=choices[0];
+  }
+  if(!player?.club)return {error:'Participante sem time sorteado nesta Copa. Confira o nome com !participantes ou marque a conta.'};
   const used=await q.query<{club:string}>('SELECT club FROM mlg_bot.cup_participants WHERE cup_id=$1 AND club IS NOT NULL',[cup.id]);
   const retired=await q.query<{club:string}>("SELECT before_state->>'oldTeam' AS club FROM mlg_bot.audit_logs WHERE cup_id=$1 AND action='team-reroll'",[cup.id]);
   const unavailable=new Set([...used.rows,...retired.rows].map(p=>p.club?.toLocaleLowerCase('pt-BR')));
