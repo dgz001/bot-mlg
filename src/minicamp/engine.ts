@@ -2,6 +2,7 @@ import {careers,careerText,normalizeName} from './career.ts';
 import {teamLabel} from './team-badges.ts';
 import {memberName} from './member-name.ts';
 import { randomInt, randomUUID } from 'node:crypto';
+import {allowedDrawTeam} from './nations.ts';
 
 // Pure domain boundary. The production adapter MUST resolve identities, load
 // permissions and commit state + inbox + audit + outbox in one DB transaction.
@@ -369,7 +370,7 @@ export function apply(input: State, event: Event, env: Environment = environment
     requireThat(!active(), 'Já existe Copa ativa.');
     const size = [4, 8, 16, 32][Number(cmd) - 1]!;
     requireThat(!group.formatSize||size===group.formatSize,`Este grupo usa ${group.formatSize} vagas. Envie !formato ${group.formatSize}.`);
-    const available = [...new Set(group.clubs.map(c => c.trim()).filter(Boolean))];
+    const available = [...new Set(group.clubs.map(c => c.trim()).filter(c=>Boolean(c)&&allowedDrawTeam(c,teamKind)))];
     requireThat(available.length >= size, 'Não há clubes suficientes no pool.');
     const id = env.id();
     requireThat(id && !Object.hasOwn(s.cups, id) && id !== '__proto__', 'ID de Copa inválido ou repetido.');
@@ -387,7 +388,7 @@ export function apply(input: State, event: Event, env: Environment = environment
     s.profiles??={};s.profiles[event.groupId]??={};s.profiles[event.groupId]![event.userId]=name;
     notices.push(`✅ INSCRIÇÃO CONFIRMADA · ${cupLabel(cup)}\n${name} está na disputa!\n👥 ${cup.participants.length}/${cup.size} vagas preenchidas\n${cheer}`);
     if (cup.participants.length === cup.size) {
-      const pool = [...new Set(group.clubs.map(c => c.trim()).filter(Boolean))];
+      const pool = [...new Set(group.clubs.map(c => c.trim()).filter(c=>Boolean(c)&&allowedDrawTeam(c,teamKind)))];
       requireThat(pool.length >= cup.size, 'Não há clubes suficientes no pool.');
       const selected = env.shuffle(pool).slice(0, cup.size);
       requireThat(selected.length === cup.size && new Set(selected).size === cup.size && selected.every(c => pool.includes(c)), 'Sorteio de clubes inválido.');

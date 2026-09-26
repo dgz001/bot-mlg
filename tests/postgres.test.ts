@@ -130,12 +130,14 @@ test('sorteio individual troca só seleções livres, preserva placares e bloque
   assert.equal((await cupRerollTeam(db,{...base,targetName:'Samuel',messageId:'change-1'})).duplicate,true);
   const second=await cupRerollTeam(db,{...base,targetName:'Rafael',messageId:'change-2'});
   assert.equal(second.oldTeam,'Rússia');assert.ok(second.newTeam&&!['Ucrânia','Rússia',first.newTeam].includes(second.newTeam));
+  const third=await cupRerollTeam(db,{...base,targetName:'Samuel',messageId:'change-3'});
+  assert.ok(third.newTeam&&!['Ucrânia','Rússia',first.newTeam,second.newTeam].includes(third.newTeam));
   assert.deepEqual((await f.pool.query('SELECT code,round,position,home,away,winner,status FROM mlg_bot.matches WHERE cup_id=$1 ORDER BY code',[cup])).rows,before);
   assert.equal((await f.pool.query('SELECT count(*)::int AS total FROM mlg_bot.match_results WHERE match_code=$1',[match.code])).rows[0].total,1);
   const active=(await f.pool.query('SELECT user_id,club FROM mlg_bot.cup_participants WHERE cup_id=$1',[cup])).rows;
-  assert.equal(active.find(p=>p.user_id==='u0')?.club,first.newTeam);assert.equal(active.find(p=>p.user_id==='u1')?.club,second.newTeam);
-  assert.equal((await f.pool.query("SELECT count(*)::int AS total FROM mlg_bot.audit_logs WHERE cup_id=$1 AND action='team-reroll'",[cup])).rows[0].total,2);
-  assert.equal((await f.pool.query("SELECT count(*)::int AS total FROM mlg_bot.cup_checkpoints WHERE cup_id=$1 AND event_id LIKE 'team-reroll-%'",[cup])).rows[0].total,4);
+  assert.equal(active.find(p=>p.user_id==='u0')?.club,third.newTeam);assert.equal(active.find(p=>p.user_id==='u1')?.club,second.newTeam);
+  assert.equal((await f.pool.query("SELECT count(*)::int AS total FROM mlg_bot.audit_logs WHERE cup_id=$1 AND action='team-reroll'",[cup])).rows[0].total,3);
+  assert.equal((await f.pool.query("SELECT count(*)::int AS total FROM mlg_bot.cup_checkpoints WHERE cup_id=$1 AND event_id LIKE 'team-reroll-%'",[cup])).rows[0].total,6);
  }finally{await f.close();}
 });
 

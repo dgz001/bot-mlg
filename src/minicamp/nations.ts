@@ -8,3 +8,10 @@ export const worldCupCandidates = Object.freeze([
   'Equador','Nigéria','Turquia','Austrália','Argélia','Canadá',
   'Costa do Marfim','Coreia do Sul','Paraguai','Polônia',
 ]);
+
+// Legacy and custom pools may still contain selections removed from the MLG list.
+export function allowedDrawTeam(name:string,kind:'clube'|'seleção'|'misto'):boolean {
+  if(kind==='clube')return true;
+  const normalized=name.trim().normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLocaleLowerCase('pt-BR');
+  return normalized!=='russia'&&normalized!=='ucrania'&&normalized!=='ukraine';
+}

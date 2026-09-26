@@ -2,6 +2,7 @@ import type { Pool } from 'pg';
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { apply, emptyState, environment, type Cup, type Event, type Match, type Participant, type Result, type Environment } from '../minicamp/engine.ts';
 import {teamLabel} from '../minicamp/team-badges.ts';
+import {allowedDrawTeam} from '../minicamp/nations.ts';
 
 export interface Query {
   query<T>(sql: string, values?: unknown[]): Promise<{ rows: T[] }>;
@@ -109,7 +110,7 @@ export async function cupRerollTeam(database:Database,request:{group:string;acto
   const retired=await q.query<{club:string}>("SELECT before_state->>'oldTeam' AS club FROM mlg_bot.audit_logs WHERE cup_id=$1 AND action='team-reroll'",[cup.id]);
   const unavailable=new Set([...used.rows,...retired.rows].map(p=>p.club?.toLocaleLowerCase('pt-BR')));
   const pool=await q.query<{name:string}>('SELECT name FROM mlg_bot.club_pool WHERE group_id=$1',[request.group]);
-  const available=pool.rows.filter(p=>!unavailable.has(p.name.toLocaleLowerCase('pt-BR')));
+  const available=pool.rows.filter(p=>allowedDrawTeam(p.name,cup.team_kind)&&!unavailable.has(p.name.toLocaleLowerCase('pt-BR')));
   if(!available.length)return {error:'Nenhum time livre nesta Copa. Acrescente uma opção válida à lista pelo painel antes de repetir o comando.'};
   const chosen=available[randomInt(available.length)]!.name;
   const eventId='team-reroll-'+randomUUID();
@@ -150,8 +151,8 @@ export async function cupRoster(database:Database,request:RosterRequest):Promise
   if(cup.status==='playing'&&current&&matches.rows.flatMap(m=>[m.home,m.away]).filter(id=>id===current.user_id).length!==1)return {error:'Confronto incompleto: revise a chave antes de trocar este jogador.'};
   if(request.change==='incluir'&&(cup.status!=='open'||people.rows.length>=cup.size))return {error:'Só há inclusão com inscrições abertas e vaga disponível.'};
   if(request.change==='incluir'&&people.rows.length+1===cup.size){
-   const pool=await q.query('SELECT 1 FROM mlg_bot.club_pool WHERE group_id=$1 LIMIT $2',[request.group,cup.size]);
-   if(pool.rows.length<cup.size)return {error:'Não há equipes suficientes para completar o sorteio. Corrija o modelo antes da última inscrição.'};
+   const pool=await q.query<{name:string}>('SELECT name FROM mlg_bot.club_pool WHERE group_id=$1',[request.group]);
+   if(pool.rows.filter(p=>allowedDrawTeam(p.name,cup.team_kind)).length<cup.size)return {error:'Não há equipes válidas suficientes para completar o sorteio. Corrija o modelo antes da última inscrição.'};
   }
   let targetId:string|undefined;
   if(request.change!=='retirar'){
@@ -183,6 +184,7 @@ export async function cupRoster(database:Database,request:RosterRequest):Promise
   }
   if(request.change==='incluir'&&cup.status==='open'&&people.rows.length+1===cup.size){
    const pool=await q.query<{name:string}>('SELECT name FROM mlg_bot.club_pool WHERE group_id=$1 ORDER BY name',[request.group]);
+   pool.rows=pool.rows.filter(p=>allowedDrawTeam(p.name,cup.team_kind));
    if(pool.rows.length<cup.size)throw Error('Draw pool changed during transaction');
    const players=await q.query<DrawRow>('SELECT user_id,display_name,club,position FROM mlg_bot.cup_participants WHERE cup_id=$1 ORDER BY position',[cup.id]);
    const selected=shuffleDifferent(pool.rows.map(p=>p.name)).slice(0,cup.size);

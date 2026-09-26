@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { apply, emptyState, environment, type State } from '../src/minicamp/engine.ts';
 import {worldCupCandidates} from '../src/minicamp/nations.ts';
+import {allowedDrawTeam} from '../src/minicamp/nations.ts';
 
 const clubs = Array.from({ length: 20 }, (_, i) => `Clube ${i + 1}`);
 test('a chave mostra lados estáveis, classificados e caminho até a final',()=>{
@@ -594,6 +595,8 @@ test('predefinição da Copa oferece 36 seleções únicas para revisão no pain
  for(const name of ['Espanha','Holanda','Noruega','Irã','Costa do Marfim','Polônia'])assert.ok(worldCupCandidates.includes(name),name);
  assert.ok(!worldCupCandidates.includes('Ucrânia'));
  assert.ok(!worldCupCandidates.includes('Rússia'));
+ for(const country of ['Rússia','Russia','Ucrânia','Ucrania','Ukraine'])assert.equal(allowedDrawTeam(country,'seleção'),false);
+ assert.equal(allowedDrawTeam('Brasil','seleção'),true);
  assert.ok(!worldCupCandidates.includes('Gana'));
 });
 
