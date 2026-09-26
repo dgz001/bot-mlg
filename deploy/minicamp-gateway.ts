@@ -2,7 +2,7 @@ import {minicampClubs} from './clubs.ts';
 // Private server-to-server gateway. Inject only a token digest during deployment.
 import {Pool} from 'npm:pg@8.23.0';
 import {randomUUID} from 'node:crypto';
-import {pgDatabase,processEvent,checkpointCup,cupDraw,cupRoster} from './postgres.ts';
+import {pgDatabase,processEvent,checkpointCup,cupDraw,cupRoster,cupRerollTeam} from './postgres.ts';
 import {memberCommand} from './member-commands.ts';
 const EXPECTED_DIGEST='__DIGEST__';
 const pool=new Pool({connectionString:Deno.env.get('SUPABASE_DB_URL'),max:2,connectionTimeoutMillis:8000});
@@ -65,6 +65,10 @@ Deno.serve(async req=>{
  else if(body.action==='cup-draw'){
   if(!groupId.test(body.group)||!groupId.test(body.controlGroup)||!validAliases(body.aliases)||body.mode!==undefined&&!['equipes','chave','completo'].includes(body.mode)||body.mode&&(typeof body.expected!=='string'||!/^[0-9a-f]{64}$/.test(body.expected)||typeof body.reason!=='string'||body.reason.trim().length<8||body.reason.length>160||/[\r\n\x00-\x1f\x7f\u202a-\u202e*_~`]/.test(body.reason)))throw Error('Invalid draw request');
   result=await cupDraw(db,{group:body.group,controlGroup:body.controlGroup,actorAliases:body.aliases,mode:body.mode,expected:body.expected,reason:body.reason});
+ }
+ else if(body.action==='cup-reroll-team'){
+  if(!groupId.test(body.group)||!validAliases(body.aliases)||!validAliases(body.targetAliases)||typeof body.messageId!=='string'||body.messageId.length<1||body.messageId.length>128||/[\r\n\x00-\x1f\x7f]/.test(body.messageId)||typeof body.reason!=='string'||body.reason.trim().length<8||body.reason.length>160||/[\r\n\x00-\x1f\x7f\u202a-\u202e*_~`]/.test(body.reason))throw Error('Invalid team replacement');
+  result=await cupRerollTeam(db,{group:body.group,actorAliases:body.aliases,targetAliases:body.targetAliases,messageId:body.messageId,reason:body.reason.trim()});
  }
  else if(body.action==='cup-roster'){
   if(!groupId.test(body.group)||!groupId.test(body.controlGroup)||!validAliases(body.aliases)||body.change!==undefined&&(!['incluir','retirar','trocar'].includes(body.change)||typeof body.expected!=='string'||!/^[0-9a-f]{64}$/.test(body.expected)||typeof body.reason!=='string'||body.reason.trim().length<8||body.reason.length>160||/[\r\n\x00-\x1f\x7f\u202a-\u202e*_~`]/.test(body.reason)||body.change!=='incluir'&&(!Number.isSafeInteger(body.position)||body.position<1||body.position>32)||body.change!=='retirar'&&(!validAliases(body.targetAliases)||typeof body.targetName!=='string'||body.targetName.trim().length<2||body.targetName.length>60||/[\r\n\x00-\x1f\x7f\u202a-\u202e*_~`]/.test(body.targetName))))throw Error('Invalid roster request');

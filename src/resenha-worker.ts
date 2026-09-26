@@ -137,6 +137,22 @@ async function connect(){
    const answer=await cupApi<{text:string|null}>({action:'config',event:{group,aliases,id,name:message.pushName??'ADM',text}});
    if(answer.text&&socket===current&&enabled())await current.sendMessage(group,{text:answer.text});return;
   }
+  if(/^!sorteio\s+/i.test(text.trim())){
+   const mentioned=context?.mentionedJid??[];
+   const reason=text.includes('|')?text.slice(text.lastIndexOf('|')+1).trim():'Nova seleção solicitada pelo ADM';
+   let answer='Use !sorteio @pessoa ou !sorteio @pessoa | motivo (mínimo 8 caracteres). Marque somente um participante desta Copa. O bot troca apenas o time, sem mexer nos jogos.';
+   if(mentioned.length===1&&reason.length>=8&&reason.length<=160){
+    const metadata=await current.groupMetadata(group);
+    if(metadata.participants.some(p=>jidNormalizedUser(p.id)===jidNormalizedUser(mentioned[0]!))){
+     await configureCup(group,current);
+     try{
+      const result=await cupApi<{error?:string;changed?:boolean;duplicate?:boolean}>({action:'cup-reroll-team',group,aliases,targetAliases:await cupAliases(mentioned[0]!,current),messageId:id,reason});
+      answer=result.error?'⚠️ '+result.error:result.changed?'🎲 Sorteio registrado. O novo time e a chave serão anunciados aqui em instantes.':'✅ Pedido já processado. Confira !sorteio.';
+     }catch{answer='⚠️ Não foi possível registrar a troca agora. Tente novamente; a mesma mensagem não gera dois sorteios.';}
+    }else answer='⚠️ Marque uma pessoa que esteja neste grupo da Copa.';
+   }
+   if(socket===current&&!stopping&&enabled('minicamp'))await current.sendMessage(group,{text:answer});return;
+  }
   auth.data.cupInbox??=[];
   if(!auth.data.cupInbox.some(e=>e.group===group&&e.id===id&&e.aliases.some(a=>aliases.includes(a)))){
    if(auth.data.cupInbox.length>=100){
