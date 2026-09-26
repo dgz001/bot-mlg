@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { decideTie } from '../src/minicamp/tie-rules.ts';
+import { decideTie, tieCard } from '../src/minicamp/tie-rules.ts';
 
 test('a primeira partida não libera a próxima fase e a volta inverte o mando', () => {
   assert.deepEqual(decideTie('home-and-away', { home: 1, away: 0 }), {
@@ -28,4 +28,13 @@ test('não aceita volta antecipada, pênaltis desnecessários ou modalidade erra
   assert.throws(() => decideTie('single', { home: 1, away: 1 }), /decisivo/);
   assert.throws(() => decideTie('single', { home: 1, away: 0 }, { home: 0, away: 1 }), /partida única/);
   assert.throws(() => decideTie('home-and-away', { home: -1, away: 0 }), /inválido/);
+});
+
+test('cartão anuncia mandos e aguarda desempate sem antecipar classificação', () => {
+  const card = tieCard('Samuel', 'Rafael', 'home-and-away', { home: 2, away: 1 }, { home: 1, away: 0 });
+  assert.match(card, /Ida · Samuel × Rafael: 2 x 1/);
+  assert.match(card, /Volta · Rafael × Samuel: 1 x 0/);
+  assert.match(card, /Agregado · Samuel 2 x 2 Rafael/);
+  assert.doesNotMatch(card, /Classificado:/);
+  assert.match(tieCard('Samuel', 'Rafael', 'home-and-away', { home: 2, away: 1 }, { home: 1, away: 0 }, { home: 4, away: 3 }), /Classificado: Samuel/);
 });
