@@ -83,7 +83,7 @@ export async function cupRerollTeam(database:Database,request:{group:string;acto
   const actor=await q.query<{user_id:string}>(`SELECT DISTINCT a.user_id FROM mlg_bot.admins a
     JOIN mlg_bot.wa_identities w ON w.user_id=a.user_id JOIN mlg_bot.groups g ON g.id=a.group_id
     WHERE w.jid=ANY($1::text[]) AND g.authorized AND g.admins_configured`,[request.actorAliases]);
-  if(actor.rows.length!==1)return {error:'Somente os ADMs selecionados para este grupo podem trocar uma seleção.'};
+  if(actor.rows.length!==1)return {error:'Somente ADMs selecionados podem trocar uma equipe.'};
   const admin=actor.rows[0]!.user_id;
   const group=await q.query('SELECT 1 FROM mlg_bot.groups WHERE id=$1 AND authorized FOR UPDATE',[request.group]);
   if(!group.rows.length)return {error:'Grupo da Copa não autorizado.'};
