@@ -117,11 +117,11 @@ function parseScore(value: string | undefined): { home: number; away: number } {
   requireThat(home !== away, 'Mata-mata não permite empate; informe o placar decisivo acordado.');
   return { home, away };
 }
-function addRound(s: State, cup: Cup, ids: string[], round: number): string {
+function addRound(s: State, cup: Cup, ids: string[], round: number, startPosition=0): string {
   const output: string[] = [`⚔️ ${roundName(ids.length).toUpperCase()} · ${ids.length / 2} ${ids.length===2?'jogo':'jogos'}`];
   for (let i = 0; i < ids.length; i += 2) {
     requireThat(Number.isSafeInteger(s.nextCode) && s.nextCode < Number.MAX_SAFE_INTEGER, 'Limite de códigos atingido.');
-    const match: Match = { code: s.nextCode++, round, position: i / 2, home: ids[i]!, away: ids[i + 1]!, status: 'scheduled', results: [] };
+    const match: Match = { code: s.nextCode++, round, position: startPosition+i / 2, home: ids[i]!, away: ids[i + 1]!, status: 'scheduled', results: [] };
     cup.matches.push(match);
     output.push(matchCard(cup, match));
   }
@@ -187,9 +187,7 @@ function advance(s: State, cup: Cup, match: Match, at: number): string[] {
     const rival=sibling?.winner?`${player(cup,sibling.winner).name} · ${teamLabel(player(cup,sibling.winner).club,cup.teamKind)}`:sibling?`${player(cup,sibling.home).name} · ${teamLabel(player(cup,sibling.home).club,cup.teamKind)} ou ${player(cup,sibling.away).name} · ${teamLabel(player(cup,sibling.away).club,cup.teamKind)}`:'a definir';
     return `🗺️ CHAVE ATUALIZADA · ${cup.competitionName?.toUpperCase()??'MLG'}\n✅ ${isFinal?`${winner.name} venceu a final.`:`${winner.name} avançou no lado ${side} (${roundName(cup.size/2**match.round)}).`}\n${isFinal?'👑 Campeão confirmado.':`🎯 Próximo adversário: ${rival}.`}\n\n${bracket(cup)}\n\n📌 Use !chave A ou !chave B para consultar um lado.`;
   };
-  const current = cup.matches.filter(m => m.round === match.round).sort((a, b) => a.position - b.position);
-  if (!current.every(m => m.status === 'confirmed')) {notices.push(progress());return notices;}
-  if (current.length === 1) {
+  if (isFinal) {
     cup.champion = match.winner;
     cup.status = 'completed'; cup.completedAt = at;
     const campaign = cup.matches.filter(m => m.home === cup.champion || m.away === cup.champion)
@@ -202,8 +200,14 @@ function advance(s: State, cup: Cup, match: Match, at: number): string[] {
     const titles=Object.values(s.cups).filter(c=>c.groupId===cup.groupId&&c.status==='completed'&&c.champion===cup.champion).length;
     notices.push(`🏆 CAMPEÃO DO ${cup.competitionName?.toUpperCase()??"MINICAMP MLG"}\n👑 ${winner.name} · ${teamLabel(winner.club,cup.teamKind)}\n${championCheers[match.code % championCheers.length]}\n\n🏅 ${titles===1?'Primeira taça registrada!':`${titles} títulos registrados no grupo.`}\n📊 Caminho até o título\n${campaign.join('\n\n')}`);
   } else {
-    requireThat(!cup.matches.some(m => m.round === match.round + 1), 'Rodada já existe.');
-    notices.push(addRound(s, cup, current.map(m => m.winner!), match.round + 1));
+    const sibling=cup.matches.find(m=>m.round===match.round&&m.position===(match.position^1));
+    if(sibling?.status==='confirmed'){
+      const position=Math.floor(match.position/2);
+      requireThat(!cup.matches.some(m=>m.round===match.round+1&&m.position===position),'Confronto da próxima fase já existe.');
+      const first=match.position%2===0?match:sibling;
+      const second=match.position%2===0?sibling:match;
+      notices.push(addRound(s,cup,[first.winner!,second.winner!],match.round+1,position));
+    }
   }
   notices[notices.length-1] += '\n\n'+progress();
   return notices;
@@ -507,7 +511,7 @@ export function apply(input: State, event: Event, env: Environment = environment
     requireThat(match.status!=='scheduled','A partida não possui resultado válido para anular.');
     const final=match.round===Math.log2(cup.size)-1;
     if(cmd==='!deletartitulo') requireThat(final&&cup.status==='completed','Informe o código da final de uma Copa concluída.');
-    requireThat(!cup.matches.some(m=>m.round>match.round),'Anule primeiro a Copa de teste com !anularcopa número-da-edição; esta partida já gerou outra fase.');
+    requireThat(!cup.matches.some(m=>m.round===match.round+1&&m.position===Math.floor(match.position/2)),'A partida já gerou o próximo confronto de outra fase. Corrija o placar com !forcarresultado ou anule a Copa de teste.');
     requireThat(!active()||active()!.id===cup.id,'Existe outra Copa ativa. Finalize ou cancele essa Copa antes de reabrir a anterior.');
     const before=JSON.stringify(cup);
     match.status='scheduled';delete match.winner;
