@@ -113,12 +113,14 @@ test('sorteio individual troca só seleções livres, preserva placares e bloque
   for(let i=0;i<4;i++)await send('u'+i,'!entrar');
   const cup=(await f.pool.query('SELECT id FROM mlg_bot.cups WHERE group_id=$1 AND status=$2',['g','playing'])).rows[0].id;
   await f.pool.query("INSERT INTO mlg_bot.club_pool(group_id,name) VALUES('g','Ucrânia'),('g','Rússia')");
-  await f.pool.query("UPDATE mlg_bot.cup_participants SET display_name=CASE user_id WHEN 'u0' THEN 'Samuel' WHEN 'u1' THEN 'Rafael' WHEN 'u2' THEN 'Alex Junior' ELSE 'Alex Silva' END WHERE cup_id=$1",[cup]);
   await f.pool.query('UPDATE mlg_bot.cup_participants SET club=NULL WHERE cup_id=$1 AND user_id=ANY($2::text[])',[cup,['u0','u1']]);
   await f.pool.query("UPDATE mlg_bot.cup_participants SET club=CASE user_id WHEN 'u0' THEN 'Ucrânia' ELSE 'Rússia' END WHERE cup_id=$1 AND user_id IN ('u0','u1')",[cup]);
   for(const i of [0,1])await f.pool.query('INSERT INTO mlg_bot.wa_identities(jid,user_id) VALUES($1,$2)',[`${200+i}@s.whatsapp.net`,`u${i}`]);
   const match=(await f.pool.query<{code:string;home:string;away:string}>("SELECT code,home,away FROM mlg_bot.matches WHERE cup_id=$1 AND round=0 AND (home='u0' OR away='u0')",[cup])).rows[0]!;
   await send(match.home,`!resultado ${match.code} 3x1`);await send(match.home,`!confirmar ${match.code}`);
+  // Recording a result synchronizes stored profile names. Set these fixture
+  // names afterwards so the ambiguity check sees the intended participants.
+  await f.pool.query("UPDATE mlg_bot.cup_participants SET display_name=CASE user_id WHEN 'u0' THEN 'Samuel' WHEN 'u1' THEN 'Rafael' WHEN 'u2' THEN 'Alex Junior' ELSE 'Alex Silva' END WHERE cup_id=$1",[cup]);
   const before=(await f.pool.query('SELECT code,round,position,home,away,winner,status FROM mlg_bot.matches WHERE cup_id=$1 ORDER BY code',[cup])).rows;
   const base={group:'g',actorAliases:['123@s.whatsapp.net'],reason:'Seleção indisponível no jogo'};
   assert.match((await cupRerollTeam(db,{...base,actorAliases:['999@s.whatsapp.net'],targetAliases:['200@s.whatsapp.net'],messageId:'deny'})).error!,/ADMs/);
