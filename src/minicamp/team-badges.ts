@@ -2,8 +2,10 @@ import {worldCupCandidates} from './nations.ts';
 import {minicampClubs} from './clubs.ts';
 
 // Stable visual labels for the MLG pools. Custom teams get neutral colours.
-const flags=['🇪🇸','🇦🇷','🇫🇷','🏴','🇧🇷','🇲🇦','🇵🇹','🇧🇪','🇳🇱','🇲🇽','🇨🇴','🇩🇪','🇭🇷','🇨🇭','🇮🇹','🇺🇸','🇯🇵','🇸🇳','🇳🇴','🇺🇾','🇩🇰','🇮🇷','🇦🇹','🇪🇬','🇪🇨','🇳🇬','🇹🇷','🇦🇺','🇩🇿','🇨🇦','🇨🇮','🇰🇷','🇺🇦','🇵🇾','🇷🇺','🇵🇱'];
+const flags=['🇪🇸','🇦🇷','🇫🇷','🏴','🇧🇷','🇲🇦','🇵🇹','🇧🇪','🇳🇱','🇲🇽','🇨🇴','🇩🇪','🇭🇷','🇨🇭','🇮🇹','🇺🇸','🇯🇵','🇸🇳','🇳🇴','🇺🇾','🇩🇰','🇮🇷','🇦🇹','🇪🇬','🇪🇨','🇳🇬','🇹🇷','🇦🇺','🇩🇿','🇨🇦','🇨🇮','🇰🇷','🇵🇾','🇵🇱'];
 const nationBadges=new Map(worldCupCandidates.map((name,index)=>[name,flags[index]!]));
+// Historic matches retain their flag even when a selection leaves the new-draw pool.
+nationBadges.set('Ucrânia','🇺🇦');nationBadges.set('Rússia','🇷🇺');
 // England's football flag is the St George cross, rather than the UK flag.
 nationBadges.set('Inglaterra','🏴\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}');
 const colours:Record<string,string>={

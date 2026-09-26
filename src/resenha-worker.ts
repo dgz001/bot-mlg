@@ -137,6 +137,28 @@ async function connect(){
    const answer=await cupApi<{text:string|null}>({action:'config',event:{group,aliases,id,name:message.pushName??'ADM',text}});
    if(answer.text&&socket===current&&enabled())await current.sendMessage(group,{text:answer.text});return;
   }
+  if(/^!sorteio\s+/i.test(text.trim())){
+   const mentioned=context?.mentionedJid??[];
+   const reason=text.includes('|')?text.slice(text.lastIndexOf('|')+1).trim():'Nova seleção solicitada pelo ADM';
+   const name=text.trim().replace(/^!sorteio\s+/i,'').split('|')[0]!.trim().replace(/^@+/,'').trim();
+   let answer='Use !sorteio Samuel ou !sorteio @pessoa [| motivo]. Informe o nome salvo na Copa ou marque uma conta; a chave e os placares ficam como estão.';
+   if(mentioned.length<=1&&name.length>=2&&name.length<=60&&reason.length>=8&&reason.length<=160){
+    let valid=true;
+    if(mentioned.length){
+     const metadata=await current.groupMetadata(group);
+     valid=metadata.participants.some(p=>jidNormalizedUser(p.id)===jidNormalizedUser(mentioned[0]!));
+    }
+    if(valid){
+     await configureCup(group,current);
+     try{
+      const target=mentioned.length?{targetAliases:await cupAliases(mentioned[0]!,current)}:{targetName:name};
+      const result=await cupApi<{error?:string;changed?:boolean;duplicate?:boolean}>({action:'cup-reroll-team',group,aliases,...target,messageId:id,reason});
+      answer=result.error?'⚠️ '+result.error:result.changed?'🎲 Sorteio registrado. O novo time e a chave serão anunciados aqui em instantes.':'✅ Pedido já processado. Confira !sorteio.';
+     }catch{answer='⚠️ Não foi possível registrar a troca agora. Tente novamente; a mesma mensagem não gera dois sorteios.';}
+    }else answer='⚠️ Marque uma pessoa que esteja neste grupo da Copa.';
+   }
+   if(socket===current&&!stopping&&enabled('minicamp'))await current.sendMessage(group,{text:answer});return;
+  }
   auth.data.cupInbox??=[];
   if(!auth.data.cupInbox.some(e=>e.group===group&&e.id===id&&e.aliases.some(a=>aliases.includes(a)))){
    if(auth.data.cupInbox.length>=100){

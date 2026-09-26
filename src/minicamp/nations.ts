@@ -6,5 +6,5 @@ export const worldCupCandidates = Object.freeze([
   'Croácia','Suíça','Itália','Estados Unidos','Japão','Senegal',
   'Noruega','Uruguai','Dinamarca','Irã','Áustria','Egito',
   'Equador','Nigéria','Turquia','Austrália','Argélia','Canadá',
-  'Costa do Marfim','Coreia do Sul','Ucrânia','Paraguai','Rússia','Polônia',
+  'Costa do Marfim','Coreia do Sul','Paraguai','Polônia',
 ]);

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
-import { processEvent, pgDatabase, checkpointCup, canonicalCheckpoint, cupDraw, cupRoster, type Database } from '../src/infra/postgres.ts';
+import { processEvent, pgDatabase, checkpointCup, canonicalCheckpoint, cupDraw, cupRoster, cupRerollTeam, type Database } from '../src/infra/postgres.ts';
 import { authStore } from '../src/whatsapp/auth-store.ts';
 import { randomBytes } from 'node:crypto';
 
@@ -100,6 +100,40 @@ test('refazer sorteio preserva participantes, códigos e checkpoints e bloqueia 
   const match=current.matches![0]!;await send(match.home,`!resultado ${match.code} 2x1`);
   const blocked=await cupDraw(db,request);assert.match(blocked.error!,/Sorteio bloqueado/);
   const announced=await f.pool.query("SELECT body FROM mlg_bot.outbox WHERE message_id LIKE 'panel-%' ORDER BY id DESC LIMIT 1");assert.match(announced.rows[0].body,/SORTEIO ATUALIZADO/);
+ }finally{await f.close();}
+});
+
+test('sorteio individual troca só seleções livres, preserva placares e bloqueia repetição',integration,async()=>{
+ const f=await fixture();try{
+  await setup(f.pool);
+  await f.pool.query("INSERT INTO mlg_bot.wa_identities(jid,user_id) VALUES('123@s.whatsapp.net','admin')");
+  let serial=0;const db=pgDatabase(f.pool);
+  const send=(userId:string,text:string)=>processEvent(db,{id:'reroll-'+ ++serial,groupId:'g',userId,name:userId,text,at:Date.now()+serial});
+  await send('admin','!novacopa');await send('admin','!formato 4');
+  for(let i=0;i<4;i++)await send('u'+i,'!entrar');
+  const cup=(await f.pool.query('SELECT id FROM mlg_bot.cups WHERE group_id=$1 AND status=$2',['g','playing'])).rows[0].id;
+  await f.pool.query("INSERT INTO mlg_bot.club_pool(group_id,name) VALUES('g','Ucrânia'),('g','Rússia')");
+  await f.pool.query("UPDATE mlg_bot.cup_participants SET display_name=CASE user_id WHEN 'u0' THEN 'Samuel' WHEN 'u1' THEN 'Rafael' WHEN 'u2' THEN 'Alex Junior' ELSE 'Alex Silva' END WHERE cup_id=$1",[cup]);
+  await f.pool.query('UPDATE mlg_bot.cup_participants SET club=NULL WHERE cup_id=$1 AND user_id=ANY($2::text[])',[cup,['u0','u1']]);
+  await f.pool.query("UPDATE mlg_bot.cup_participants SET club=CASE user_id WHEN 'u0' THEN 'Ucrânia' ELSE 'Rússia' END WHERE cup_id=$1 AND user_id IN ('u0','u1')",[cup]);
+  for(const i of [0,1])await f.pool.query('INSERT INTO mlg_bot.wa_identities(jid,user_id) VALUES($1,$2)',[`${200+i}@s.whatsapp.net`,`u${i}`]);
+  const match=(await f.pool.query<{code:string;home:string;away:string}>("SELECT code,home,away FROM mlg_bot.matches WHERE cup_id=$1 AND round=0 AND (home='u0' OR away='u0')",[cup])).rows[0]!;
+  await send(match.home,`!resultado ${match.code} 3x1`);await send(match.home,`!confirmar ${match.code}`);
+  const before=(await f.pool.query('SELECT code,round,position,home,away,winner,status FROM mlg_bot.matches WHERE cup_id=$1 ORDER BY code',[cup])).rows;
+  const base={group:'g',actorAliases:['123@s.whatsapp.net'],reason:'Seleção indisponível no jogo'};
+  assert.match((await cupRerollTeam(db,{...base,actorAliases:['999@s.whatsapp.net'],targetAliases:['200@s.whatsapp.net'],messageId:'deny'})).error!,/ADMs/);
+  assert.match((await cupRerollTeam(db,{...base,targetName:'Alex',messageId:'ambiguous'})).error!,/mais de um participante/);
+  const first=await cupRerollTeam(db,{...base,targetName:'samuel',messageId:'change-1'});
+  assert.equal(first.oldTeam,'Ucrânia');assert.ok(first.newTeam&&!['Ucrânia','Rússia'].includes(first.newTeam));
+  assert.equal((await cupRerollTeam(db,{...base,targetName:'Samuel',messageId:'change-1'})).duplicate,true);
+  const second=await cupRerollTeam(db,{...base,targetName:'Rafael',messageId:'change-2'});
+  assert.equal(second.oldTeam,'Rússia');assert.ok(second.newTeam&&!['Ucrânia','Rússia',first.newTeam].includes(second.newTeam));
+  assert.deepEqual((await f.pool.query('SELECT code,round,position,home,away,winner,status FROM mlg_bot.matches WHERE cup_id=$1 ORDER BY code',[cup])).rows,before);
+  assert.equal((await f.pool.query('SELECT count(*)::int AS total FROM mlg_bot.match_results WHERE match_code=$1',[match.code])).rows[0].total,1);
+  const active=(await f.pool.query('SELECT user_id,club FROM mlg_bot.cup_participants WHERE cup_id=$1',[cup])).rows;
+  assert.equal(active.find(p=>p.user_id==='u0')?.club,first.newTeam);assert.equal(active.find(p=>p.user_id==='u1')?.club,second.newTeam);
+  assert.equal((await f.pool.query("SELECT count(*)::int AS total FROM mlg_bot.audit_logs WHERE cup_id=$1 AND action='team-reroll'",[cup])).rows[0].total,2);
+  assert.equal((await f.pool.query("SELECT count(*)::int AS total FROM mlg_bot.cup_checkpoints WHERE cup_id=$1 AND event_id LIKE 'team-reroll-%'",[cup])).rows[0].total,4);
  }finally{await f.close();}
 });
 
@@ -260,9 +294,9 @@ test('gateway real: menção, bloqueio de comandos internos e sincronização se
   const source=(await readFile(new URL('../deploy/minicamp-gateway.ts',import.meta.url),'utf8')).replace(/^import .*;\n/gm,'').replace('__DIGEST__',createHash('sha256').update(header).digest('hex'));
   let handler:((req:Request)=>Promise<Response>)|undefined;
   const {memberCommand}=await import('../src/minicamp/member-commands.ts');
-  const factory=new Function('Pool','randomUUID','pgDatabase','processEvent','checkpointCup','minicampClubs','memberCommand','Deno','crypto',source);
+  const factory=new Function('Pool','randomUUID','pgDatabase','processEvent','checkpointCup','cupRerollTeam','minicampClubs','memberCommand','Deno','crypto',source);
   const client=f.pool;
-  factory(class {constructor(){return client;}},randomUUID,pgDatabase,processEvent,checkpointCup,[],memberCommand,{env:{get:()=>''},serve:(fn:typeof handler)=>{handler=fn;}},webcrypto);
+  factory(class {constructor(){return client;}},randomUUID,pgDatabase,processEvent,checkpointCup,cupRerollTeam,[],memberCommand,{env:{get:()=>''},serve:(fn:typeof handler)=>{handler=fn;}},webcrypto);
   let serial=0;
   const send=async(text:string,targets?:string[][],aliases=['100@s.whatsapp.net'])=>handler!(new Request('https://example.invalid',{method:'POST',headers:{authorization:header},body:JSON.stringify({action:'event',event:{group:'100@g.us',aliases,targets,id:String(++serial),name:'Test',text}})}));
   assert.equal((await send('!registrar Técnico | @conta',[['200@lid','200@s.whatsapp.net']])).status,200);

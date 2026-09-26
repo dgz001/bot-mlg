@@ -48,7 +48,7 @@ O histórico continua na conta, sem o @ no nome.
 
 🎲 SORTEIO E CHAVE
 !sorteio — ver equipes e confrontos
-No grupo da Copa: !copa (tudo), !chave A ou !chave B
+No grupo da Copa: !copa, !chave A/B e !sorteio Samuel ou !sorteio @pessoa [| motivo] para trocar só o time durante a disputa
 !refazersorteio equipes motivo — redistribuir equipes
 !refazersorteio chave motivo — refazer confrontos
 !refazersorteio completo motivo — refazer ambos

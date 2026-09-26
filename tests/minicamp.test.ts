@@ -589,9 +589,11 @@ test('Copa de seleções aceita 32 vagas, sorteia sem repetição e mantém hist
 });
 
 test('predefinição da Copa oferece 36 seleções únicas para revisão no painel',()=>{
- assert.equal(worldCupCandidates.length,36);
- assert.equal(new Set(worldCupCandidates).size,36);
- for(const name of ['Espanha','Holanda','Noruega','Irã','Costa do Marfim','Rússia','Polônia'])assert.ok(worldCupCandidates.includes(name),name);
+ assert.equal(worldCupCandidates.length,34);
+ assert.equal(new Set(worldCupCandidates).size,34);
+ for(const name of ['Espanha','Holanda','Noruega','Irã','Costa do Marfim','Polônia'])assert.ok(worldCupCandidates.includes(name),name);
+ assert.ok(!worldCupCandidates.includes('Ucrânia'));
+ assert.ok(!worldCupCandidates.includes('Rússia'));
  assert.ok(!worldCupCandidates.includes('Gana'));
 });
 

@@ -75,6 +75,60 @@ export async function cupDraw(database:Database,request:{group:string;controlGro
   return {changed:true,cupId:cup.id,name:cup.competition_name,mode:request.mode,participants:participants.rows,matches:matches.rows};
  });
 }
+// Replace only a participant's team. The group lock serializes this with match
+// results, draw changes and other replacements; the message ID makes retries safe.
+export async function cupRerollTeam(database:Database,request:{group:string;actorAliases:string[];targetAliases?:string[];targetName?:string;messageId:string;reason:string}):Promise<{error?:string;changed?:boolean;duplicate?:boolean;name?:string;oldTeam?:string;newTeam?:string}>{
+ return database.transaction(async q=>{
+  const actor=await q.query<{user_id:string}>(`SELECT DISTINCT a.user_id FROM mlg_bot.admins a
+    JOIN mlg_bot.wa_identities w ON w.user_id=a.user_id JOIN mlg_bot.groups g ON g.id=a.group_id
+    WHERE a.group_id=$1 AND w.jid=ANY($2::text[]) AND g.authorized AND g.admins_configured`,[request.group,request.actorAliases]);
+  if(actor.rows.length!==1)return {error:'Somente os ADMs selecionados para este grupo podem trocar uma seleção.'};
+  const admin=actor.rows[0]!.user_id;
+  const group=await q.query('SELECT 1 FROM mlg_bot.groups WHERE id=$1 AND authorized FOR UPDATE',[request.group]);
+  if(!group.rows.length)return {error:'Grupo da Copa não autorizado.'};
+  const previous=await q.query('SELECT 1 FROM mlg_bot.processed_messages WHERE group_id=$1 AND user_id=$2 AND message_id=$3',[request.group,admin,request.messageId]);
+  if(previous.rows.length)return {duplicate:true};
+  const cups=await q.query<{id:string;competition_name:string;team_kind:'clube'|'seleção'|'misto'}>("SELECT id,competition_name,team_kind FROM mlg_bot.cups WHERE group_id=$1 AND status='playing' FOR UPDATE",[request.group]);
+  const cup=cups.rows[0];if(!cup)return {error:'Não há Copa sorteada em andamento. A troca de time só vale durante a disputa.'};
+  const participants=await q.query<DrawRow>('SELECT user_id,display_name,club,position FROM mlg_bot.cup_participants WHERE cup_id=$1 ORDER BY position FOR UPDATE',[cup.id]);
+  let player:DrawRow|undefined;
+  if(request.targetAliases){
+   const targets=await q.query<{user_id:string}>('SELECT DISTINCT user_id FROM mlg_bot.wa_identities WHERE jid=ANY($1::text[])',[request.targetAliases]);
+   if(targets.rows.length!==1)return {error:'Menção não reconhecida. Marque a conta do participante que recebeu a seleção.'};
+   player=participants.rows.find(p=>p.user_id===targets.rows[0]!.user_id);
+  }else{
+   const normalized=(name:string)=>name.trim().replace(/^@+/,'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLocaleLowerCase('pt-BR').replace(/\s+/g,' ');
+   const wanted=normalized(request.targetName??'');
+   const exact=participants.rows.filter(p=>normalized(p.display_name)===wanted);
+   const choices=exact.length?exact:participants.rows.filter(p=>normalized(p.display_name).startsWith(wanted+' '));
+   if(choices.length>1)return {error:'Há mais de um participante com esse nome. Marque a conta no comando: !sorteio @pessoa.'};
+   player=choices[0];
+  }
+  if(!player?.club)return {error:'Participante sem time sorteado nesta Copa. Confira o nome com !participantes ou marque a conta.'};
+  const used=await q.query<{club:string}>('SELECT club FROM mlg_bot.cup_participants WHERE cup_id=$1 AND club IS NOT NULL',[cup.id]);
+  const retired=await q.query<{club:string}>("SELECT before_state->>'oldTeam' AS club FROM mlg_bot.audit_logs WHERE cup_id=$1 AND action='team-reroll'",[cup.id]);
+  const unavailable=new Set([...used.rows,...retired.rows].map(p=>p.club?.toLocaleLowerCase('pt-BR')));
+  const pool=await q.query<{name:string}>('SELECT name FROM mlg_bot.club_pool WHERE group_id=$1',[request.group]);
+  const available=pool.rows.filter(p=>!unavailable.has(p.name.toLocaleLowerCase('pt-BR')));
+  if(!available.length)return {error:'Nenhum time livre nesta Copa. Acrescente uma opção válida à lista pelo painel antes de repetir o comando.'};
+  const chosen=available[randomInt(available.length)]!.name;
+  const eventId='team-reroll-'+randomUUID();
+  await checkpointCup(q,request.group,cup.id,admin,eventId+'-before');
+  await q.query('UPDATE mlg_bot.cup_participants SET club=$3 WHERE cup_id=$1 AND user_id=$2',[cup.id,player.user_id,chosen]);
+  const at=Date.now();
+  await q.query(`INSERT INTO mlg_bot.audit_logs(actor,group_id,cup_id,occurred_at,action,before_state,after_state,outcome)
+    VALUES($1,$2,$3,$4,'team-reroll',$5::jsonb,$6::jsonb,'accepted')`,[admin,request.group,cup.id,at,JSON.stringify({userId:player.user_id,oldTeam:player.club,reason:request.reason}),JSON.stringify({userId:player.user_id,newTeam:chosen})]);
+  await checkpointCup(q,request.group,cup.id,admin,eventId+'-after');
+  const fixture=await q.query<{code:number;round:number;status:string}>(`SELECT code::float8 AS code,round,status FROM mlg_bot.matches
+    WHERE cup_id=$1 AND (home=$2 OR away=$2) ORDER BY round DESC,code DESC LIMIT 1`,[cup.id,player.user_id]);
+  const match=fixture.rows[0];
+  const stage=match?match.status==='confirmed'?'Os resultados anteriores continuam válidos; a situação do jogador não mudou.':`Jogo ${match.code} mantido; placar e chave preservados.`:'Chave e classificação preservadas.';
+  const message=`🎲 NOVO TIME · ${cup.competition_name.toUpperCase()}\n👤 ${player.display_name}\n${teamLabel(player.club,cup.team_kind)} → ${teamLabel(chosen,cup.team_kind)}\n\n📝 Motivo: ${request.reason}\n🔒 ${stage}\nA equipe anterior não voltará ao sorteio desta edição. Confira os confrontos com !copa.`;
+  await q.query('INSERT INTO mlg_bot.processed_messages(group_id,user_id,message_id,received_at) VALUES($1,$2,$3,$4)',[request.group,admin,request.messageId,at]);
+  await q.query('INSERT INTO mlg_bot.outbox(group_id,user_id,message_id,ordinal,body) VALUES($1,$2,$3,0,$4)',[request.group,admin,request.messageId,message]);
+  return {changed:true,name:player.display_name,oldTeam:player.club,newTeam:chosen};
+ });
+}
 export type RosterRequest={group:string;controlGroup:string;actorAliases:string[];change?:'incluir'|'retirar'|'trocar';position?:number;targetAliases?:string[];targetName?:string;expected?:string;reason?:string};
 export async function cupRoster(database:Database,request:RosterRequest):Promise<{error?:string;cupId?:string;name?:string;size?:number;status?:string;fingerprint?:string;participants?:DrawRow[];changed?:boolean}>{
  return database.transaction(async q=>{
