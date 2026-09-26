@@ -107,6 +107,7 @@ test('refazer sorteio preserva participantes, códigos e checkpoints e bloqueia 
 test('membro bloqueado não cria inscrição nem resultado e mensagens repetidas continuam idempotentes',integration,async()=>{
  const f=await fixture();try{
   await setup(f.pool);const db=pgDatabase(f.pool);
+  await f.pool.query("INSERT INTO mlg_bot.users(id,display_name) VALUES('u0','Jogador de teste')");
   await f.pool.query("INSERT INTO mlg_bot.member_blocks(user_id,blocked_by,reason) VALUES('u0','admin','Quebra das regras do grupo')");
   const event={id:'blocked-1',groupId:'g',userId:'u0',name:'u0',text:'!entrar',at:Date.now()};
   await processEvent(db,{...event,id:'open',userId:'admin',text:'!novacopa'});
