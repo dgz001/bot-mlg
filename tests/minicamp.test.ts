@@ -11,6 +11,9 @@ test('ADM abre nova Copa nomeada no mesmo grupo e histórico mantém campeão e 
  const final=h.state.cups[old.id]!.matches.find(m=>m.round===1)!;
  h.send(final.home,`!resultado ${final.code} 3x2`);h.send(final.away,`!confirmar ${final.code}`);
  assert.equal(h.state.cups[old.id]!.status,'completed');
+ assert.match(h.send('u0','!copa').notices.join(''),/Nenhuma Copa ativa/);
+ assert.match(h.send('u0','!chave').notices.join(''),/CAMINHO ATÉ A TAÇA/);
+ assert.match(h.send('u0','!historico').notices.join(''),/🥈/);
  h.send('admin','!novacopa');
  assert.throws(()=>h.send('admin2','!nome Copa Nova'),/Somente o ADM/);
  h.send('admin','!nome Copa Novos Desafios');h.send('admin','!categoria clube');
