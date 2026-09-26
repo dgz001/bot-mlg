@@ -38,3 +38,22 @@ export function decideTie(mode: TieMode, first?: LegScore, second?: LegScore, pe
   if (penalties.home === penalties.away) throw Error('Informe uma disputa de pênaltis decisiva.');
   return { status: 'decided', aggregate, winner: penalties.home > penalties.away ? 'home' : 'away', by: 'penalties', penalties };
 }
+
+export function tieCard(homeName: string, awayName: string, mode: TieMode, first?: LegScore, second?: LegScore, penalties?: LegScore): string {
+  const decision = decideTie(mode, first, second, penalties);
+  const name = (value: string) => value.replace(/[\r\n\x00-\x1f\x7f\u202a-\u202e*_~`]/g, '').trim().slice(0, 60) || 'Participante';
+  const home = name(homeName), away = name(awayName);
+  if (mode === 'single') return `⚔️ JOGO ÚNICO\n${home} × ${away}\n${first ? `${first.home} x ${first.away}\n✅ Classificado: ${decision.status === 'decided' && decision.winner === 'home' ? home : away}` : '⏳ Placar aguardado'}`;
+  const lines = [
+    '⚔️ IDA E VOLTA',
+    `1️⃣ Ida · ${home} × ${away}: ${first ? `${first.home} x ${first.away}` : 'a jogar'}`,
+    `2️⃣ Volta · ${away} × ${home}: ${second ? `${second.home} x ${second.away}` : 'a jogar'}`,
+  ];
+  if (decision.aggregate && second) lines.push(`📊 Agregado · ${home} ${decision.aggregate.home} x ${decision.aggregate.away} ${away}`);
+  if (decision.status === 'awaiting-penalties') lines.push('🥅 Empate no agregado: aguardando pênaltis.');
+  if (decision.status === 'decided') {
+    if (decision.penalties) lines.push(`🥅 Pênaltis · ${decision.penalties.home} x ${decision.penalties.away}`);
+    lines.push(`✅ Classificado: ${decision.winner === 'home' ? home : away}`);
+  }
+  return lines.join('\n');
+}
