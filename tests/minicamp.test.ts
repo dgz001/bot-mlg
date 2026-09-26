@@ -5,15 +5,31 @@ import {worldCupCandidates} from '../src/minicamp/nations.ts';
 import {allowedDrawTeam} from '../src/minicamp/nations.ts';
 
 const clubs = Array.from({ length: 20 }, (_, i) => `Clube ${i + 1}`);
+test('Minicamp mantém rodada simples e não recebe configuração de Copa formal',()=>{
+ const h=harness();
+ assert.match(h.send('admin','!novacopa').notices.join(''),/MINICAMP MLG · NOVA RODADA/);
+ assert.throws(()=>h.send('admin','!nome Copa Formal'),/Minicamp mantém o formato simples/);
+ assert.throws(()=>h.send('admin','!jogos 2'),/Minicamp mantém o formato simples/);
+ assert.match(h.send('admin','!formato 4').notices.join(''),/Inscrições abertas/);
+ const cup=Object.values(h.state.cups)[0]!;
+ for(let i=0;i<4;i++)h.send('u'+i,'!entrar');
+ for(const m of h.state.cups[cup.id]!.matches.filter(m=>m.round===0)){h.send(m.home,`!resultado ${m.code} 2x1`);h.send(m.away,`!confirmar ${m.code}`);}
+ const final=h.state.cups[cup.id]!.matches.find(m=>m.round===1)!;
+ h.send(final.home,`!resultado ${final.code} 3x2`);h.send(final.away,`!confirmar ${final.code}`);
+ assert.match(h.send('u0','!copa').notices.join(''),/encerrada/);
+ assert.match(h.send('u0','!historico').notices.join(''),/🥈/);
+});
 test('ADM abre nova Copa nomeada no mesmo grupo e histórico mantém campeão e vice',()=>{
  const h=harness();const old=h.start(4);
  for(const m of old.matches.filter(m=>m.round===0)){h.send(m.home,`!resultado ${m.code} 2x1`);h.send(m.away,`!confirmar ${m.code}`);}
  const final=h.state.cups[old.id]!.matches.find(m=>m.round===1)!;
  h.send(final.home,`!resultado ${final.code} 3x2`);h.send(final.away,`!confirmar ${final.code}`);
  assert.equal(h.state.cups[old.id]!.status,'completed');
- assert.match(h.send('u0','!copa').notices.join(''),/Nenhuma Copa ativa/);
+ assert.match(h.send('u0','!copa').notices.join(''),/Edição 1/);
  assert.match(h.send('u0','!chave').notices.join(''),/CAMINHO ATÉ A TAÇA/);
  assert.match(h.send('u0','!historico').notices.join(''),/🥈/);
+ h.state.groups.g!.competitionName='Copa Formal MLG';
+ assert.match(h.send('u0','!copa').notices.join(''),/Nenhuma Copa ativa/);
  h.send('admin','!novacopa');
  assert.throws(()=>h.send('admin2','!nome Copa Nova'),/Somente o ADM/);
  h.send('admin','!nome Copa Novos Desafios');h.send('admin','!categoria clube');
@@ -624,7 +640,7 @@ test('arquivo não mistura grupos nem mostra Copa anulada',()=>{
 
 test('Copa de seleções aceita 32 vagas, sorteia sem repetição e mantém histórico do grupo',()=>{
  const h=harness();h.state.groups.g={authorized:true,admins:['admin'],clubs:Array.from({length:36},(_,i)=>`Seleção ${i+1}`),competitionName:'Copa do Mundo MLG',teamKind:'seleção'};
- h.send('admin','!novacopa');h.send('admin','!formato 32');
+ h.send('admin','!novacopa');h.send('admin','!nome Copa do Mundo MLG');h.send('admin','!categoria seleção');h.send('admin','!formato 32');h.send('admin','!jogos 1');h.send('admin','!abrircopa');
  for(let i=0;i<32;i++)h.send(`j${i}`,'!entrar');
  const cup=Object.values(h.state.cups)[0]!;
  assert.equal(cup.size,32);assert.equal(cup.matches.length,16);assert.equal(new Set(cup.participants.map(p=>p.club)).size,32);
