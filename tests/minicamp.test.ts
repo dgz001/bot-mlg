@@ -15,7 +15,7 @@ test('ADM abre nova Copa nomeada no mesmo grupo e histórico mantém campeão e 
  assert.throws(()=>h.send('admin2','!nome Copa Nova'),/Somente o ADM/);
  h.send('admin','!nome Copa Novos Desafios');h.send('admin','!categoria clube');
  h.send('admin','!formato 8');
- assert.throws(()=>h.send('admin','!jogos 2'),/desempate seguro/);
+ assert.throws(()=>h.send('admin','!jogos 2'),/registro seguro/);
  assert.equal(Object.values(h.state.cups).length,1);
  h.send('admin','!jogos 1');
  assert.match(h.send('admin','!abrircopa').notices.join(''),/Inscrições abertas/);
