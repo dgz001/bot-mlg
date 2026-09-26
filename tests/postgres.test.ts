@@ -46,7 +46,7 @@ async function setup(db: Pool) {
 
 test('configuração nomeada persiste entre comandos e novo grupo não mistura campeões',integration,async()=>{
  const f=await fixture();try{
-  await setup(f.pool);let id=0;
+  await setup(f.pool);await f.pool.query("UPDATE mlg_bot.groups SET competition_name='Copa Oficial' WHERE id='g'");let id=0;
   const send=(userId:string,text:string)=>processEvent(pgDatabase(f.pool),{id:'setup-'+ ++id,groupId:'g',userId,name:userId,text,at:Date.now()+id});
   await send('admin','!novacopa');await send('admin','!nome Copa Nova');
   await f.restartClient();await send('admin','!categoria clube');await send('admin','!formato 8');
@@ -211,7 +211,7 @@ test('modelos de campeonato ficam no grupo e a Copa conserva nome e sorteio apó
   for(const team of teams)await db.query("INSERT INTO mlg_bot.club_pool(group_id,name) VALUES('g',$1)",[team]);
   let seq=0;const send=(who:string,text:string)=>processEvent(pgDatabase(db),{id:'template-'+ ++seq,groupId:'g',userId:who,name:who,text,at:Date.now()+seq});
   assert.match((await send('admin','!novacopa')).notices[0]!,/COPA DO MUNDO/);
-  await send('admin','!formato 4');for(let i=0;i<4;i++)await send('j'+i,'!entrar');
+  await send('admin','!nome Copa do Mundo');await send('admin','!categoria seleção');await send('admin','!formato 4');await send('admin','!jogos 1');await send('admin','!abrircopa');for(let i=0;i<4;i++)await send('j'+i,'!entrar');
   const cup=await db.query<{competition_name:string;team_kind:string}>("SELECT competition_name,team_kind FROM mlg_bot.cups WHERE group_id='g'");
   assert.deepEqual(cup.rows[0],{competition_name:'Copa do Mundo',team_kind:'seleção'});
   assert.deepEqual((await db.query<{club:string}>("SELECT club FROM mlg_bot.cup_participants ORDER BY club")).rows.map(x=>x.club).sort(),[...teams].sort());
