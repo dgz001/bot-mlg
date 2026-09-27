@@ -359,7 +359,7 @@ export async function autoConfirmDue(database:Database,now=Date.now()):Promise<n
  let confirmed=0;
  for(const row of due.rows){
   try{
-   const result=await processEvent(database,{id:`auto-confirm-${row.code}-${row.revision}`,groupId:row.group_id,userId:AUTO_CONFIRM_ACTOR,name:'Sistema MLG',text:`!confirmar ${row.code}`,at:Date.now()});
+   const result=await processEvent(database,{id:`auto-confirm-${row.code}-${row.revision}`,groupId:row.group_id,userId:AUTO_CONFIRM_ACTOR,name:'Sistema MLG',text:`!confirmar ${row.code}`,at:now});
    if(!result.duplicate&&result.notices.length)confirmed++;
   }catch(error){
    // A player may confirm or contest between the due scan and the group lock.
