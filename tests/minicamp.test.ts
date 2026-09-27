@@ -1,10 +1,44 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { apply, emptyState, environment, type State } from '../src/minicamp/engine.ts';
+import { apply, emptyState, environment, AUTO_CONFIRM_ACTOR, AUTO_CONFIRM_DELAY_MS, type State } from '../src/minicamp/engine.ts';
 import {worldCupCandidates} from '../src/minicamp/nations.ts';
 import {allowedDrawTeam} from '../src/minicamp/nations.ts';
 
 const clubs = Array.from({ length: 20 }, (_, i) => `Clube ${i + 1}`);
+test('forçar quartas remove jogos encerrados do !copa e identifica a semifinal pelo novo código',()=>{
+ const h=harness();h.state.groups.g!.competitionName='Copa do Mundo MLG';
+ h.send('admin','!novacopa');h.send('admin','!nome Copa do Mundo MLG');h.send('admin','!categoria clube');h.send('admin','!formato 16');h.send('admin','!jogos 1');h.send('admin','!abrircopa');
+ for(let i=0;i<16;i++)h.send('u'+i,'!entrar');
+ const cup=Object.values(h.state.cups)[0]!;
+ for(const m of cup.matches.filter(m=>m.round===0))h.send('admin',`!forcarresultado ${m.code} 2x1`);
+ const [canada,turquia]=h.state.cups[cup.id]!.matches.filter(m=>m.round===1).sort((a,b)=>a.position-b.position);
+ h.send('admin',`!forcarresultado ${canada!.code} 3x2`);
+ h.send('admin',`!forcarresultado ${turquia!.code} 1x2`);
+ const current=h.state.cups[cup.id]!;
+ const semi=current.matches.find(m=>m.round===2&&m.position===0)!;
+ const listing=h.send('u0','!copa').notices[0]!;
+ assert.match(listing,/SOMENTE JOGOS ABERTOS/);
+ assert.match(listing,new RegExp(`SEMIFINAL · JOGO ${semi.code}`));
+ assert.doesNotMatch(listing,new RegExp(`JOGO ${canada!.code} · a jogar`));
+ assert.doesNotMatch(listing,new RegExp(`JOGO ${turquia!.code} · a jogar`));
+ assert.match(h.send(canada!.home,`!jogo ${canada!.code}`).notices[0]!,/confirmado/);
+});
+test('cinco minutos: confirma uma vez, contestação bloqueia, W.O. não avança automaticamente',()=>{
+ const h=harness();const cup=h.start(4),[first,second]=cup.matches;
+ h.send(first!.home,`!resultado ${first!.code} 3x1`);
+ const at=h.state.cups[cup.id]!.matches[0]!.results[0]!.at;
+ const auto=(code:number,revision:number,time:number)=>apply(h.state,{id:`auto-confirm-${code}-${revision}`,groupId:'g',userId:AUTO_CONFIRM_ACTOR,name:'Sistema MLG',text:`!confirmar ${code}`,at:time},environment);
+ assert.throws(()=>auto(first!.code,1,at+AUTO_CONFIRM_DELAY_MS-1),/Prazo/);
+ const result=auto(first!.code,1,at+AUTO_CONFIRM_DELAY_MS);assert.match(result.notices.join(''),/automaticamente/);
+ assert.equal(result.state.cups[cup.id]!.matches[0]!.winner,first!.home);
+ assert.equal(apply(result.state,{id:`auto-confirm-${first!.code}-1`,groupId:'g',userId:AUTO_CONFIRM_ACTOR,name:'Sistema MLG',text:`!confirmar ${first!.code}`,at:at+AUTO_CONFIRM_DELAY_MS+1},environment).notices.length,0);
+ h.send(second!.home,`!resultado ${second!.code} 2x1`);h.send(second!.away,`!contestar ${second!.code}`);
+ assert.throws(()=>auto(second!.code,1,at+AUTO_CONFIRM_DELAY_MS+1000),/contestado/);
+ assert.equal(h.state.cups[cup.id]!.matches[1]!.status,'disputed');
+ const other=harness();const fresh=other.start(4),m=fresh.matches[0]!;
+ other.send(m.home,'!sair');
+ assert.throws(()=>apply(other.state,{id:`auto-confirm-${m.code}-1`,groupId:'g',userId:AUTO_CONFIRM_ACTOR,name:'Sistema MLG',text:`!confirmar ${m.code}`,at:999999},environment),/Prazo/);
+});
 test('Copa formal lista só partidas abertas e cada jogador consulta o próximo adversário',()=>{
  const h=harness();h.state.groups.g!.competitionName='Copa do Mundo MLG';
  h.send('admin','!novacopa');h.send('admin','!nome Copa do Mundo MLG');h.send('admin','!categoria clube');h.send('admin','!formato 16');h.send('admin','!jogos 1');h.send('admin','!abrircopa');
