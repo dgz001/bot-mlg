@@ -5,6 +5,22 @@ import {worldCupCandidates} from '../src/minicamp/nations.ts';
 import {allowedDrawTeam} from '../src/minicamp/nations.ts';
 
 const clubs = Array.from({ length: 20 }, (_, i) => `Clube ${i + 1}`);
+test('autor cancela placar pendente e reencontra a ordem mandante x visitante sem avanço duplicado',()=>{
+ const h=harness();const cup=h.start(4),match=cup.matches[0]!;
+ const pending=h.send(match.away,`!resultado ${match.code} 1x3`).notices.join('');
+ assert.match(pending,/MANDANTE[\s\S]+VISITANTE/);
+ assert.match(pending,new RegExp(`!cancelar ${match.code}`));
+ assert.throws(()=>h.send(match.home,`!cancelar ${match.code}`),/Só quem informou/);
+ const cancelled=h.send(match.away,'!cancelar').notices.join('');
+ assert.match(cancelled,/PLACAR RETIRADO/);
+ const before=h.state.cups[cup.id]!.matches[0]!;assert.equal(before.status,'scheduled');assert.equal(before.results[0]!.reason,'Retirado pelo jogador antes da confirmação');
+ assert.throws(()=>h.send(match.home,`!confirmar ${match.code}`),/pendente/);
+ const revised=h.send(match.away,`!resultado ${match.code} 3x1`).notices.join('');
+ assert.match(revised,/MANDANTE[\s\S]+3[\s\S]+VISITANTE[\s\S]+1/);
+ h.send(match.home,`!confirmar ${match.code} 3x1`);
+ const updated=h.state.cups[cup.id]!.matches[0]!;
+ assert.equal(updated.status,'confirmed');assert.equal(updated.results.length,2);assert.equal(updated.winner,match.home);
+});
 test('forçar quartas remove jogos encerrados do !copa e identifica a semifinal pelo novo código',()=>{
  const h=harness();h.state.groups.g!.competitionName='Copa do Mundo MLG';
  h.send('admin','!novacopa');h.send('admin','!nome Copa do Mundo MLG');h.send('admin','!categoria clube');h.send('admin','!formato 16');h.send('admin','!jogos 1');h.send('admin','!abrircopa');
