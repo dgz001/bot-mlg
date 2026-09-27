@@ -5,6 +5,27 @@ import {worldCupCandidates} from '../src/minicamp/nations.ts';
 import {allowedDrawTeam} from '../src/minicamp/nations.ts';
 
 const clubs = Array.from({ length: 20 }, (_, i) => `Clube ${i + 1}`);
+test('Copa formal lista só partidas abertas e cada jogador consulta o próximo adversário',()=>{
+ const h=harness();h.state.groups.g!.competitionName='Copa do Mundo MLG';
+ h.send('admin','!novacopa');h.send('admin','!nome Copa do Mundo MLG');h.send('admin','!categoria clube');h.send('admin','!formato 16');h.send('admin','!jogos 1');h.send('admin','!abrircopa');
+ for(let i=0;i<16;i++)h.send('u'+i,'!entrar');
+ const cup=Object.values(h.state.cups)[0]!;
+ const first=cup.matches.filter(m=>m.round===0).sort((a,b)=>a.position-b.position);
+ const a=first[0]!,b=first[1]!;
+ h.send(a.home,`!resultado ${a.code} 2x1`);h.send(a.away,`!confirmar ${a.code}`);
+ assert.match(h.send(a.home,'!meujogo').notices.join(''),new RegExp(`vencedor do jogo ${b.code}`));
+ h.send(b.home,`!resultado ${b.code} 2x1`);
+ const progress=h.send(b.away,`!confirmar ${b.code}`).notices.join('');
+ const next=h.state.cups[cup.id]!.matches.find(m=>m.round===1&&m.position===0)!;
+ assert.match(progress,new RegExp(`JOGO ${next.code}`));
+ assert.doesNotMatch(progress,new RegExp(`JOGO ${a.code}`));
+ const listing=h.send('u2','!copa').notices.join('');
+ assert.match(listing,new RegExp(`JOGO ${next.code}`));
+ assert.doesNotMatch(listing,new RegExp(`JOGO ${a.code}`));
+ assert.doesNotMatch(listing,new RegExp(`JOGO ${b.code}`));
+ assert.match(h.send(a.home,'!meujogo').notices.join(''),new RegExp(`código ${next.code}`));
+ assert.match(h.send(a.home,'!chave').notices.join(''),new RegExp(`JOGO ${a.code}`));
+});
 test('Minicamp mantém rodada simples e não recebe configuração de Copa formal',()=>{
  const h=harness();
  assert.match(h.send('admin','!novacopa').notices.join(''),/MINICAMP MLG · NOVA RODADA/);
