@@ -4,6 +4,7 @@ import {allowsGroup,groupMode,validGroupMode} from './infra/group-modes.ts';
 import {adminControl,type ControlTarget} from './infra/admin-control.ts';
 import {whatsappControls} from './infra/whatsapp-controls.ts';
 import {minicampClient,minicampCommand,type PendingCupEvent} from './minicamp/client.ts';
+import {cupQuestion} from './minicamp/question.ts';
 import {cupMediaFor} from './minicamp/media.ts';
 import {orderMessages} from './minicamp/message-order.ts';
 import {loadRoster} from './resenha/matchup.ts';
@@ -139,6 +140,16 @@ async function connect(){
   return;
  }
  if(!enabled())return;
+ const question=inChannel(group,'minicamp')&&enabled('minicamp')&&cupApi&&message.key.participant?cupQuestion(text):null;
+ if(question){
+  const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
+  const aliases=await cupAliases(message.key.participant!,current);
+  const blocked=await cupApi!<{blocked:boolean}>({action:'block-check',aliases});if(blocked.blocked)return;
+  auth.data.cupInbox??=[];
+  if(auth.data.cupInbox.length>=100){await current.sendMessage(group,{text:'⚠️ Muitas consultas aguardando. Tente !meujogo novamente em instantes.'});return;}
+  auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);
+  auth.data.cupInbox.push({group,aliases,id,name:message.pushName??'Participante',text:question});await auth.save();void cupTick();return;
+ }
  if(/^!supabase\s*$/i.test(text)&&inChannel(group,'minicamp')&&enabled('minicamp')){
   const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
   auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);await auth.save();
@@ -206,7 +217,13 @@ async function connect(){
     const metadata=await current.groupMetadata(group);
     targets=await Promise.all(metadata.participants.slice(0,100).map(p=>cupAliases(p.id,current)));
    }
-   auth.data.cupInbox.push({group,aliases,targets,id,name:message.pushName??'Participante',text:text.trim()});await auth.save();
+  auth.data.cupInbox.push({group,aliases,targets,id,name:message.pushName??'Participante',text:text.trim()});await auth.save();
+  if(/^!resultado(?:\s|$)/i.test(text.trim())&&message.key.participant){
+   auth.data.scoreReactions??=[];
+   auth.data.scoreReactions.push({group,participant:message.key.participant,id,at:Date.now()});
+   auth.data.scoreReactions=auth.data.scoreReactions.slice(-100);
+   await auth.save();
+  }
   }
   void cupTick();return;
  }
@@ -271,6 +288,16 @@ async function cupTick(){
     if(!sent){await current.sendMessage(m.group_id,{text:m.body},{messageId:m.wa_message_id});sent=true;}
    }catch{log('MINICAMP_SEND_RETRY');}
    await cupApi({action:'ack',id:m.id,lease:m.lease,sent});
+  }
+  for(const entry of (auth.data.scoreReactions??[]).slice(0,10)){
+   if(Date.now()-entry.at>24*60*60*1000){auth.data.scoreReactions=auth.data.scoreReactions?.filter(e=>e!==entry);await auth.save();continue;}
+   if(!inChannel(entry.group,'minicamp'))continue;
+   const state=await cupApi<{status:'processing'|'pending'|'confirmed'|'rejected'}>({action:'score-reaction',group:entry.group,messageId:entry.id});
+   if(state.status!=='confirmed'&&state.status!=='rejected')continue;
+   try{
+    await current.sendMessage(entry.group,{react:{text:state.status==='confirmed'?'✅':'❌',key:{remoteJid:entry.group,participant:entry.participant,id:entry.id,fromMe:false}}});
+    auth.data.scoreReactions=auth.data.scoreReactions?.filter(e=>e!==entry);await auth.save();
+   }catch{log('SCORE_REACTION_RETRY');}
   }
   cupHealthy=true;lastCupTick=lastCupSuccessAt=Date.now();
  }catch{cupHealthy=false;log('MINICAMP_RETRY');}finally{

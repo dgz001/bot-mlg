@@ -54,6 +54,18 @@ Deno.serve(async req=>{
  const raw=await req.text();if(raw.length>32000)return new Response('Too large',{status:413});
  const body=JSON.parse(raw);let result={};
  if(body.action==='health'){await db.transaction(q=>q.query('SELECT 1'));result={database:true};}
+ else if(body.action==='score-reaction'){
+  if(!groupId.test(body.group)||typeof body.messageId!=='string'||body.messageId.length<1||body.messageId.length>150)throw Error('Invalid score message');
+  result=await db.transaction(async q=>{
+   const row=await q.query(`SELECT i.status AS inbox_status,r.status AS result_status,m.status AS match_status,
+    (SELECT max(revision) FROM mlg_bot.match_results WHERE match_code=r.match_code) AS latest_revision,r.revision
+    FROM mlg_bot.inbox i LEFT JOIN mlg_bot.match_results r ON r.author=i.user_id AND r.created_at=i.received_at
+    LEFT JOIN mlg_bot.matches m ON m.code=r.match_code AND EXISTS(SELECT 1 FROM mlg_bot.cups c WHERE c.id=m.cup_id AND c.group_id=i.group_id)
+    WHERE i.group_id=$1 AND i.message_id=$2 ORDER BY i.id DESC LIMIT 1`,[body.group,body.messageId]);
+   const found=row.rows[0];
+   return {status:!found||found.inbox_status==='pending'?'processing':found.inbox_status==='rejected'||!found.result_status?'rejected':found.result_status==='pending'?'pending':found.result_status==='confirmed'&&found.match_status==='confirmed'&&found.revision===found.latest_revision?'confirmed':'rejected'};
+  });
+ }
  else if(body.action==='control-check'){
   if(!groupId.test(body.group)||!validAliases(body.aliases))throw Error('Invalid control identity');
   result=await db.transaction(async q=>{
