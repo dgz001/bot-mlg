@@ -1,6 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {adminControl,type ControlWorkspace} from '../src/infra/admin-control.ts';
+test('ADM usa outra sala autorizada para corrigir a Copa selecionada com identidade verificada',async()=>{
+ const room:ControlWorkspace={targetId:'copa@g.us'},calls:Record<string,unknown>[]=[];
+ const actor={controlGroup:'resenha@g.us',aliases:['123@s.whatsapp.net'],messageId:'wa-42'};
+ const send=(text:string,identity:typeof actor|null=actor)=>adminControl(text,room,[{id:'copa@g.us',name:'Copa do Mundo'}],async payload=>{calls.push(payload);return {accepted:true};},async()=>{},Date.now(),identity??undefined);
+ assert.match(await send('!forcarresultado 158 3x2 Erro confirmado'),/registrado em Copa do Mundo/);
+ assert.deepEqual(calls[0],{action:'admin-cup-command',source:'resenha@g.us',group:'copa@g.us',aliases:actor.aliases,messageId:'wa-42',text:'!forcarresultado 158 3x2 Erro confirmado'});
+ assert.match(await send('!resolver 158 3x2 Motivo revisado'),/registrado/);
+ assert.match(await send('!vistoria'),/registrado/);
+ assert.match(await send('!deletar sem-codigo'),/Use !deletar código/);
+ assert.equal(calls.length,3);
+ assert.match(await send('!forcarresultado 158 3x2',null),/verificada/);
+});
 
 test('bloqueio exige ADM, conta verificada, motivo e permite reversão auditável',async()=>{
  const room:ControlWorkspace={targetId:'copa@g.us'};
