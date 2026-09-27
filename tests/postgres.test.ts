@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
-import { processEvent, pgDatabase, checkpointCup, canonicalCheckpoint, cupDraw, cupRoster, cupRerollTeam, type Database } from '../src/infra/postgres.ts';
+import { processEvent, autoConfirmDue, pgDatabase, checkpointCup, canonicalCheckpoint, cupDraw, cupRoster, cupRerollTeam, type Database } from '../src/infra/postgres.ts';
 import { authStore } from '../src/whatsapp/auth-store.ts';
 import { randomBytes } from 'node:crypto';
 
@@ -95,6 +95,25 @@ test('três inscrições concorrentes ocupam posições únicas e duas confirma�
   assert.equal(results.filter(r=>r.notices.join('\n').includes('JÁ CONFIRMADO')).length,1);
   const registered=await f.pool.query<{total:number;winner:string;status:string}>("SELECT count(r.revision)::int AS total,max(m.winner) AS winner,max(m.status) AS status FROM mlg_bot.matches m JOIN mlg_bot.match_results r ON r.match_code=m.code WHERE m.code=$1 GROUP BY m.code",[match.code]);
   assert.equal(registered.rows[0]?.total,1);assert.equal(registered.rows[0]?.status,'confirmed');
+ }finally{await f.close();}
+});
+test('PostgreSQL: prazo automático persiste após reconexão, não duplica e respeita contestação',integration,async()=>{
+ const f=await fixture();try{
+  await setup(f.pool);const db=pgDatabase(f.pool);let seq=0;
+  const send=(who:string,text:string)=>processEvent(db,{id:'autodb-'+ ++seq,groupId:'g',userId:who,name:who,text,at:Date.now()});
+  await send('admin','!novacopa');await send('admin','!formato 4');for(let i=0;i<4;i++)await send('u'+i,'!entrar');
+  const games=(await f.pool.query<{code:string;home:string;away:string}>('SELECT code,home,away FROM mlg_bot.matches ORDER BY position')).rows;
+  await send(games[0]!.home,`!resultado ${games[0]!.code} 3x1`);
+  await send(games[1]!.home,`!resultado ${games[1]!.code} 2x1`);
+  await send(games[1]!.away,`!contestar ${games[1]!.code}`);
+  await f.restartClient();
+  assert.equal(await autoConfirmDue(pgDatabase(f.pool),Date.now()+300001),1);
+  assert.equal(await autoConfirmDue(pgDatabase(f.pool),Date.now()+300001),0);
+  const rows=(await f.pool.query<{code:string;status:string;revisions:number}>(`SELECT m.code::text AS code,m.status,count(r.revision)::int AS revisions FROM mlg_bot.matches m JOIN mlg_bot.match_results r ON r.match_code=m.code GROUP BY m.code,m.status ORDER BY m.code`)).rows;
+  assert.equal(rows.find(row=>row.code===games[0]!.code)?.status,'confirmed');
+  assert.equal(rows.find(row=>row.code===games[0]!.code)?.revisions,1);
+  assert.equal(rows.find(row=>row.code===games[1]!.code)?.status,'disputed');
+  assert.equal((await f.pool.query("SELECT count(*)::int AS total FROM mlg_bot.outbox WHERE body LIKE '%RESULTADO CONFIRMADO%' AND user_id='mlg-auto-confirm'")).rows[0].total,1);
  }finally{await f.close();}
 });
 

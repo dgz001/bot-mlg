@@ -2,7 +2,7 @@ import {minicampClubs} from './clubs.ts';
 // Private server-to-server gateway. Inject only a token digest during deployment.
 import {Pool} from 'npm:pg@8.23.0';
 import {randomUUID} from 'node:crypto';
-import {pgDatabase,processEvent,checkpointCup,cupDraw,cupRoster,cupRerollTeam} from './postgres.ts';
+import {pgDatabase,processEvent,autoConfirmDue,checkpointCup,cupDraw,cupRoster,cupRerollTeam} from './postgres.ts';
 import {memberCommand} from './member-commands.ts';
 const EXPECTED_DIGEST='__DIGEST__';
 const pool=new Pool({connectionString:Deno.env.get('SUPABASE_DB_URL'),max:2,connectionTimeoutMillis:8000});
@@ -415,6 +415,7 @@ Deno.serve(async req=>{
  }
  else if(body.action==='poll'){
   await processInbox();
+  await autoConfirmDue(db);
   result=await db.transaction(async q=>{
    const rows=await q.query("SELECT id FROM mlg_bot.outbox WHERE (status='pending' AND available_at<=now()) OR (status='sending' AND lease_until<now()) ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 3");
    const messages=[];

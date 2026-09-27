@@ -1,6 +1,6 @@
 import type { Pool } from 'pg';
 import { createHash, randomInt, randomUUID } from 'node:crypto';
-import { apply, emptyState, environment, type Cup, type Event, type Match, type Participant, type Result, type Environment } from '../minicamp/engine.ts';
+import { apply, emptyState, environment, AUTO_CONFIRM_ACTOR, AUTO_CONFIRM_DELAY_MS, type Cup, type Event, type Match, type Participant, type Result, type Environment } from '../minicamp/engine.ts';
 import {teamLabel} from '../minicamp/team-badges.ts';
 import {allowedDrawTeam} from '../minicamp/nations.ts';
 
@@ -341,4 +341,31 @@ export async function processEvent(database: Database, event: Event, env: Enviro
     }
     return { duplicate: false, notices: output.notices };
   });
+}
+
+// Called by the gateway poll after its inbox has been drained. The original
+// result timestamp is durable, and processEvent serializes with contestations
+// under the group lock before confirming or advancing the bracket.
+export async function autoConfirmDue(database:Database,now=Date.now()):Promise<number>{
+ const due=await database.transaction(q=>q.query<{code:number;revision:number;group_id:string}>(`SELECT m.code::float8 AS code,r.revision,c.group_id
+  FROM mlg_bot.match_results r JOIN mlg_bot.matches m ON m.code=r.match_code
+  JOIN mlg_bot.cups c ON c.id=m.cup_id
+  WHERE c.status='playing' AND m.status='pending' AND r.status='pending'
+    AND r.revision=(SELECT max(revision) FROM mlg_bot.match_results WHERE match_code=m.code)
+    AND r.reason IS NULL AND r.created_at <= $1
+    AND EXISTS(SELECT 1 FROM mlg_bot.groups g WHERE g.id=c.group_id AND g.authorized)
+    AND NOT EXISTS(SELECT 1 FROM mlg_bot.inbox i WHERE i.group_id=c.group_id AND i.status='pending')
+  ORDER BY r.created_at,m.code LIMIT 8`,[now-AUTO_CONFIRM_DELAY_MS]));
+ let confirmed=0;
+ for(const row of due.rows){
+  try{
+   const result=await processEvent(database,{id:`auto-confirm-${row.code}-${row.revision}`,groupId:row.group_id,userId:AUTO_CONFIRM_ACTOR,name:'Sistema MLG',text:`!confirmar ${row.code}`,at:now});
+   if(!result.duplicate&&result.notices.length)confirmed++;
+  }catch(error){
+   // A player may confirm or contest between the due scan and the group lock.
+   if(error instanceof Error&&/^(Resultado contestado|Nenhum resultado pendente|Copa não está em andamento)/.test(error.message))continue;
+   throw error;
+  }
+ }
+ return confirmed;
 }
