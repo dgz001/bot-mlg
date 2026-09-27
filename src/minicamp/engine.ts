@@ -39,6 +39,8 @@ export type State = {
 };
 export type Event = { id: string; groupId: string; userId: string; name: string; text: string; at: number };
 export type Environment = { id(): string; shuffle<T>(items: T[]): T[] };
+export const AUTO_CONFIRM_ACTOR='mlg-auto-confirm';
+export const AUTO_CONFIRM_DELAY_MS=5*60*1000;
 export const environment: Environment = {
   id: randomUUID,
   shuffle<T>(items: T[]): T[] {
@@ -108,9 +110,10 @@ function bracket(cup: Cup, side?: 'A'|'B'): string {
 }
 function upcoming(cup:Cup):string {
  if(cup.status==='open')return `📣 Inscrições abertas: ${cup.participants.length}/${cup.size}. Use !entrar.`;
- const games=cup.matches.filter(m=>m.status!=='confirmed').sort((a,b)=>b.round-a.round||a.position-b.position);
- if(!games.length)return '⏳ Aguardando a definição dos próximos confrontos.';
- return games.map(m=>`⚔️ ${roundName(cup.size/2**m.round)} · JOGO ${m.code} · ${matchStatus(m.status)}\n${player(cup,m.home).name} (${teamLabel(player(cup,m.home).club,cup.teamKind)}) × ${player(cup,m.away).name} (${teamLabel(player(cup,m.away).club,cup.teamKind)})`).join('\n\n');
+ const games=cup.matches.filter(m=>m.status!=='confirmed').sort((a,b)=>a.round-b.round||a.position-b.position);
+ if(!games.length)return '⏳ Não há partidas abertas. Aguarde a próxima fase ou consulte !historico.';
+ const completed=cup.matches.filter(m=>m.status==='confirmed').length;
+ return `📌 SOMENTE JOGOS ABERTOS · ${completed} já confirmado(s)\nPartidas encerradas saíram desta lista. A próxima fase tem código próprio.\n\n`+games.map(m=>`⚔️ ${roundName(cup.size/2**m.round)} · JOGO ${m.code} · ${matchStatus(m.status)}\n${player(cup,m.home).name} (${teamLabel(player(cup,m.home).club,cup.teamKind)}) × ${player(cup,m.away).name} (${teamLabel(player(cup,m.away).club,cup.teamKind)})${m.status==='scheduled'?`\n📸 Print no grupo → !resultado ${m.code} 3x2 → !confirmar ${m.code}`:m.status==='pending'?`\n⏳ Até cinco minutos para !confirmar ${m.code} ou !contestar ${m.code}.`:''}`).join('\n\n');
 }
 function score(m: Match): Result {
   const value = m.results.at(-1);
@@ -131,7 +134,7 @@ function addRound(s: State, cup: Cup, ids: string[], round: number, startPositio
     cup.matches.push(match);
     output.push(matchCard(cup, match));
   }
-  output.push('📌 O primeiro nome é o mandante; informe o placar nessa ordem.\n📸 Mandem o print e usem !resultado 4x3 → !confirmar.\nOs dois jogadores podem confirmar.');
+  output.push('📌 O primeiro nome é o mandante; informe o placar nessa ordem.\n📸 Print no grupo → !resultado CÓDIGO 4x3 → !confirmar CÓDIGO.\nOs dois jogadores podem confirmar. Placar errado? !contestar CÓDIGO. Sem contestação, um placar comum é confirmado após cinco minutos.');
   return output.join('\n\n');
 }
 // Stable choices survive retries/restarts without changing sporting decisions.
@@ -186,7 +189,7 @@ function advance(s: State, cup: Cup, match: Match, at: number): string[] {
   const winner = player(cup, match.winner);
   const loser = player(cup, match.winner === match.home ? match.away : match.home);
   const isFinal = cup.size / 2 ** match.round === 2;
-  const notices = [`✅ RESULTADO CONFIRMADO\n#${match.code}\n${player(cup, match.home).name} ${r.home} x ${r.away} ${player(cup, match.away).name}\n${isFinal ? `🏆 ${winner.name} é campeão!\n🥈 ${loser.name} fica com o vice. Valeu pela disputa até a final!` : `🏆 ${winner.name} está classificado!\n${classifiedCheers[match.code % classifiedCheers.length]}\n\n${loser.name} está eliminado.\n${eliminatedCheers[match.code % eliminatedCheers.length]}`}`];
+  const notices = [`✅ RESULTADO CONFIRMADO\n#${match.code} · ${roundName(cup.size/2**match.round)}\n${player(cup, match.home).name} ${r.home} x ${r.away} ${player(cup, match.away).name}\n${isFinal ? `🏆 ${winner.name} é campeão!\n🥈 ${loser.name} fica com o vice. Valeu pela disputa até a final!` : `🟢 CLASSIFICADO · ${winner.name}\n${classifiedCheers[match.code % classifiedCheers.length]}\n\n🔴 ELIMINADO · ${loser.name}\n${eliminatedCheers[match.code % eliminatedCheers.length]}\n📣 Na próxima edição: !entrar para se inscrever novamente.`}`];
   const progress=()=>{
     const side=match.position<cup.size/2**(match.round+2)?'A':'B';
     const sibling=cup.matches.find(m=>m.round===match.round&&m.position===(match.position^1));
@@ -216,6 +219,7 @@ function advance(s: State, cup: Cup, match: Match, at: number): string[] {
     }
   }
   notices[notices.length-1] += '\n\n'+progress();
+  if(!isFinal&&cup.competitionName!=='Minicamp MLG')notices.push(`📣 PRÓXIMA COPA · ${loser.name}\nSua participação nesta edição terminou no jogo ${match.code}. Obrigado por jogar!\nQuando o ADM abrir a próxima edição neste grupo, use !entrar para tentar de novo.\nPara rever a campanha: !minhascopas.`);
   return notices;
 }
 
@@ -250,6 +254,8 @@ export function apply(input: State, event: Event, env: Environment = environment
   const normalized = event.text.trim().replace(/^!forçar\s+resultado/i,'!forcarresultado').replace(/^!forcar\s+resultado/i,'!forcarresultado').replace(/^!deletar\s+t[ií]tulo/i,'!deletartitulo').replace(/^!cancelar\s+copa$/i,'!cancelarcopa').replace(/(\d)\s*[xX×]\s*(\d)/g,'$1x$2').replace(/^!formato\s+(4|8|16|32)$/i, (whole, n) => s.drafts[event.groupId]?.name?whole:(({ '4':'1','8':'2','16':'3','32':'4' } as Record<string,string>)[n]!));
   const parts = normalized.split(/\s+/);
   const cmd = parts[0]!.toLowerCase();
+  const automatic=event.userId===AUTO_CONFIRM_ACTOR&&/^auto-confirm-\d+-\d+$/.test(event.id);
+  if(event.userId===AUTO_CONFIRM_ACTOR)requireThat(automatic&&cmd==='!confirmar'&&parts.length===2&&/^\d+$/.test(parts[1]??''),'Evento automático inválido.');
   let notices: string[] = [];
   const cheer=['🔥 Chegou pra disputar a taça ou pra render resenha?','🎮 Agora é no controle! A torcida já está de olho.','🍿 Mais um nome na disputa. Vai faltar cadeira nessa arquibancada!','⚽ Tá dentro! O discurso de campeão a gente deixa pra final.','🏆 Vaga garantida. Agora chama aquele rival que fala muito!','📣 A lista está esquentando! Essa Copa promete.'][[...event.id].reduce((n,c)=>n+c.charCodeAt(0),0)%6];
   const profiles=s.profiles?.[event.groupId]??{};
@@ -486,7 +492,7 @@ export function apply(input: State, event: Event, env: Environment = environment
     const { cup, match } = inferred??getMatch(parts[1]);
     requireThat(cup.status === 'playing'||cmd==='!confirmar'&&cup.status==='completed'&&match.status==='confirmed', 'Copa não está em andamento.');
     const participant = [match.home, match.away].includes(event.userId);
-    requireThat(admin || participant, 'Somente jogadores do confronto ou ADM.');
+    requireThat(admin || participant || automatic&&cmd==='!confirmar', 'Somente jogadores do confronto ou ADM.');
     const before = JSON.stringify(cup);
     if (cmd === '!resultado') {
       requireThat(match.status === 'scheduled', 'Partida já possui resultado; use o fluxo de contestação.');
@@ -494,7 +500,7 @@ export function apply(input: State, event: Event, env: Environment = environment
       requireThat(shorthand || parts.length === 3, 'Formato: !resultado 3x2 ou !resultado código 3x2');
       const result: Result = { ...parseScore(parts[shorthand?1:2]), author: event.userId, at: event.at, status: 'pending' };
       match.results.push(result); match.status = 'pending';
-      notices.push(`📝 RESULTADO ANOTADO\nPartida #${match.code}\n${player(cup, match.home).name} ${result.home} x ${result.away} ${player(cup, match.away).name}\nClassificado provisório: ${player(cup, result.home > result.away ? match.home : match.away).name}\nAguardando confirmação de um dos dois jogadores: !confirmar ${result.home}x${result.away}.\nConfira o print no grupo; se discordar, use !contestar ${match.code} antes da confirmação.\n${pendingCheers[match.code%pendingCheers.length]}`);
+      notices.push(`📝 RESULTADO ANOTADO\nPartida #${match.code}\n${player(cup, match.home).name} ${result.home} x ${result.away} ${player(cup, match.away).name}\nClassificado provisório: ${player(cup, result.home > result.away ? match.home : match.away).name}\n📸 Confiram o print no grupo. Aguardando confirmação de um dos dois jogadores: use !confirmar ${match.code} ${result.home}x${result.away}.\n⚠️ Placar errado? Use !contestar ${match.code} antes de cinco minutos; a contestação impede o avanço automático.\n⏱️ Sem confirmação ou contestação, este placar será confirmado automaticamente após cinco minutos.\n${pendingCheers[match.code%pendingCheers.length]}`);
     } else if (cmd === '!contestar') {
       requireThat(match.status === 'pending', 'Nenhum resultado pendente para contestar.');
       match.status = 'disputed'; score(match).status = 'disputed'; score(match).disputedBy = event.userId;
@@ -508,6 +514,7 @@ export function apply(input: State, event: Event, env: Environment = environment
       notices.push(...advance(s, cup, match, event.at));
     } else {
       if(match.status==='confirmed'){
+        if(automatic){s.processed[eventKey]=true;return {state:s,notices:[]};}
         requireThat(shorthand||parts.length===2||parts.length===3,'Formato: !confirmar código [placar]');
         if(confirmationScore||parts.length===3){const provided=parseScore(parts[confirmationScore?1:2]);const registered=score(match);requireThat(provided.home===registered.home&&provided.away===registered.away,'Placar diferente do resultado confirmado. Consulte !jogo código ou peça correção ao ADM.');}
         notices.push(`✅ JOGO ${match.code} JÁ CONFIRMADO\nO resultado foi registrado uma vez. A classificação não será repetida.\nConfira com !jogo ${match.code}.`);
@@ -515,11 +522,14 @@ export function apply(input: State, event: Event, env: Environment = environment
       requireThat(match.status !== 'disputed', 'Resultado contestado; ADM deve resolver.');
       requireThat(match.status === 'pending', 'Nenhum resultado pendente.');
       const pendingResult=score(match);
+      if(automatic)requireThat(event.id===`auto-confirm-${match.code}-${match.results.length}`&&pendingResult.reason===undefined&&event.at-pendingResult.at>=AUTO_CONFIRM_DELAY_MS,'Prazo de confirmação automática não concluído.');
       const selfConfirm=pendingResult.author===event.userId;
       requireThat(shorthand||parts.length===2||parts.length===3,'Formato: !confirmar código [placar]');
       if(confirmationScore||parts.length===3){const provided=parseScore(parts[confirmationScore?1:2]);requireThat(provided.home===pendingResult.home&&provided.away===pendingResult.away,'Placar diferente do informado. Confira mandante x visitante ou use !contestar.');}
       pendingResult.status = 'confirmed'; pendingResult.confirmedBy = event.userId;
+      if(automatic)pendingResult.reason='Confirmação automática após cinco minutos sem contestação';
       if(selfConfirm)pendingResult.reason=[pendingResult.reason,'Placar confirmado pelo próprio jogador que informou; sujeito a correção administrativa'].filter(Boolean).join('; ');
+      if(automatic)notices.push('⏱️ Cinco minutos sem contestação: placar confirmado automaticamente. Se o print estiver errado, peça a correção a um ADM.');
       if(selfConfirm)notices.push('✅ Jogador confirmou o placar que informou. Se vocês encontrarem um erro no print, um ADM pode corrigir o resultado.');
       notices.push(...advance(s, cup, match, event.at));
       }
