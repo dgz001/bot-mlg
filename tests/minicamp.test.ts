@@ -25,6 +25,25 @@ test('resenha leve do Mini Camp registra só o último placar confirmado',()=>{
  assert.match(corrected,/2 x 1/);assert.doesNotMatch(corrected,/1 x 2/);
  assert.equal((corrected.match(new RegExp(`Jogo ${match.code}`, 'g'))??[]).length,1);
 });
+test('Mini Camp com quatro jogadores mostra final projetada sem inventar adversário',()=>{
+ const h=harness(),cup=h.start(4),[a,b]=cup.matches;
+ const before=h.send(a!.home,'!proximafase').notices[0]!;
+ assert.match(before,/SEMIFINAL/);assert.doesNotMatch(before,/⚔️ FINAL/);
+ h.send(a!.home,`!resultado ${a!.code} 2x1`);
+ h.send(a!.away,`!confirmar ${a!.code}`);
+ const next=h.send(a!.home,'!proximafase').notices[0]!;
+ assert.match(next,/FINAL/);assert.match(next,new RegExp(`Vencedor #${b!.code}`));
+ assert.match(next,new RegExp(a!.home));assert.doesNotMatch(next,new RegExp(a!.away));
+ assert.doesNotMatch(next,/SEMIFINAL|Avança:|PRÓXIMO JOGO/);
+ assert.match(h.send(a!.home,'!meujogo').notices[0]!,new RegExp(`Vencedor #${b!.code}`));
+ const overview=h.send(a!.home,'!copa').notices[0]!;
+ assert.match(overview,new RegExp(`#${b!.code}`));assert.doesNotMatch(overview,new RegExp(`#${a!.code}\\s+${a!.home}`));
+ h.send(b!.home,`!resultado ${b!.code} 1x0`);h.send(b!.away,`!confirmar ${b!.code}`);
+ const final=h.state.cups[cup.id]!.matches.find(m=>m.round===1)!;
+ const ready=h.send(a!.home,'!próxima fase').notices[0]!;
+ assert.match(ready,new RegExp(`#${final.code} ${a!.home} × ${b!.home}`));
+ assert.doesNotMatch(ready,/Vencedor #/);
+});
 test('autor cancela placar pendente e reencontra a ordem mandante x visitante sem avanço duplicado',()=>{
  const h=harness();const cup=h.start(4),match=cup.matches[0]!;
  const pending=h.send(match.away,`!resultado ${match.code} 1x3`).notices.join('');
@@ -175,9 +194,9 @@ test('a chave mostra lados estáveis, classificados e caminho até a final',()=>
  const match=first[0]!;h.send(match.home,`!resultado ${match.code} 3x1`);
  const automatic=h.send(match.home,`!confirmar ${match.code}`).notices.join('\n');
  assert.match(automatic,/CHAVE ATUALIZADA/);
- assert.match(automatic,/avançou no lado A/);
- assert.match(automatic,/Próximo adversário:/);
- assert.match(automatic,/LADO A[\s\S]+LADO B[\s\S]+FINAL/);
+ assert.match(automatic,/QUARTAS DE FINAL/);
+ assert.match(automatic,new RegExp(`Vencedor #${first[1]!.code}`));
+ assert.doesNotMatch(automatic,/🎮 JOGO 100[\s\S]+🎮 JOGO 107/);
  const updated=h.send('u0','!chave A').notices[0]!;
  assert.match(updated,/Avança:/);
  assert.ok(updated.includes(match.home));
