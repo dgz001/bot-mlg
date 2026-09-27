@@ -149,8 +149,8 @@ function miniNextRound(cup:Cup):number {
 function miniOverview(cup:Cup):string {
  if(!cup.matches.length)return `🎲 Inscrições: ${cup.participants.length}/${cup.size}. Use !entrar.`;
  if(cup.status==='completed')return miniPhase(cup,Math.log2(cup.size)-1)+'\n🏆 Campeão: '+player(cup,cup.champion!).name;
- const first=Math.min(...cup.matches.filter(m=>m.status!=='confirmed').map(m=>m.round));
- return Array.from({length:Math.log2(cup.size)-first},(_,i)=>miniPhase(cup,first+i,undefined,true)).filter(Boolean).join('\n\n')+'\n📍 !proximafase · 🎯 !meujogo';
+ const rounds=[...new Set(cup.matches.filter(m=>m.status!=='confirmed').map(m=>m.round))].sort((a,b)=>a-b);
+ return rounds.map(round=>miniPhase(cup,round,undefined,true)).filter(Boolean).join('\n\n')+'\n📍 !proximafase · 🎯 !meujogo';
 }
 function score(m: Match): Result {
   const value = m.results.at(-1);
@@ -686,8 +686,11 @@ export function apply(input: State, event: Event, env: Environment = environment
     requireThat(parts.length===1,'Use !proximafase sem argumentos.');
     const cup=active()??[...groupCups].sort((a,b)=>b.createdAt-a.createdAt).find(c=>c.status==='completed');
     requireThat(cup,'Nenhuma Copa ativa neste grupo.');
-    const phase=miniPhase(cup,miniNextRound(cup));
-    notices.push(`📍 PRÓXIMA FASE · ${cup.competitionName?.toUpperCase()??'MLG'}\n${phase}${cup.status==='completed'?`\n🏆 ${player(cup,cup.champion!).name} é campeão.`:phase.includes('Vencedor #')?'\nVaga pendente: aguarde a confirmação do jogo indicado.':''}`);
+    if(cup.status==='open')notices.push(`📍 ${cup.competitionName?.toUpperCase()??'MLG'}\nInscrições: ${cup.participants.length}/${cup.size}. A primeira fase aparece após o sorteio. Use !entrar.`);
+    else{
+      const phase=miniPhase(cup,miniNextRound(cup));
+      notices.push(`📍 PRÓXIMA FASE · ${cup.competitionName?.toUpperCase()??'MLG'}\n${phase}${cup.status==='completed'?`\n🏆 ${player(cup,cup.champion!).name} é campeão.`:phase.includes('Vencedor #')?'\nVaga pendente: aguarde a confirmação do jogo indicado.':''}`);
+    }
   } else if (cmd === '!chave' || cmd === '!lado') {
     const arg=parts[1]?.toUpperCase();
     requireThat(parts.length<=2 && (!arg || arg==='A' || arg==='B'), 'Use !chave, !chave A ou !chave B.');
@@ -696,7 +699,7 @@ export function apply(input: State, event: Event, env: Environment = environment
   } else if (cmd === '!resenhacamp') {
     requireThat(casualMinicamp,'A resenha do Mini Camp fica no grupo do Mini Camp.');
     requireThat(parts.length===1,'Use !resenhacamp sem argumentos.');
-    const games=groupCups.filter(c=>c.status!=='cancelled').flatMap(c=>c.matches.filter(m=>m.status==='confirmed').map(m=>({cup:c,match:m,result:score(m)})))
+    const games=groupCups.filter(c=>c.status!=='cancelled'&&c.competitionName==='Minicamp MLG').flatMap(c=>c.matches.filter(m=>m.status==='confirmed').map(m=>({cup:c,match:m,result:score(m)})))
       .sort((a,b)=>b.result.at-a.result.at||b.match.code-a.match.code).slice(0,5);
     notices.push(`🍿 RESENHA DO MINI CAMP\n${games.map(({cup,match,result})=>`⚽ Jogo ${match.code} · ${cupLabel(cup)}\n${player(cup,match.home).name} ${result.home} x ${result.away} ${player(cup,match.away).name}\n${result.reason?.includes('W.O.')?'🏳️ Decidido por W.O.':`🎮 ${player(cup,match.winner!).name} levou essa!`}`).join('\n\n')||'Ainda não tem jogo confirmado. Quando a turma jogar, a resenha aparece aqui.'}\n\nSó resultados confirmados deste Mini Camp; correções entram na consulta e edições anuladas ficam fora.`);
   } else if (cmd === '!meujogo') {

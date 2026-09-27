@@ -38,11 +38,35 @@ test('Mini Camp com quatro jogadores mostra final projetada sem inventar advers�
  assert.match(h.send(a!.home,'!meujogo').notices[0]!,new RegExp(`Vencedor #${b!.code}`));
  const overview=h.send(a!.home,'!copa').notices[0]!;
  assert.match(overview,new RegExp(`#${b!.code}`));assert.doesNotMatch(overview,new RegExp(`#${a!.code}\\s+${a!.home}`));
+ assert.doesNotMatch(overview,/⚔️ FINAL/);
  h.send(b!.home,`!resultado ${b!.code} 1x0`);h.send(b!.away,`!confirmar ${b!.code}`);
  const final=h.state.cups[cup.id]!.matches.find(m=>m.round===1)!;
  const ready=h.send(a!.home,'!próxima fase').notices[0]!;
  assert.match(ready,new RegExp(`#${final.code} ${a!.home} × ${b!.home}`));
  assert.doesNotMatch(ready,/Vencedor #/);
+});
+test('próxima fase atende Copa formal nas inscrições, mata-mata, final e título',()=>{
+ const h=harness();h.state.groups.g!.competitionName='Copa do Mundo MLG';
+ h.send('admin','!novacopa');h.send('admin','!nome Copa do Mundo MLG');h.send('admin','!categoria clube');h.send('admin','!formato 4');h.send('admin','!jogos 1');h.send('admin','!abrircopa');
+ assert.match(h.send('u0','!proximafase').notices[0]!,/Inscrições: 0\/4/);
+ for(let i=0;i<4;i++)h.send(`u${i}`,'!entrar');
+ const cup=Object.values(h.state.cups)[0]!,[a,b]=cup.matches;
+ assert.match(h.send('u0','!proximafase').notices[0]!,/SEMIFINAL/);
+ h.send(a!.home,`!resultado ${a!.code} 2x1`);h.send(a!.away,`!confirmar ${a!.code}`);
+ const waiting=h.send('u0','!proximafase').notices[0]!;
+ assert.match(waiting,/⚔️ FINAL/);assert.match(waiting,new RegExp(`Vencedor #${b!.code}`));
+ h.send(b!.home,`!resultado ${b!.code} 1x0`);h.send(b!.away,`!confirmar ${b!.code}`);
+ const final=h.state.cups[cup.id]!.matches.find(m=>m.round===1)!;
+ assert.match(h.send('u0','!proximafase').notices[0]!,new RegExp(`#${final.code} ${a!.home} × ${b!.home}`));
+ h.send(final.home,`!resultado ${final.code} 1x0`);h.send(final.away,`!confirmar ${final.code}`);
+ assert.match(h.send('u0','!proximafase').notices[0]!,new RegExp(`${final.home} é campeão`));
+});
+test('resenha do Mini Camp não mistura placar de Copa nomeada no mesmo grupo',()=>{
+ const h=harness(),cup=h.start(4),match=cup.matches[0]!;
+ h.send(match.home,`!resultado ${match.code} 2x0`);h.send(match.away,`!confirmar ${match.code}`);
+ assert.match(h.send('u0','!resenhacamp').notices[0]!,new RegExp(`Jogo ${match.code}`));
+ h.state.cups[cup.id]!.competitionName='Copa Oficial MLG';
+ assert.doesNotMatch(h.send('u0','!resenhacamp').notices[0]!,new RegExp(`Jogo ${match.code}`));
 });
 test('autor cancela placar pendente e reencontra a ordem mandante x visitante sem avanço duplicado',()=>{
  const h=harness();const cup=h.start(4),match=cup.matches[0]!;
@@ -184,7 +208,7 @@ test('a chave mostra lados estáveis, classificados e caminho até a final',()=>
  const overview=h.send('u0','!copa').notices[0]!;
  const a=h.send('u0','!chave A').notices[0]!;
  const b=h.send('u0','!chave B').notices[0]!;
- assert.match(overview,/LADO A[\s\S]+LADO B[\s\S]+FINAL/);
+ assert.match(overview,/LADO A[\s\S]+LADO B/);assert.doesNotMatch(overview,/⚔️ FINAL/);
  assert.ok(a.includes(`JOGO ${first[0]!.code}`));
  assert.ok(!a.includes(`JOGO ${first[4]!.code}`));
  assert.ok(b.includes(`JOGO ${first[4]!.code}`));
