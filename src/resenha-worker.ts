@@ -68,6 +68,28 @@ async function connect(){
  const self=[current.user?.id,current.user?.lid].filter(Boolean).map(v=>jidNormalizedUser(v!));
  const mention=context?.mentionedJid?.some(j=>self.includes(jidNormalizedUser(j)));
  const reply=context?.participant&&self.includes(jidNormalizedUser(context.participant));
+ // Power commands must remain reachable in every authorized group while responses are paused.
+ const power=whatsappControls(text,auth.data.controls);
+ if(power&&auth.data.groups.includes(group)&&groupMode(auth.data.groupModes,group)!=='controle'&&cupApi&&message.key.participant){
+  const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
+  try{
+   const aliases=await cupAliases(message.key.participant,current);
+   const members=(await current.groupMetadata(group)).participants;
+   if(!members.some(p=>aliases.includes(jidNormalizedUser(p.id)))&&!(await Promise.all(members.map(p=>cupAliases(p.id,current).catch(()=>[])))).some(a=>a.some(j=>aliases.includes(j))))return;
+   const permission=await cupApi<{allowed:boolean}>({action:'control-check',group,aliases});
+   let response='🔒 Só os ADMs selecionados para este grupo no painel podem controlar o bot.';
+   let restartRequested=false;
+   if(permission.allowed){
+    if(power.next){const previous=auth.data.controls;auth.data.controls=power.next;try{await auth.save();}catch{auth.data.controls=previous;throw Error('Settings persistence failed');}log('BOT_CONTROLS_UPDATED_BY_WA');}
+    response=power.restart&&!process.connected?'⚠️ O supervisor de reinício não está disponível. Use o botão Reiniciar no painel.':power.text;
+    restartRequested=power.restart===true&&Boolean(process.connected);
+   }
+   auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);await auth.save();
+   if(socket===current&&!stopping)await current.sendMessage(group,{text:response});
+   if(restartRequested&&socket===current&&!stopping&&process.connected)process.send?.({type:'restart-request'});
+  }catch{log('POWER_CONTROL_RETRY');if(socket===current&&!stopping)await current.sendMessage(group,{text:'⚠️ Não foi possível confirmar o comando no banco. Confira o painel antes de repetir.'});}
+  return;
+ }
  if(auth.data.groups.includes(group)&&groupMode(auth.data.groupModes,group)==='controle'){
   if(!text.trim().startsWith('!')||!cupApi||!message.key.participant)return;
   if(text.length>10000){await current.sendMessage(group,{text:'⚠️ Mensagem muito longa. Envie até 200 times em mensagens menores com !adicionar.'});return;}
@@ -260,10 +282,10 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
   if(phase!=='CONNECTED'||!socket)throw Error('Not connected');
   const participating=await socket.groupFetchAllParticipating();if(!Object.hasOwn(participating,req.group))throw Error('Group unavailable');
   const previous=auth.data.panelSelection;const templates={...previous?.templates};
-  if(req.templateId)templates[req.group]=req.templateId;else if(req.templateChanged)delete templates[req.group];
+  if(req.templateChanged)templates[req.group]=req.templateId;
   auth.data.panelSelection={group:req.group,templates};
   try{await auth.save();}catch{auth.data.panelSelection=previous;throw Error('Selection persistence failed');}
-  return {selectedGroup:req.group,selectedTemplate:templates[req.group]??''};
+  return {selectedGroup:req.group,selectedTemplate:templates[req.group]};
  }
  if(req.action==='set-group-mode'){
  if(typeof req.group!=='string'||!auth.data.groups.includes(req.group)||!validGroupMode(req.mode))throw Error('Invalid group mode');
@@ -304,7 +326,7 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
   return {...result,authorized:startingControl&&result.updated,mode:groupMode(auth.data.groupModes,req.group)};
  }
  const result=await cupApi<Record<string,unknown>>({action:req.action,group:req.group,ids:req.ids,approved:req.approved,name:req.name,teamKind:req.teamKind,formatSize:req.formatSize,teams:req.teams,templateId:req.templateId,size:req.size,cupId:req.cupId,reason:req.reason});
- return req.action==='templates-list'?{...result,selectedTemplate:auth.data.panelSelection?.templates[req.group]??''}:result;
+ return req.action==='templates-list'?{...result,selectedTemplate:auth.data.panelSelection?.templates[req.group]}:result;
  }
  if(req.action==='pair'){
  if(auth.state.creds.registered||phase==='CONNECTED'||phase==='STOPPED')throw new Error('Pairing unavailable');
