@@ -1,10 +1,30 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { apply, emptyState, environment, AUTO_CONFIRM_ACTOR, AUTO_CONFIRM_DELAY_MS, type State } from '../src/minicamp/engine.ts';
+import { apply, emptyState, environment, commandMenu, AUTO_CONFIRM_ACTOR, AUTO_CONFIRM_DELAY_MS, type State } from '../src/minicamp/engine.ts';
 import {worldCupCandidates} from '../src/minicamp/nations.ts';
 import {allowedDrawTeam} from '../src/minicamp/nations.ts';
 
 const clubs = Array.from({ length: 20 }, (_, i) => `Clube ${i + 1}`);
+test('instruções do placar ensinam a ordem dos gols sem sugerir placar específico',()=>{
+ const h=harness(),cup=h.start(4),match=cup.matches[0]!;
+ h.state.groups.g!.competitionName='Copa do Mundo MLG';cup.competitionName='Copa do Mundo MLG';
+ const tips=[commandMenu,h.send(match.home,'!copa').notices.join(''),h.send(match.home,'!meujogo').notices.join(''),h.send(match.home,'!ajuda').notices.join('')];
+ for(const tip of tips){assert.match(tip,/MxV/);assert.doesNotMatch(tip,/!resultado(?:\s+\d+|\s+CÓDIGO)?\s+\d+x\d+/i);}
+ assert.match(tips.join(' '),/mandante primeiro/);
+});
+test('resenha leve do Mini Camp registra só o último placar confirmado',()=>{
+ const h=harness(),cup=h.start(4),match=cup.matches[0]!;
+ assert.match(h.send(match.home,'!resenhacamp').notices[0]!,/Ainda não tem jogo confirmado/);
+ h.send(match.home,`!resultado ${match.code} 1x2`);
+ assert.doesNotMatch(h.send(match.home,'!resenhacamp').notices[0]!,/1 x 2/);
+ const confirmed=h.send(match.away,`!confirmar ${match.code}`).notices.join(' ');
+ assert.match(confirmed,/!resenhacamp/);
+ assert.match(h.send(match.home,'!resenhacamp').notices[0]!,/1 x 2/);
+ h.send('admin',`!forcarresultado ${match.code} 2x1`);
+ const corrected=h.send(match.home,'!resenhacamp').notices[0]!;
+ assert.match(corrected,/2 x 1/);assert.doesNotMatch(corrected,/1 x 2/);
+ assert.equal((corrected.match(new RegExp(`Jogo ${match.code}`, 'g'))??[]).length,1);
+});
 test('autor cancela placar pendente e reencontra a ordem mandante x visitante sem avanço duplicado',()=>{
  const h=harness();const cup=h.start(4),match=cup.matches[0]!;
  const pending=h.send(match.away,`!resultado ${match.code} 1x3`).notices.join('');
