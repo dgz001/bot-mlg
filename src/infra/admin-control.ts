@@ -64,12 +64,13 @@ Correções do sorteio exigem ausência de placares.
 🛡️ ENCERRAR E CORRIGIR
 !cancelarcopa motivo — cancelar e liberar o número da edição
 !anularcopa edição motivo — anular edição encerrada; use o número do !historico
-No grupo da Copa: !vistoria e !resolver código 4x3 motivo.
+!vistoria • !resolver código 4x3 motivo • !forcarresultado código 4x3 motivo
+Use !grupos e !usar para escolher o destino ao escrever de outro canal.
 
-📌 Use !painel para consultar este guia. Mudanças ficam registradas.`;
+📌 ADMs cadastrados podem usar esta central em qualquer grupo autorizado do bot. Use !grupos e !usar para escolher a Copa; mudanças ficam registradas.`;
 function requireSuccess<T>(value:any):T {if(value?.error)throw Error(value.error);return value as T;}
 
-export async function adminControl(text:string,room:ControlWorkspace,targets:ControlTarget[],api:Api,save:()=>Promise<void>,now=Date.now(),actor?:{controlGroup:string;aliases:string[];resolveMember?:(group:string,phone:string)=>Promise<string[]|null>}):Promise<string>{
+export async function adminControl(text:string,room:ControlWorkspace,targets:ControlTarget[],api:Api,save:()=>Promise<void>,now=Date.now(),actor?:{controlGroup:string;aliases:string[];messageId?:string;resolveMember?:(group:string,phone:string)=>Promise<string[]|null>}):Promise<string>{
  const trimmed=text.trim();const [command='']=trimmed.split(/\s+/,1);const arg=trimmed.slice(command.length).trim();const cmd=command.toLocaleLowerCase('pt-BR');
  if(cmd==='!ajuda'||cmd==='!comandos'||cmd==='!painel')return menu;
  if(cmd==='!grupos')return '📍 GRUPOS DE COPA\n'+(targets.map((g,i)=>(room.targetId===g.id?'● ':'○ ')+(i+1)+'. '+g.name).join('\n')||'Nenhum grupo autorizado. Cadastre um no painel.')+'\n\nEnvie !usar número para escolher onde a Copa acontecerá.';
@@ -80,6 +81,14 @@ export async function adminControl(text:string,room:ControlWorkspace,targets:Con
  const target=targets.find(g=>g.id===room.targetId);
  if(!target)return 'Escolha primeiro o destino: !grupos e !usar número. Apenas grupos de Copa autorizados aparecem.';
  const group=target.id;
+ if(['!forcarresultado','!resolver','!deletar','!vistoria'].includes(cmd)){
+  if(!actor?.messageId)return 'Este comando precisa de uma mensagem verificada do ADM.';
+  if(['!forcarresultado','!resolver'].includes(cmd)&&!/^\d+\s+\d{1,2}[xX×]\d{1,2}(?:\s+.{8,160})?$/.test(arg))return `Use ${cmd} código 3x2 motivo (mínimo 8 caracteres ao resolver).`;
+  if(cmd==='!deletar'&&!/^\d+$/.test(arg))return 'Use !deletar código para anular um placar sem fase posterior.';
+  if(cmd==='!vistoria'&&arg)return 'Use !vistoria sem argumentos.';
+  const result=await api({action:'admin-cup-command',source:actor.controlGroup,group,aliases:actor.aliases,messageId:actor.messageId,text:trimmed});
+  return result.error?'⚠️ '+result.error:result.duplicate?'✅ Comando já registrado; consulte a Copa no grupo escolhido.':`✅ Comando registrado em ${target.name}. A resposta detalhada será enviada ao grupo da Copa. Use !central para acompanhar.`;
+ }
  if(['!bloquear','!desbloquear','!bloqueados'].includes(cmd)){
   if(!actor)return 'Não foi possível validar o ADM desta central.';
   const request={action:'member-block',group:actor.controlGroup,aliases:actor.aliases};

@@ -90,7 +90,10 @@ async function connect(){
   }catch{log('POWER_CONTROL_RETRY');if(socket===current&&!stopping)await current.sendMessage(group,{text:'⚠️ Não foi possível confirmar o comando no banco. Confira o painel antes de repetir.'});}
   return;
  }
- if(auth.data.groups.includes(group)&&groupMode(auth.data.groupModes,group)==='controle'){
+ const mode=groupMode(auth.data.groupModes,group);
+ const centralOnly=/^!(?:painel|grupos|usar|central|pendencias|equipes|adicionar|remover|vagas|revisar|descartar|inscritosadm|inscrever|retirar|trocar|confirmarelenco|cancelarelenco|bloquear|desbloquear|bloqueados|refazersorteio|confirmarsorteio|cancelarsorteio)(?:\s|$)/i.test(text.trim());
+ const outsideCup=!inChannel(group,'minicamp')&&/^!(?:modelos|ativarmodelo|sorteio|novacopa|cancelarcopa|anularcopa|nome|categoria|times|abrircopa|forcarresultado|resolver|deletar|vistoria)(?:\s|$)/i.test(text.trim());
+ if(auth.data.groups.includes(group)&&(mode==='controle'||centralOnly||outsideCup)){
   if(!text.trim().startsWith('!')||!cupApi||!message.key.participant)return;
   if(text.length>10000){await current.sendMessage(group,{text:'⚠️ Mensagem muito longa. Envie até 200 times em mensagens menores com !adicionar.'});return;}
   const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
@@ -99,7 +102,7 @@ async function connect(){
    const members=(await current.groupMetadata(group)).participants;
    if(!members.some(p=>aliases.includes(jidNormalizedUser(p.id)))&&!(await Promise.all(members.map(p=>cupAliases(p.id,current).catch(()=>[])))).some(a=>a.some(j=>aliases.includes(j))))return;
    const permission=await cupApi<{allowed:boolean}>({action:'control-check',group,aliases});
-   let response='🔒 Só as contas selecionadas como ADMs deste grupo no painel podem usar a central.';
+   let response='🔒 Só as contas cadastradas como ADMs no painel podem usar comandos administrativos.';
    let restartRequested=false;
    if(permission.allowed){
     const power=whatsappControls(text,auth.data.controls);
@@ -110,8 +113,9 @@ async function connect(){
     }else if(!enabled('minicamp'))response='⏸️ Copa ou bot pausado. Use !acordarbot para liberar os comandos da central.';
     else{
      const participating=Object.values(await current.groupFetchAllParticipating());
-     const targets:ControlTarget[]=participating.filter(g=>g.id!==group&&auth.data.groups.includes(g.id)&&groupMode(auth.data.groupModes,g.id)==='minicamp').map(g=>({id:g.id,name:g.subject})).sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
+     const targets:ControlTarget[]=participating.filter(g=>auth.data.groups.includes(g.id)&&allowsGroup(auth.data.groupModes,g.id,'minicamp')).map(g=>({id:g.id,name:g.subject})).sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
      auth.data.controlRooms??={};const room=auth.data.controlRooms[group]??={};auth.data.controlRooms[group]=room;
+     if(inChannel(group,'minicamp')&&!room.targetId)room.targetId=group;
      const api=async(payload:Record<string,unknown>)=>{
       if(payload.action==='cup-roster'&&payload.change&&payload.targetAliases){
        const metadata=await current.groupMetadata(String(payload.group));
@@ -125,7 +129,7 @@ async function connect(){
       const members=await Promise.all(metadata.participants.map(p=>cupAliases(p.id,current).catch(():string[]=>[])));
       return members.find(m=>m.includes(jid))??null;
      };
-     response=await adminControl(text,room,targets,api,()=>auth.save(),Date.now(),{controlGroup:group,aliases,resolveMember});
+     response=await adminControl(text,room,targets,api,()=>auth.save(),Date.now(),{controlGroup:group,aliases,messageId:id,resolveMember});
     }
    }
    auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);await auth.save();

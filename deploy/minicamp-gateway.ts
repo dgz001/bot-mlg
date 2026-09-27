@@ -69,6 +69,28 @@ Deno.serve(async req=>{
    return {blocked:match.rows.length>0};
   });
  }
+ else if(body.action==='admin-cup-command'){
+  if(!groupId.test(body.source)||!groupId.test(body.group)||!validAliases(body.aliases)||typeof body.messageId!=='string'||body.messageId.length<1||body.messageId.length>128||typeof body.text!=='string'||body.text.length>250||!/^!(?:forcarresultado|resolver|deletar|vistoria)(?:\s|$)/i.test(body.text))throw Error('Invalid remote ADM command');
+  const permission=await db.transaction(async q=>{
+   const actor=await identity(q,body.aliases);
+   const allowed=await q.query(`SELECT 1 FROM mlg_bot.admins a JOIN mlg_bot.groups configured ON configured.id=a.group_id
+    JOIN mlg_bot.groups source ON source.id=$2 JOIN mlg_bot.groups target ON target.id=$3
+    WHERE a.user_id=$1 AND configured.authorized AND configured.admins_configured AND source.authorized AND target.authorized
+      AND NOT EXISTS(SELECT 1 FROM mlg_bot.member_blocks b WHERE b.user_id=a.user_id) LIMIT 1`,[actor,body.source,body.group]);
+   return allowed.rows.length?actor:null;
+  });
+  if(!permission){result={error:'Somente ADMs selecionados podem agir em grupos autorizados.'};}
+  else{
+   try{
+    const event=await processEvent(db,{id:'remote-'+body.source+'-'+body.messageId,groupId:body.group,userId:permission,name:'ADM',text:body.text,at:Date.now()});
+    result={accepted:true,duplicate:event.duplicate};
+   }catch(error){
+    if(error?.code)throw error;
+    const message=String(error?.message??'');
+    result={error:/^(Somente|Não |Nenhum|Nenhuma|Já |Partida |Resultado |Copa |Formato:|Informe|Código )/.test(message)?message:'Comando não aceito. Confira o código, o motivo e a Copa escolhida.'};
+   }
+  }
+ }
  else if(body.action==='member-block'){
   if(!groupId.test(body.group)||!validAliases(body.aliases)||body.operation!=='list'&&body.operation!=='block'&&body.operation!=='unblock'||body.operation!=='list'&&(!validAliases(body.targetAliases)||typeof body.reason!=='string'||body.reason.trim().length<8||body.reason.length>160||/[\r\n\x00-\x1f\x7f\u202a-\u202e*_~`]/.test(body.reason)))throw Error('Invalid block request');
   result=await db.transaction(async q=>{
