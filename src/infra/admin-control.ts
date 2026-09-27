@@ -64,7 +64,8 @@ Correções do sorteio exigem ausência de placares.
 🛡️ ENCERRAR E CORRIGIR
 !cancelarcopa motivo — cancelar e liberar o número da edição
 !anularcopa edição motivo — anular edição encerrada; use o número do !historico
-!vistoria • !resolver código 4x3 motivo • !forcarresultado código 4x3 motivo
+!vistoria • !resolver CÓDIGO MxV motivo • !forcarresultado CÓDIGO MxV motivo
+M e V são os gols em números (mandante primeiro, visitante depois), sem espaços.
 Use !grupos e !usar para escolher o destino ao escrever de outro canal.
 
 📌 ADMs cadastrados podem usar esta central em qualquer grupo autorizado do bot. Use !grupos e !usar para escolher a Copa; mudanças ficam registradas.`;
@@ -83,7 +84,7 @@ export async function adminControl(text:string,room:ControlWorkspace,targets:Con
  const group=target.id;
  if(['!forcarresultado','!resolver','!deletar','!vistoria'].includes(cmd)){
   if(!actor?.messageId)return 'Este comando precisa de uma mensagem verificada do ADM.';
-  if(['!forcarresultado','!resolver'].includes(cmd)&&!/^\d+\s+\d{1,2}[xX×]\d{1,2}(?:\s+.{8,160})?$/.test(arg))return `Use ${cmd} código 3x2 motivo (mínimo 8 caracteres ao resolver).`;
+  if(['!forcarresultado','!resolver'].includes(cmd)&&!/^\d+\s+\d{1,2}[xX×]\d{1,2}(?:\s+.{8,160})?$/.test(arg))return `Use ${cmd} CÓDIGO MxV motivo. Troque M e V pelos gols em números (mandante primeiro, visitante depois), sem espaços. Ao resolver, informe motivo com pelo menos 8 caracteres.`;
   if(cmd==='!deletar'&&!/^\d+$/.test(arg))return 'Use !deletar código para anular um placar sem fase posterior.';
   if(cmd==='!vistoria'&&arg)return 'Use !vistoria sem argumentos.';
   const result=await api({action:'admin-cup-command',source:actor.controlGroup,group,aliases:actor.aliases,messageId:actor.messageId,text:trimmed});
