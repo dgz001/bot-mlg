@@ -40,6 +40,8 @@ async function setup(db: Pool) {
   await db.query(await readFile(new URL('../migrations/015_member_blocks.sql',import.meta.url),'utf8'));
   await db.query(await readFile(new URL('../migrations/016_progressive_bracket.sql',import.meta.url),'utf8'));
   await db.query(await readFile(new URL('../migrations/017_cup_setup.sql',import.meta.url),'utf8'));
+  await db.query(await readFile(new URL('../migrations/018_season_reset_permissions.sql',import.meta.url),'utf8'));
+  await db.query(await readFile(new URL('../migrations/019_admin_scopes.sql',import.meta.url),'utf8'));
   await db.query("INSERT INTO mlg_bot.users VALUES ('admin','Admin'); INSERT INTO mlg_bot.groups(id,authorized,admins_configured) VALUES ('g',true,true); INSERT INTO mlg_bot.admins VALUES ('g','admin','owner');");
   for (let i=0;i<16;i++) await db.query('INSERT INTO mlg_bot.club_pool VALUES ($1,$2)',['g',`Club ${i}`]);
 }
@@ -377,6 +379,14 @@ test('gateway real: menção, bloqueio de comandos internos e sincronização se
   };
   assert.equal((await call('control-check',{aliases:['100@s.whatsapp.net']})).allowed,true);
   assert.equal((await call('control-check',{aliases:['300@s.whatsapp.net']})).allowed,false);
+  const access={source:'100@g.us',group:'100@g.us',aliases:['100@s.whatsapp.net']};
+  assert.equal((await call('admin-access',{...access,operation:'grant',targetAliases:['300@s.whatsapp.net'],role:'channel'})).updated,true);
+  const scoped=await call('control-check',{aliases:['300@s.whatsapp.net']});
+  assert.equal(scoped.allowed,false);assert.equal(scoped.channelAllowed,true);
+  assert.match(String((await call('member-block',{group:'100@g.us',aliases:['300@s.whatsapp.net'],operation:'list'})).error),/Somente ADMs/);
+  assert.equal((await f.pool.query("SELECT role FROM mlg_bot.admins WHERE group_id='100@g.us' AND user_id=(SELECT user_id FROM mlg_bot.wa_identities WHERE jid='300@s.whatsapp.net')")).rows[0].role,'channel');
+  assert.equal((await call('admin-access',{...access,operation:'revoke',targetAliases:['300@s.whatsapp.net']})).updated,true);
+  assert.equal((await call('control-check',{aliases:['300@s.whatsapp.net']})).channelAllowed,false);
   assert.equal((await call('cup-open',{size:4})).edition,1);
   assert.match(String((await call('cup-open',{size:4})).error),/Já existe/);
   const opened=await call('templates-list');
@@ -407,5 +417,40 @@ test('gateway real: menção, bloqueio de comandos internos e sincronização se
   assert.equal(updated.rows[0]!.teams,'Argentina, Brasil, França, Portugal');
   assert.match(String((await call('cup-open',{size:4,proposal:{name:'Outra Copa MLG',teamKind:'clube',teams:['Time A','Time B','Time C','Time D']}})).error),/Já existe/);
   assert.equal((await f.pool.query("SELECT competition_name FROM mlg_bot.groups WHERE id='100@g.us'")).rows[0].competition_name,'Copa Administração MLG');
+  const seasonActor={source:'100@g.us',aliases:['100@s.whatsapp.net'],messageId:'season-confirm-1'};
+  const activePreview=await call('season-preview',seasonActor);
+  assert.equal(activePreview.active,1);
+  assert.match(String((await call('season-reset',{...seasonActor,fingerprint:activePreview.fingerprint})).error),/em andamento/);
+  await call('cup-cancel',{reason:'Encerramento da temporada de teste'});
+  const preview=await call('season-preview',seasonActor);
+  assert.equal(preview.active,0);
+  assert.ok(Number(preview.cups)>0);
+  assert.match(String((await call('season-reset',{...seasonActor,fingerprint:'stale'})).error),/mudaram/);
+  const reset=await call('season-reset',{...seasonActor,fingerprint:preview.fingerprint});
+  assert.equal(reset.season,2);
+  for(const table of ['cups','cup_participants','matches','match_results','cup_checkpoints','command_drafts','audit_logs','inbox','outbox','processed_messages','command_rate']){
+   assert.equal(Number((await f.pool.query(`SELECT count(*) AS n FROM mlg_bot.${table}`)).rows[0].n),0,table);
+  }
+  assert.equal((await f.pool.query("SELECT display_name FROM mlg_bot.coach_profiles WHERE group_id='100@g.us'")).rows[0].display_name,'Técnico');
+  assert.equal((await f.pool.query("SELECT user_id FROM mlg_bot.wa_identities WHERE jid='100@s.whatsapp.net'")).rows[0].user_id,'admin');
+  assert.equal((await f.pool.query("SELECT display_name FROM mlg_bot.users WHERE id='winner'")).rows[0].display_name,'Vencedor');
+  assert.equal((await call('season-preview',seasonActor)).season,2);
+  assert.match(String((await call('season-reset',{...seasonActor,fingerprint:preview.fingerprint})).error),/mudaram/);
+  const resetAt=Number((await f.pool.query("SELECT extract(epoch FROM at)*1000 AS at FROM mlg_bot.control_audit WHERE action='season-reset'")).rows[0].at);
+  const obsolete=await processEvent(pgDatabase(f.pool),{id:'obsolete-season',groupId:'100@g.us',userId:'admin',name:'Admin',text:'!novacopa',at:resetAt-1000});
+  assert.equal(obsolete.duplicate,true);
+  assert.equal((await f.pool.query('SELECT count(*) AS n FROM mlg_bot.cups')).rows[0].n,'0');
+  assert.equal((await call('cup-open',{size:4})).edition,1);
+  const openCup=(await f.pool.query("SELECT id FROM mlg_bot.cups WHERE group_id='100@g.us' AND status='open'")).rows[0].id;
+  for(let i=1;i<=4;i++){
+   await f.pool.query('INSERT INTO mlg_bot.users(id,display_name) VALUES($1,$2)', ['semi-'+i,'Semifinalista '+i]);
+   await f.pool.query('INSERT INTO mlg_bot.cup_participants(cup_id,user_id,display_name,position) VALUES($1,$2,$3,$4)',[openCup,'semi-'+i,'Semifinalista '+i,i-1]);
+   await f.pool.query('INSERT INTO mlg_bot.wa_identities(jid,user_id) VALUES($1,$2)',[String(700+i)+'@s.whatsapp.net','semi-'+i]);
+  }
+  await f.pool.query("INSERT INTO mlg_bot.matches(code,cup_id,round,position,home,away,status) VALUES (901,$1,0,0,'semi-1','semi-2','scheduled'),(902,$1,0,1,'semi-3','semi-4','scheduled')",[openCup]);
+  await f.pool.query("INSERT INTO mlg_bot.outbox(group_id,user_id,message_id,ordinal,body) VALUES ('100@g.us','admin','semis-test',0,$1)",['⚔️ SEMIFINAL · 2 jogos\n📣 SEMIFINALISTAS · jogos #901 e #902']);
+  const announcements=await call('poll');
+  const semis=(announcements.messages as {body:string;mentions:string[]}[]).find(m=>m.body.includes('SEMIFINALISTAS'));
+  assert.deepEqual(semis?.mentions.sort(),['701@s.whatsapp.net','702@s.whatsapp.net','703@s.whatsapp.net','704@s.whatsapp.net']);
  }finally{await f.close();}
 });
