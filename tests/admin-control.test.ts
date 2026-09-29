@@ -1,6 +1,36 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {adminControl,type ControlWorkspace} from '../src/infra/admin-control.ts';
+test('troca de temporada exige revisão, mesmo ADM e código válido dentro do prazo',async()=>{
+ const room:ControlWorkspace={},actor={controlGroup:'adm@g.us',aliases:['5511999999999@s.whatsapp.net'],messageId:'wa-1'};
+ const calls:Record<string,unknown>[]=[];let reset=0,saves=0;
+ const api=async(body:Record<string,unknown>)=>{calls.push(body);
+  if(body.action==='season-preview')return {season:3,cups:12,matches:30,active:0,fingerprint:'snapshot-3'};
+  if(body.action==='season-reset'){reset++;return {season:4};}
+  throw Error('Unexpected request');
+ };
+ const send=(text:string,at=1000,by=actor)=>adminControl(text,room,[],api,async()=>{saves++;},at,by);
+ assert.match(await send('!confirmar temporada 12345678'),/inválida/);assert.equal(reset,0);
+ const preview=await send('!reiniciar temporada');assert.match(preview,/12 Copas e 30 partidas/);
+ const token=room.seasonReset!.code;assert.match(preview,new RegExp(token));
+ assert.match(await send('!confirmar temporada '+token,1001,{...actor,aliases:['outro@s.whatsapp.net']}),/inválida/);
+ assert.match(await send('!confirmar temporada '+token,601001),/vencida/);
+ assert.equal(reset,0);
+ assert.match(await send('!reiniciar temporada',700000),/REINÍCIO/);
+ const nextToken=room.seasonReset!.code;
+ assert.match(await send('!confirmar temporada '+nextToken,700001),/TEMPORADA REINICIADA/);
+ assert.equal(reset,1);assert.equal(room.seasonReset,undefined);assert.ok(saves>=3);
+ assert.deepEqual(calls.at(-1),{action:'season-reset',source:'adm@g.us',aliases:actor.aliases,messageId:'wa-1',fingerprint:'snapshot-3'});
+ assert.match(await send('!confirmar temporada '+nextToken,700002),/inválida/);assert.equal(reset,1);
+});
+test('Copa em andamento impede preparar reinício e é possível cancelar o pedido',async()=>{
+ const room:ControlWorkspace={};let active=true;
+ const api=async()=>({season:1,cups:2,matches:5,active:Number(active),fingerprint:'snapshot'});
+ const send=(cmd:string)=>adminControl(cmd,room,[],api,async()=>{},Date.now(),{controlGroup:'adm@g.us',aliases:['123@s.whatsapp.net'],messageId:'wa'});
+ assert.match(await send('!reiniciar temporada'),/em andamento/);assert.equal(room.seasonReset,undefined);
+ active=false;await send('!reiniciar temporada');assert.ok(room.seasonReset);
+ assert.match(await send('!cancelar temporada'),/descartado/);assert.equal(room.seasonReset,undefined);
+});
 test('ADM usa outra sala autorizada para corrigir a Copa selecionada com identidade verificada',async()=>{
  const room:ControlWorkspace={targetId:'copa@g.us'},calls:Record<string,unknown>[]=[];
  const actor={controlGroup:'resenha@g.us',aliases:['123@s.whatsapp.net'],messageId:'wa-42'};
@@ -51,6 +81,8 @@ test('central dos ADMs prepara, revisa e abre a Copa somente no grupo escolhido'
  await send('!novacopa');assert.equal(room.draft?.size,null);
  await send('!vagas 4');
  assert.match(await send('!abrircopa'),/Antes de abrir/);assert.equal(opened,0);
+ assert.match(await send('!revisar'),/Confirme os times/);
+ await send('!confirmartimes');
  assert.match(await send('!revisar'),/Copa do Mundo/);
  await send('!nome Copa Global MLG');
  assert.match(await send('!abrircopa'),/Antes de abrir/);assert.equal(opened,0);
@@ -72,6 +104,45 @@ test('central mostra a próxima edição e confirma o número liberado ao cancel
  const send=(message:string)=>adminControl(message,room,targets,api,async()=>{});
  assert.match(await send('!central'),/Próxima edição: 8/);
  assert.match(await send('!cancelarcopa Erro no sorteio'),/Edição 8 cancelada.*número fica livre/);
+});
+
+test('ADM prepara na administração e publica no mesmo canal após cancelar Copa em andamento',async()=>{
+ const workspaces:Record<string,ControlWorkspace>={'admin@g.us':{},'copa@g.us':{targetId:'copa@g.us'}};
+ const targets=[{id:'copa@g.us',name:'Copa Mundial'}];let active=true,openCount=0,saves=0;
+ const api=async(payload:Record<string,unknown>):Promise<any>=>{
+  if(payload.action==='templates-list')return {activeCup:active?{id:'old'}:null,preparing:false};
+  if(payload.action==='cup-cancel'){active=false;return {cancelled:true,edition:1};}
+  if(payload.action==='competition-get')return {competition:{name:'Copa Mundial',teamKind:'seleção',teams:['Brasil','Itália','Egito','França']}};
+  if(payload.action==='cup-open'){assert.equal(payload.group,'copa@g.us');assert.equal(payload.size,4);assert.equal((payload.proposal as {name:string}).name,'Nova Copa');active=true;openCount++;return {opened:true,edition:1};}
+  throw Error('Ação inesperada: '+payload.action);
+ };
+ const send=(group:string,command:string,now=1000)=>adminControl(command,workspaces[group]!,targets,api,async()=>{saves++;},now,{controlGroup:group,aliases:['100@s.whatsapp.net'],messageId:'admin-'+command},workspaces);
+ assert.match(await send('admin@g.us','!usar 1'),/Copa Mundial/);
+ assert.match(await send('admin@g.us','!cancelarcopa Motivo administrativo'),/cancelada/);
+ await send('admin@g.us','!novacopa');await send('admin@g.us','!nome Nova Copa');await send('admin@g.us','!equipes Brasil | Itália | Egito | França');await send('admin@g.us','!vagas 4');
+ await send('admin@g.us','!revisar');
+ assert.match(await send('admin@g.us','!concluir'),/pronta para Copa Mundial/);
+ assert.equal(active,false);assert.equal(openCount,0);
+ assert.equal(workspaces['copa@g.us']?.staged?.name,'Nova Copa');
+ assert.match(await send('admin@g.us','!novacopa'),/Um ADM deve enviar !novacopa/);
+ assert.match(await send('copa@g.us','!novacopa'),/aberta neste canal/);
+ assert.equal(workspaces['copa@g.us']?.staged,undefined);assert.equal(openCount,1);
+ assert.match(await send('copa@g.us','!novacopa'),/Já há uma Copa aberta/);
+ assert.equal(openCount,1);assert.ok(saves>=5);
+});
+
+test('ADM geral concede acesso restrito por canal via WhatsApp e pode retirar',async()=>{
+ const room:ControlWorkspace={targetId:'mini@g.us'};const calls:Record<string,unknown>[]=[];
+ const api=async(body:Record<string,unknown>)=>{calls.push(body);return body.operation==='list'?{admins:[{name:'Amigo',role:'channel',jid:'5599999999999@s.whatsapp.net'}]}:{updated:true,role:body.role};};
+ const actor={controlGroup:'central@g.us',aliases:['5511999999999@s.whatsapp.net'],messageId:'wa',resolveMember:async(group:string,phone:string)=>group==='mini@g.us'&&phone==='5599999999999'?['5599999999999@s.whatsapp.net']:null};
+ const send=(cmd:string)=>adminControl(cmd,room,[{id:'mini@g.us',name:'Mini Camp'}],api,async()=>{},1000,actor);
+ assert.match(await send('!adms'),/Amigo.*somente este canal/);
+ assert.match(await send('!daradm 5599999999999 | canal'),/somente este canal/);
+ assert.equal(calls.at(-1)?.role,'channel');
+ assert.equal(calls.at(-1)?.group,'mini@g.us');
+ assert.match(await send('!tiraradm 5599999999999'),/Acesso removido/);
+ assert.equal(calls.at(-1)?.operation,'revoke');
+ assert.match(await send('!daradm 5511888888888 | geral'),/precisa estar no canal/);
 });
 
 test('central não anula edição enquanto banco usa a numeração antiga',async()=>{

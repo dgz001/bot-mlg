@@ -5,6 +5,23 @@ import {worldCupCandidates} from '../src/minicamp/nations.ts';
 import {allowedDrawTeam} from '../src/minicamp/nations.ts';
 
 const clubs = Array.from({ length: 20 }, (_, i) => `Clube ${i + 1}`);
+test('anúncios mostram quatro semifinalistas e dois finalistas sem chamar a final de um jogo',()=>{
+ const h=harness(),cup=h.start(8);
+ const quarters=cup.matches.filter(m=>m.round===0);
+ let semifinalists='';
+ for(const m of quarters)semifinalists=h.send('admin',`!forcarresultado ${m.code} 2x1`).notices.join('\n')+(semifinalists?'\n'+semifinalists:'');
+ const semis=h.state.cups[cup.id]!.matches.filter(m=>m.round===1);
+ assert.equal(semis.length,2);
+ assert.match(semifinalists,/SEMIFINALISTAS · jogos #\d+ e #\d+/);
+ for(const m of semis)assert.match(semifinalists,new RegExp(m.home+' × '+m.away));
+ let finalNotice='';
+ for(const m of semis)finalNotice=h.send('admin',`!forcarresultado ${m.code} 2x1`).notices.join('\n');
+ assert.match(finalNotice,/FINAL · CONFRONTO DEFINIDO/);
+ assert.doesNotMatch(finalNotice,/FINAL · 1 jogo/);
+ const final=h.state.cups[cup.id]!.matches.find(m=>m.round===2)!;
+ assert.match(finalNotice,new RegExp(`FINALISTAS · jogo #${final.code}`));
+ assert.match(finalNotice,new RegExp(final.home+' × '+final.away));
+});
 test('instruções do placar ensinam a ordem dos gols sem sugerir placar específico',()=>{
  const h=harness(),cup=h.start(4),match=cup.matches[0]!;
  h.state.groups.g!.competitionName='Copa do Mundo MLG';cup.competitionName='Copa do Mundo MLG';
@@ -357,6 +374,9 @@ test('sorteio e placar orientam a dupla sem exigir confirmação do adversário'
  for(let i=0;i<3;i++)h.send(`u${i}`,'!entrar');
  const announced=h.send('u3','!entrar').notices;
  assert.match(announced[1]!,/SORTEIO · MINICAMP MLG.*Equipes e adversários/s);
+ assert.match(announced[1]!,/INSCRITOS · 4\/4/);
+ assert.equal((announced[1]!.match(/^\d+\. u\d+ → /gm)??[]).length,4);
+ assert.match(announced[1]!,/Jogos do sorteio: #\d+ · #\d+/);
  assert.match(announced[2]!,/SEMIFINAL · 2 jogos/);
  assert.equal((announced[2]!.match(/^🎮 JOGO \d+/gm)??[]).length,2);
  const overview=h.send('u0','!sorteio').notices[0]!;

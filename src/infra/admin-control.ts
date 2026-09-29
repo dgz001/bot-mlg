@@ -1,5 +1,5 @@
-export type ControlDraft={name:string;teamKind:'clube'|'seleção'|'misto';teams:string[];size:number|null;reviewed?:string;reviewedAt?:number};
-export type ControlWorkspace={targetId?:string;draft?:ControlDraft;draw?:{group:string;cupId:string;fingerprint:string;mode:'equipes'|'chave'|'completo';reason:string;expiresAt:number};roster?:{group:string;fingerprint:string;change:'incluir'|'retirar'|'trocar';position?:number;targetAliases?:string[];targetName?:string;reason:string;expiresAt:number}};
+export type ControlDraft={name:string;teamKind:'clube'|'seleção'|'misto';teams:string[];size:number|null;teamsApproved?:boolean;reviewed?:string;reviewedAt?:number};
+export type ControlWorkspace={targetId?:string;draft?:ControlDraft;staged?:{name:string;teamKind:ControlDraft['teamKind'];teams:string[];size:number};draw?:{group:string;cupId:string;fingerprint:string;mode:'equipes'|'chave'|'completo';reason:string;expiresAt:number};roster?:{group:string;fingerprint:string;change:'incluir'|'retirar'|'trocar';position?:number;targetAliases?:string[];targetName?:string;reason:string;expiresAt:number};seasonReset?:{code:string;fingerprint:string;actorAliases:string[];expiresAt:number}};
 export type ControlTarget={id:string;name:string};
 type Api=(body:Record<string,unknown>)=>Promise<any>;
 const label=(kind:ControlDraft['teamKind'])=>kind==='seleção'?'seleções':kind==='misto'?'clubes e seleções':'clubes';
@@ -16,6 +16,12 @@ const menu=`🎛️ CENTRAL MLG · GUIA DOS ADMs
 !copas ligar / desligar — ativar ou pausar as Copas
 !resenha ligar / desligar — ativar ou pausar a resenha
 
+🗓️ NOVA TEMPORADA
+!reiniciar temporada — mostrar o resumo e preparar a limpeza
+!confirmar temporada CÓDIGO — concluir em até 10 minutos
+!cancelar temporada — descartar o pedido
+Preserva jogadores, nomes, contas, ADMs e modelos. Apaga Copas, partidas e estatísticas da temporada anterior.
+
 📍 ESCOLHER A COPA
 !grupos — listar destinos disponíveis
 !usar 1 — selecionar o grupo da lista
@@ -24,12 +30,21 @@ const menu=`🎛️ CENTRAL MLG · GUIA DOS ADMs
 !modelos — listar modelos de campeonato
 !ativarmodelo 1 — selecionar modelo entre edições
 
+🔐 PERMISSÕES POR CANAL
+!adms — ver responsáveis pelo canal escolhido
+!daradm telefone | geral — ADM de todos os canais autorizados
+!daradm telefone | canal — ADM somente deste canal (ex.: Mini Camp)
+!tiraradm telefone — retirar acesso neste canal
+
 🏆 PREPARAR NOVA EDIÇÃO
 !novacopa — iniciar a configuração
 !nome / !categoria — definir identidade e tipo
-!equipes — ver a lista; !adicionar / !remover — editá-la
+!equipes Time A | Time B | ... — enviar todos os times em massa
+!confirmartimes — manter os times do modelo; !adicionar / !remover — editar
 !times / !vagas — conferir e escolher as vagas
-!revisar — conferir; !abrircopa — publicar
+!revisar — conferir; !concluir — guardar para publicar no canal
+No canal escolhido: !novacopa — abrir inscrições da Copa preparada
+!abrircopa — publicar imediatamente pela central
 !descartar — cancelar o preparo
 
 👥 ELENCO DA COPA SELECIONADA
@@ -71,9 +86,31 @@ Use !grupos e !usar para escolher o destino ao escrever de outro canal.
 📌 ADMs cadastrados podem usar esta central em qualquer grupo autorizado do bot. Use !grupos e !usar para escolher a Copa; mudanças ficam registradas.`;
 function requireSuccess<T>(value:any):T {if(value?.error)throw Error(value.error);return value as T;}
 
-export async function adminControl(text:string,room:ControlWorkspace,targets:ControlTarget[],api:Api,save:()=>Promise<void>,now=Date.now(),actor?:{controlGroup:string;aliases:string[];messageId?:string;resolveMember?:(group:string,phone:string)=>Promise<string[]|null>}):Promise<string>{
+export async function adminControl(text:string,room:ControlWorkspace,targets:ControlTarget[],api:Api,save:()=>Promise<void>,now=Date.now(),actor?:{controlGroup:string;aliases:string[];messageId?:string;resolveMember?:(group:string,phone:string)=>Promise<string[]|null>},workspaces?:Record<string,ControlWorkspace>):Promise<string>{
  const trimmed=text.trim();const [command='']=trimmed.split(/\s+/,1);const arg=trimmed.slice(command.length).trim();const cmd=command.toLocaleLowerCase('pt-BR');
  if(cmd==='!ajuda'||cmd==='!comandos'||cmd==='!painel')return menu;
+ if(cmd==='!reiniciartemporada'||cmd==='!reiniciar'&&arg==='temporada'){
+  if(!actor?.aliases?.length||!actor.messageId)return 'Envie o comando como ADM verificado em um grupo autorizado.';
+  const preview=await api({action:'season-preview',source:actor.controlGroup,aliases:actor.aliases});
+  if(preview.error)return '⚠️ '+preview.error;
+  if(preview.active)return '⚠️ Há Copa com inscrições ou jogos em andamento. Encerre ou cancele as edições antes de iniciar outra temporada.';
+  const code=crypto.randomUUID().replaceAll('-','').slice(0,8).toUpperCase();
+  room.seasonReset={code,fingerprint:preview.fingerprint,actorAliases:actor.aliases,expiresAt:now+600_000};await save();
+  return `🗓️ REINÍCIO DA TEMPORADA ${preview.season}\nSerão apagadas ${preview.cups} Copas e ${preview.matches} partidas, com resultados, estatísticas e avisos pendentes.\nJogadores, nomes, contas vinculadas, ADMs e modelos continuarão salvos.\nPara iniciar a temporada ${preview.season+1}, envie !confirmar temporada ${code} em até 10 minutos.\nPara desistir: !cancelar temporada.`;
+ }
+ if(cmd==='!cancelartemporada'||cmd==='!cancelar'&&arg==='temporada'){
+  delete room.seasonReset;await save();return '✅ Pedido de reinício descartado. Nenhuma Copa foi alterada.';
+ }
+ if(cmd==='!confirmartemporada'||cmd==='!confirmar'&&arg.startsWith('temporada ')){
+  const code=cmd==='!confirmar'?arg.slice('temporada '.length).trim():arg;
+  const pending=room.seasonReset;
+  if(!actor?.aliases?.length||!actor.messageId)return 'Envie a confirmação como ADM verificado em um grupo autorizado.';
+  if(!pending||pending.expiresAt<now||pending.code!==code.toUpperCase()||!actor.aliases.some(a=>pending.actorAliases.includes(a)))return '⚠️ Confirmação inválida ou vencida. Use !reiniciar temporada para receber um código novo.';
+  const result=await api({action:'season-reset',source:actor.controlGroup,aliases:actor.aliases,messageId:actor.messageId,fingerprint:pending.fingerprint});
+  if(result.error){delete room.seasonReset;await save();return '⚠️ '+result.error+' Use !reiniciar temporada para revisar novamente.';}
+  delete room.seasonReset;delete room.draft;delete room.draw;delete room.roster;await save();
+  return `✅ TEMPORADA REINICIADA · agora é a temporada ${result.season}.\nJogadores e nomes preservados. Configure e abra as novas Copas com !novacopa.`;
+ }
  if(cmd==='!grupos')return '📍 GRUPOS DE COPA\n'+(targets.map((g,i)=>(room.targetId===g.id?'● ':'○ ')+(i+1)+'. '+g.name).join('\n')||'Nenhum grupo autorizado. Cadastre um no painel.')+'\n\nEnvie !usar número para escolher onde a Copa acontecerá.';
  if(cmd==='!usar'){
   const n=Number(arg);if(!Number.isSafeInteger(n)||n<1||n>targets.length)return 'Use !grupos e depois !usar número da lista.';
@@ -82,6 +119,22 @@ export async function adminControl(text:string,room:ControlWorkspace,targets:Con
  const target=targets.find(g=>g.id===room.targetId);
  if(!target)return 'Escolha primeiro o destino: !grupos e !usar número. Apenas grupos de Copa autorizados aparecem.';
  const group=target.id;
+ if(['!adms','!daradm','!tiraradm'].includes(cmd)){
+  if(!actor?.aliases?.length)return 'Apenas um ADM geral verificado pode gerenciar acessos.';
+  const request={action:'admin-access',source:actor.controlGroup,group,aliases:actor.aliases};
+  if(cmd==='!adms'){
+   const result=await api({...request,operation:'list'});
+   if(result.error)return '⚠️ '+result.error;
+   return '🔐 ADMs · '+target.name+'\n'+(result.admins.map((a:{name:string;role:string;jid?:string})=>`${a.name}${a.jid?' · '+a.jid.split('@')[0]:''} · ${a.role==='channel'?'somente este canal':'geral'}`).join('\n')||'Nenhum ADM cadastrado.')+'\n\n!daradm telefone | geral ou canal · !tiraradm telefone';
+  }
+  const match=cmd==='!daradm'?arg.match(/^(\d{10,15})\s*\|\s*(geral|canal)$/i):arg.match(/^(\d{10,15})$/);
+  if(!match)return cmd==='!daradm'?'Use !daradm telefone | geral ou !daradm telefone | canal.':'Use !tiraradm telefone.';
+  const phone=match[1]!;
+  const aliases=cmd==='!daradm'?await actor.resolveMember?.(group,phone):[phone+'@s.whatsapp.net'];
+  if(!aliases?.length)return '⚠️ Para conceder acesso, a pessoa precisa estar no canal escolhido.';
+  const result=await api({...request,operation:cmd==='!daradm'?'grant':'revoke',targetAliases:aliases,...(cmd==='!daradm'?{role:match[2]!.toLowerCase()==='geral'?'admin':'channel'}:{})});
+  return result.error?'⚠️ '+result.error:cmd==='!daradm'?'✅ Acesso salvo em '+target.name+': '+(result.role==='channel'?'somente este canal':'ADM geral')+'.':'✅ Acesso removido de '+target.name+'.';
+ }
  if(['!forcarresultado','!resolver','!deletar','!vistoria'].includes(cmd)){
   if(!actor?.messageId)return 'Este comando precisa de uma mensagem verificada do ADM.';
   if(['!forcarresultado','!resolver'].includes(cmd)&&!/^\d+\s+\d{1,2}[xX×]\d{1,2}(?:\s+.{8,160})?$/.test(arg))return `Use ${cmd} CÓDIGO MxV motivo. Troque M e V pelos gols em números (mandante primeiro, visitante depois), sem espaços. Ao resolver, informe motivo com pelo menos 8 caracteres.`;
@@ -172,16 +225,27 @@ export async function adminControl(text:string,room:ControlWorkspace,targets:Con
  }
  if(cmd==='!central'){
   const current=requireSuccess<any>(await api({action:'templates-list',group}));
-  return '🎛️ CENTRAL MLG\n📍 '+target.name+'\n🏆 Modelo ativo: '+current.activeCompetition+'\n'+(current.activeCup?'🎮 Copa em andamento: '+current.activeCup.participants+'/'+current.activeCup.size+' inscritos.':current.preparing?'⏳ Um ADM está escolhendo o formato no grupo da Copa.':'📣 Nenhuma Copa aberta.')+'\n'+(current.nextEdition?'🔢 Próxima edição: '+current.nextEdition+' (tentativas canceladas não ocupam número).\n':'')+(room.draft?'📝 Preparação salva: '+room.draft.name+(room.draft.size?' · '+room.draft.size+' vagas':' · vagas a definir'):'📝 Sem preparação em andamento.')+'\n\n!painel mostra os comandos.';
+  const staged=(workspaces?.[group]??room).staged;
+  return '🎛️ CENTRAL MLG\n📍 '+target.name+'\n🏆 Modelo ativo: '+current.activeCompetition+'\n'+(current.activeCup?'🎮 Copa em andamento: '+current.activeCup.participants+'/'+current.activeCup.size+' inscritos.':current.preparing?'⏳ Um ADM está escolhendo o formato no grupo da Copa.':'📣 Nenhuma Copa aberta.')+'\n'+(current.nextEdition?'🔢 Próxima edição: '+current.nextEdition+' (tentativas canceladas não ocupam número).\n':'')+(staged?'✅ Copa pronta: '+staged.name+' · '+staged.size+' vagas. Envie !novacopa no canal escolhido.':room.draft?'📝 Preparação salva: '+room.draft.name+(room.draft.size?' · '+room.draft.size+' vagas':' · vagas a definir'):'📝 Sem preparação em andamento.')+'\n\n!painel mostra os comandos.';
  }
  if(cmd==='!novacopa'){
+  if(actor?.controlGroup===group&&room.staged){
+   const staged=room.staged;
+   const current=requireSuccess<any>(await api({action:'templates-list',group}));
+   if(current.activeCup||current.preparing)return '⚠️ Já existe uma Copa ativa ou em preparação neste canal. Nenhuma nova Copa foi aberta.';
+   const opened=requireSuccess<any>(await api({action:'cup-open',group,size:staged.size,proposal:{name:staged.name,teamKind:staged.teamKind,teams:staged.teams}}));
+   if(!opened.opened)return '⚠️ O banco não confirmou a abertura. Consulte !central.';
+   delete room.staged;await save();
+   return '🏆 '+staged.name+(opened.edition?' · Edição '+opened.edition:'')+' aberta neste canal! O bot anunciará as '+staged.size+' vagas. Jogadores: !entrar.';
+  }
+  if((workspaces?.[group]??room).staged)return '📝 Copa já concluída para '+target.name+'. Um ADM deve enviar !novacopa no canal escolhido para abrir as inscrições.';
   const [config,list]=await Promise.all([api({action:'competition-get',group}),api({action:'templates-list',group})]);
   requireSuccess(config);requireSuccess(list);
   if(list.activeCup)return '⚠️ Já há uma Copa aberta em '+target.name+'. Consulte !central ou cancele com um motivo.';
   if(list.preparing)return '⏳ Um ADM já iniciou !novacopa no grupo dos jogadores. Termine ou cancele aquela preparação antes de começar outra.';
   if(room.draft)return '📝 Já existe uma preparação salva: '+room.draft.name+'. Use !revisar para continuar ou !descartar para começar outra.';
-  room.draft={name:config.competition.name,teamKind:config.competition.teamKind,teams:config.competition.teams,size:null};await save();
-  return '🏆 PREPARAÇÃO INICIADA\n📍 '+target.name+'\n'+room.draft.name+' · '+room.draft.teams.length+' '+label(room.draft.teamKind)+'\n\nAjuste com !nome, !categoria, !equipes ou !adicionar. Depois !vagas 4/8/16/32 e !revisar. Nenhuma inscrição foi aberta.';
+  room.draft={name:config.competition.name,teamKind:config.competition.teamKind,teams:config.competition.teams,size:null,teamsApproved:false};await save();
+  return '🏆 PREPARAÇÃO INICIADA\n📍 '+target.name+'\n'+room.draft.name+'\n\n⚽ Quais times entram no sorteio desta Copa? Envie !equipes Time A | Time B | Time C | Time D (pode mandar até 200 em uma mensagem, separados por | ou linhas).\nPara usar os '+room.draft.teams.length+' times do modelo atual, envie !confirmartimes; use !times para conferir a lista. Depois defina !vagas 4/8/16/32 e envie !revisar. Nenhuma inscrição foi aberta.';
  }
  if(cmd==='!cancelarcopa'){
   if(arg.length<8)return 'Informe um motivo: !cancelarcopa motivo com ao menos 8 caracteres.';
@@ -196,7 +260,7 @@ export async function adminControl(text:string,room:ControlWorkspace,targets:Con
   const result=requireSuccess<any>(await api({action:'cup-void',group,edition,reason:match[2]!.trim()}));
   return result.cancelled?'📋 Edição '+edition+' anulada em '+target.name+'. Número liberado; histórico preservado e jogos fora das estatísticas.':'⚠️ Edição não encontrada ou não encerrada.';
  }
- if(cmd==='!descartar'){if(!room.draft)return 'Não há preparação para descartar.';delete room.draft;await save();return '🗑️ Preparação descartada. Nenhuma Copa ou modelo salvo foi apagado.';}
+ if(cmd==='!descartar'){const selected=workspaces?.[group]??room;if(!room.draft&&!selected.staged)return 'Não há preparação para descartar.';delete room.draft;delete selected.staged;await save();return '🗑️ Preparação descartada. Nenhuma Copa ou modelo salvo foi apagado.';}
  const draft=room.draft;
  if(!draft)return 'Não há preparação. Envie !novacopa para começar no grupo '+target.name+'.';
  if(cmd==='!nome'){
@@ -213,11 +277,15 @@ export async function adminControl(text:string,room:ControlWorkspace,targets:Con
   const entries=arg.split(/\||\n/).map(x=>x.trim()).filter(Boolean);
   const teams=cmd==='!equipes'?entries:[...draft.teams,...entries];
   if(entries.length===0||cmd==='!equipes'&&entries.length<4||!validTeams(teams))return 'Liste de 4 a 200 times diferentes, com nomes de 2 a 60 caracteres, separados por | ou por linha.';
-  draft.teams=teams;if(draft.size&&teams.length<draft.size)draft.size=null;delete draft.reviewed;await save();return '✅ Lista salva: '+teams.length+' times. Use !times para conferir e !revisar antes de abrir.';
+  draft.teams=teams;draft.teamsApproved=true;if(draft.size&&teams.length<draft.size)draft.size=null;delete draft.reviewed;await save();return '✅ Lista salva: '+teams.length+' times. Use !times para conferir e !revisar antes de abrir.';
+ }
+ if(cmd==='!confirmartimes'){
+  if(!validTeams(draft.teams)||draft.teams.length<4)return '⚠️ O modelo não tem ao menos quatro times válidos. Envie !equipes com a lista desta Copa.';
+  draft.teamsApproved=true;delete draft.reviewed;await save();return '✅ Lista de '+draft.teams.length+' times do modelo confirmada para esta Copa. Use !times para conferir.';
  }
  if(cmd==='!remover'){
   const i=draft.teams.findIndex(t=>clean(t)===clean(arg));if(i<0)return 'Time não encontrado. Use !times e informe o nome exato.';
-  draft.teams.splice(i,1);if(draft.size&&draft.teams.length<draft.size)draft.size=null;delete draft.reviewed;await save();return '✅ '+arg+' removido da preparação. Restam '+draft.teams.length+' times.';
+  draft.teams.splice(i,1);draft.teamsApproved=true;if(draft.size&&draft.teams.length<draft.size)draft.size=null;delete draft.reviewed;await save();return '✅ '+arg+' removido da preparação. Restam '+draft.teams.length+' times.';
  }
  if(cmd==='!times'){
   const page=Number(arg||1),pages=Math.ceil(draft.teams.length/20);
@@ -229,9 +297,20 @@ export async function adminControl(text:string,room:ControlWorkspace,targets:Con
   draft.size=size;delete draft.reviewed;await save();return '✅ '+size+' vagas definidas. Use !revisar para confirmar o destino e a lista.';
  }
  if(cmd==='!revisar'){
+  if(!draft.teamsApproved)return '⚽ Confirme os times desta Copa: envie !equipes com a lista completa ou !confirmartimes para reutilizar o modelo.';
   if(draft.teams.length<4||!validTeams(draft.teams)||!draft.size||draft.size>draft.teams.length)return '⚠️ Revise a lista (mínimo 4 times diferentes) e escolha !vagas 4, 8, 16 ou 32.';
   draft.reviewed=fingerprint(draft);draft.reviewedAt=now;await save();
-  return '🔎 CONFERÊNCIA ANTES DE ABRIR\n📍 Grupo: '+target.name+'\n🏆 Nome: '+draft.name+'\n🎲 Categoria: '+label(draft.teamKind)+'\n👥 Vagas: '+draft.size+'\n⚽ Times ('+draft.teams.length+'): '+draft.teams.slice(0,20).join(' · ')+(draft.teams.length>20?'\nVeja os demais com !times 2.':'')+'\n\nSe estiver correto, envie !abrircopa em até 10 minutos. Qualquer alteração exige nova revisão. Os jogadores entram no grupo da Copa.';
+  return '🔎 CONFERÊNCIA ANTES DE ABRIR\n📍 Grupo: '+target.name+'\n🏆 Nome: '+draft.name+'\n🎲 Categoria: '+label(draft.teamKind)+'\n👥 Vagas: '+draft.size+'\n⚽ Times ('+draft.teams.length+'): '+draft.teams.slice(0,20).join(' · ')+(draft.teams.length>20?'\nVeja os demais com !times 2.':'')+'\n\nSe estiver correto, envie !concluir em até 10 minutos. Depois um ADM publica no canal escolhido com !novacopa. Para abrir imediatamente pela central: !abrircopa.';
+ }
+ if(cmd==='!concluir'){
+  if(!draft.size||draft.reviewed!==fingerprint(draft)||!draft.reviewedAt||now-draft.reviewedAt>600_000)return 'Antes de concluir, defina !vagas e envie !revisar. A revisão vale 10 minutos e expira ao editar.';
+  if(!workspaces)return '⚠️ A central não conseguiu salvar a preparação para o canal. Tente novamente.';
+  const current=requireSuccess<any>(await api({action:'templates-list',group}));
+  if(current.activeCup||current.preparing)return '⚠️ Há Copa ativa ou preparação em andamento no canal. Encerre ou cancele antes de concluir.';
+  const destination=workspaces[group]??(workspaces[group]={});
+  destination.staged={name:draft.name,teamKind:draft.teamKind,teams:[...draft.teams],size:draft.size};
+  delete room.draft;await save();
+  return '✅ '+draft.name+' pronta para '+target.name+'. No canal escolhido, um ADM envia !novacopa para abrir '+destination.staged.size+' vagas. Até lá, ninguém pode entrar. Use !descartar para cancelar a preparação.';
  }
  if(cmd==='!abrircopa'){
   if(!draft.size||draft.reviewed!==fingerprint(draft)||!draft.reviewedAt||now-draft.reviewedAt>600_000)return 'Antes de abrir, defina !vagas e envie !revisar. A revisão vale 10 minutos e expira ao editar.';
@@ -241,7 +320,7 @@ export async function adminControl(text:string,room:ControlWorkspace,targets:Con
   const proposal=changed?{name:draft.name,teamKind:draft.teamKind,teams:draft.teams}:undefined;
   const opened=requireSuccess<any>(await api({action:'cup-open',group,size:draft.size,...(proposal?{proposal}:{})}));
   if(!opened.opened)return '⚠️ O banco não confirmou a abertura. Consulte !central.';
-  delete room.draft;await save();return '🏆 '+draft.name+(opened.edition?' · Edição '+opened.edition:'')+' aberta em '+target.name+' com '+draft.size+' vagas! O bot anunciará as inscrições no grupo da Copa. Lá os jogadores usam !entrar.';
+  delete room.draft;delete (workspaces?.[group]??room).staged;await save();return '🏆 '+draft.name+(opened.edition?' · Edição '+opened.edition:'')+' aberta em '+target.name+' com '+draft.size+' vagas! O bot anunciará as inscrições no grupo da Copa. Lá os jogadores usam !entrar.';
  }
  return 'Comando da central não reconhecido. Use !painel para ver os comandos deste grupo.';
 }

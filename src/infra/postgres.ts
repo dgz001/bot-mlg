@@ -37,7 +37,7 @@ function shuffleDifferent<T>(values:T[]):T[]{
 }
 export async function cupDraw(database:Database,request:{group:string;controlGroup:string;actorAliases:string[];mode?:DrawMode;expected?:string;reason?:string}):Promise<{error?:string;cupId?:string;name?:string;fingerprint?:string;participants?:DrawRow[];matches?:DrawMatch[];changed?:boolean;mode?:DrawMode}>{
  return database.transaction(async q=>{
-  const authorized=await q.query<{id:string}>('SELECT DISTINCT a.user_id AS id FROM mlg_bot.admins a JOIN mlg_bot.wa_identities w ON w.user_id=a.user_id JOIN mlg_bot.groups g ON g.id=a.group_id WHERE w.jid=ANY($1::text[]) AND g.authorized AND g.admins_configured',[request.actorAliases]);
+  const authorized=await q.query<{id:string}>("SELECT DISTINCT a.user_id AS id FROM mlg_bot.admins a JOIN mlg_bot.wa_identities w ON w.user_id=a.user_id JOIN mlg_bot.groups g ON g.id=a.group_id WHERE w.jid=ANY($1::text[]) AND g.authorized AND g.admins_configured AND a.role IN ('owner','admin')",[request.actorAliases]);
   if(!authorized.rows.length)return {error:'Sua conta não está entre os ADMs da central.'};
   const actor=authorized.rows[0]!.id;
   const group=await q.query('SELECT 1 FROM mlg_bot.groups WHERE id=$1 AND authorized FOR UPDATE',[request.group]);
@@ -82,7 +82,7 @@ export async function cupRerollTeam(database:Database,request:{group:string;acto
  return database.transaction(async q=>{
   const actor=await q.query<{user_id:string}>(`SELECT DISTINCT a.user_id FROM mlg_bot.admins a
     JOIN mlg_bot.wa_identities w ON w.user_id=a.user_id JOIN mlg_bot.groups g ON g.id=a.group_id
-    WHERE w.jid=ANY($1::text[]) AND g.authorized AND g.admins_configured`,[request.actorAliases]);
+    WHERE w.jid=ANY($1::text[]) AND g.authorized AND g.admins_configured AND a.role IN ('owner','admin')`,[request.actorAliases]);
   if(actor.rows.length!==1)return {error:'Somente ADMs selecionados podem trocar uma equipe.'};
   const admin=actor.rows[0]!.user_id;
   const group=await q.query('SELECT 1 FROM mlg_bot.groups WHERE id=$1 AND authorized FOR UPDATE',[request.group]);
@@ -133,7 +133,7 @@ export async function cupRerollTeam(database:Database,request:{group:string;acto
 export type RosterRequest={group:string;controlGroup:string;actorAliases:string[];change?:'incluir'|'retirar'|'trocar';position?:number;targetAliases?:string[];targetName?:string;expected?:string;reason?:string};
 export async function cupRoster(database:Database,request:RosterRequest):Promise<{error?:string;cupId?:string;name?:string;size?:number;status?:string;fingerprint?:string;participants?:DrawRow[];changed?:boolean}>{
  return database.transaction(async q=>{
-  const admins=await q.query<{id:string}>('SELECT DISTINCT a.user_id AS id FROM mlg_bot.admins a JOIN mlg_bot.wa_identities w ON w.user_id=a.user_id JOIN mlg_bot.groups g ON g.id=a.group_id WHERE w.jid=ANY($1::text[]) AND g.authorized AND g.admins_configured',[request.actorAliases]);
+  const admins=await q.query<{id:string}>("SELECT DISTINCT a.user_id AS id FROM mlg_bot.admins a JOIN mlg_bot.wa_identities w ON w.user_id=a.user_id JOIN mlg_bot.groups g ON g.id=a.group_id WHERE w.jid=ANY($1::text[]) AND g.authorized AND g.admins_configured AND a.role IN ('owner','admin')",[request.actorAliases]);
   if(!admins.rows.length)return {error:'Sua conta não está entre os ADMs da central.'};
   const actor=admins.rows[0]!.id;
   const group=await q.query('SELECT 1 FROM mlg_bot.groups WHERE id=$1 AND authorized FOR UPDATE',[request.group]);if(!group.rows.length)return {error:'Grupo da Copa não autorizado.'};
@@ -240,6 +240,8 @@ export async function processEvent(database: Database, event: Event, env: Enviro
   return database.transaction(async q => {
     const groups = await q.query<{ id: string; authorized: boolean; competitionName:string; teamKind:"clube"|"seleção"|"misto"; formatSize:number|null }>('SELECT id,authorized,competition_name AS "competitionName",team_kind AS "teamKind",format_size AS "formatSize" FROM mlg_bot.groups WHERE id=$1 FOR UPDATE', [event.groupId]);
     if (!groups.rows[0]?.authorized) throw new Error('Grupo não autorizado.');
+    const season=await q.query<{startedAt:number|null}>("SELECT max(extract(epoch FROM at)*1000)::float8 AS \"startedAt\" FROM mlg_bot.control_audit WHERE action='season-reset'");
+    if(season.rows[0]?.startedAt&&event.at<season.rows[0].startedAt)return {duplicate:true,notices:[]};
     await q.query('INSERT INTO mlg_bot.users(id,display_name) VALUES ($1,$2) ON CONFLICT(id) DO NOTHING', [event.userId,event.name.slice(0,60)]);
     const claimed = await q.query<{ message_id: string }>(`INSERT INTO mlg_bot.processed_messages(group_id,user_id,message_id,received_at)
       VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING message_id`, [event.groupId,event.userId,event.id,event.at]);
@@ -252,7 +254,7 @@ export async function processEvent(database: Database, event: Event, env: Enviro
     const counter = await q.query<{ next: string }>("SELECT next_code::text AS next FROM mlg_bot.counters WHERE id='match'"+(mayAllocate?' FOR UPDATE':''));
     if (!counter.rows[0]) throw new Error('Migration required: missing match counter');
     const state = emptyState(); state.nextCode = Number(counter.rows[0].next);
-    const admins = await q.query<{ id: string }>('SELECT DISTINCT a.user_id AS id FROM mlg_bot.admins a JOIN mlg_bot.groups g ON g.id=a.group_id WHERE g.authorized AND g.admins_configured');
+    const admins = await q.query<{ id: string }>("SELECT DISTINCT a.user_id AS id FROM mlg_bot.admins a JOIN mlg_bot.groups g ON g.id=a.group_id WHERE g.authorized AND g.admins_configured AND (a.role IN ('owner','admin') OR a.role='channel' AND a.group_id=$1)",[event.groupId]);
     const clubs = await q.query<{ name: string }>('SELECT name FROM mlg_bot.club_pool WHERE group_id=$1 ORDER BY name', [event.groupId]);
     state.groups[event.groupId] = { authorized: true, admins: admins.rows.map(r => r.id), clubs: clubs.rows.map(r => r.name), competitionName:groups.rows[0]!.competitionName,teamKind:groups.rows[0]!.teamKind,formatSize:groups.rows[0]!.formatSize };
     const drafts = await q.query<{ ownerId: string; expiresAt: number; name:string|null; teamKind:'clube'|'seleção'|'misto'|null; size:number|null; legs:1|2|null }>('SELECT owner_id AS "ownerId",expires_at::float8 AS "expiresAt",name,team_kind AS "teamKind",cup_size AS size,legs FROM mlg_bot.command_drafts WHERE group_id=$1', [event.groupId]);
