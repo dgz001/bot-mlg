@@ -164,7 +164,7 @@ function parseScore(value: string | undefined): { home: number; away: number } {
   return { home, away };
 }
 function addRound(s: State, cup: Cup, ids: string[], round: number, startPosition=0): string {
-  const output: string[] = [`⚔️ ${roundName(ids.length).toUpperCase()} · ${ids.length / 2} ${ids.length===2?'jogo':'jogos'}`];
+  const output: string[] = [round===Math.log2(cup.size)-1?'🏆 FINAL · CONFRONTO DEFINIDO':`⚔️ ${roundName(cup.size/2**round)} · ${ids.length / 2} ${ids.length===2?'jogo':'jogos'}`];
   for (let i = 0; i < ids.length; i += 2) {
     requireThat(Number.isSafeInteger(s.nextCode) && s.nextCode < Number.MAX_SAFE_INTEGER, 'Limite de códigos atingido.');
     const match: Match = { code: s.nextCode++, round, position: startPosition+i / 2, home: ids[i]!, away: ids[i + 1]!, status: 'scheduled', results: [] };
@@ -255,6 +255,13 @@ function advance(s: State, cup: Cup, match: Match, at: number): string[] {
       const first=match.position%2===0?match:sibling;
       const second=match.position%2===0?sibling:match;
       notices.push(addRound(s,cup,[first.winner!,second.winner!],match.round+1,position));
+      if(match.round+1===Math.log2(cup.size)-1){
+        const final=cup.matches.find(m=>m.round===match.round+1&&m.position===position)!;
+        notices[notices.length-1]+=`\n\n🏆 FINALISTAS · jogo #${final.code}\n${player(cup,final.home).name} × ${player(cup,final.away).name}\n📌 Os dois finalistas podem consultar o código com !meujogo.`;
+      }else if(match.round+1===Math.log2(cup.size)-2){
+        const semis=cup.matches.filter(m=>m.round===match.round+1).sort((a,b)=>a.position-b.position);
+        if(semis.length===2)notices[notices.length-1]+=`\n\n📣 SEMIFINALISTAS · jogos #${semis[0]!.code} e #${semis[1]!.code}\n${semis.map(m=>`${player(cup,m.home).name} × ${player(cup,m.away).name}`).join('\n')}\n📌 Os quatro jogadores estão marcados para consultar seus confrontos com !meujogo.`;
+      }
     }
   }
   notices[notices.length-1] += '\n\n'+progress();
@@ -494,6 +501,11 @@ export function apply(input: State, event: Event, env: Environment = environment
       cup.status = 'playing';
       notices.push(`🎲 SORTEIO · ${cup.competitionName?.toUpperCase()??'MLG'}\n🏆 ${cupLabel(cup)} · ${cup.size} participantes\n\n${cup.teamKind==='seleção'?'Seleções':'Equipes'} e adversários aparecem juntos nos jogos a seguir. O sorteio desta edição foi salvo no banco. Boa Copa!`);
       notices.push(addRound(s, cup, ids, 0));
+      notices[notices.length-2]+=`\n\n👥 INSCRITOS · ${cup.size}/${cup.size}\n${cup.participants.map((p,i)=>`${i+1}. ${p.name} → ${teamLabel(p.club,cup.teamKind)}`).join('\n')}\n\n📌 Jogos do sorteio: ${cup.matches.filter(m=>m.round===0).map(m=>'#'+m.code).join(' · ')}. Cada confronto tem código próprio.`;
+      if(cup.size===4){
+        const semis=cup.matches.filter(m=>m.round===0).sort((a,b)=>a.position-b.position);
+        notices[notices.length-1]+=`\n\n📣 SEMIFINALISTAS · jogos #${semis[0]!.code} e #${semis[1]!.code}\n${semis.map(m=>`${player(cup,m.home).name} × ${player(cup,m.away).name}`).join('\n')}\n📌 Os quatro jogadores estão marcados para consultar seus confrontos com !meujogo.`;
+      }
     }
     audit('join', cup, before);
   } else if (cmd === '!sair') {
