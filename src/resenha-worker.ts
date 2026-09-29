@@ -62,6 +62,8 @@ async function connect(){
  for(const message of orderMessages(event.messages)){queue=queue.then(async()=>{
  const group=message.key.remoteJid,id=message.key.id;if(stopping||!group?.endsWith('@g.us')||!id||message.key.fromMe)return;
  const body=extractMessageContent(message.message);const text=body?.conversation??body?.extendedTextMessage?.text??'';const context=body?.extendedTextMessage?.contextInfo;
+ const receivedAt=Number(message.messageTimestamp)*1000;
+ const eventAt=Number.isSafeInteger(receivedAt)&&receivedAt>1577836800000&&receivedAt<Date.now()+60000?receivedAt:Date.now();
  if(cupApi&&text.trim().startsWith('!')&&message.key.participant&&auth.data.groups.includes(group)){
   const checked=await cupApi<{blocked:boolean}>({action:'block-check',aliases:await cupAliases(message.key.participant,current)});
   if(checked.blocked)return;
@@ -92,17 +94,22 @@ async function connect(){
   return;
  }
  const mode=groupMode(auth.data.groupModes,group);
- const centralOnly=/^!(?:painel|grupos|usar|central|pendencias|equipes|adicionar|remover|vagas|revisar|descartar|inscritosadm|inscrever|retirar|trocar|confirmarelenco|cancelarelenco|bloquear|desbloquear|bloqueados|refazersorteio|confirmarsorteio|cancelarsorteio)(?:\s|$)/i.test(text.trim());
+ const seasonCommand=/^!(?:reiniciartemporada|reiniciar\s+temporada|confirmartemporada|confirmar\s+temporada|cancelartemporada|cancelar\s+temporada)(?:\s|$)/i.test(text.trim());
+ const centralOnly=seasonCommand||/^!(?:painel|grupos|usar|central|pendencias|equipes|confirmartimes|adicionar|remover|vagas|revisar|concluir|descartar|adms|daradm|tiraradm|inscritosadm|inscrever|retirar|trocar|confirmarelenco|cancelarelenco|bloquear|desbloquear|bloqueados|refazersorteio|confirmarsorteio|cancelarsorteio)(?:\s|$)/i.test(text.trim());
  const outsideCup=!inChannel(group,'minicamp')&&/^!(?:modelos|ativarmodelo|sorteio|novacopa|cancelarcopa|anularcopa|nome|categoria|times|abrircopa|forcarresultado|resolver|deletar|vistoria)(?:\s|$)/i.test(text.trim());
  if(auth.data.groups.includes(group)&&(mode==='controle'||centralOnly||outsideCup)){
   if(!text.trim().startsWith('!')||!cupApi||!message.key.participant)return;
-  if(text.length>10000){await current.sendMessage(group,{text:'⚠️ Mensagem muito longa. Envie até 200 times em mensagens menores com !adicionar.'});return;}
+  if(text.length>16000){await current.sendMessage(group,{text:'⚠️ Mensagem muito longa. Envie os times em mensagens menores com !adicionar.'});return;}
   const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
   try{
    const aliases=await cupAliases(message.key.participant,current);
    const members=(await current.groupMetadata(group)).participants;
    if(!members.some(p=>aliases.includes(jidNormalizedUser(p.id)))&&!(await Promise.all(members.map(p=>cupAliases(p.id,current).catch(()=>[])))).some(a=>a.some(j=>aliases.includes(j))))return;
-   const permission=await cupApi<{allowed:boolean}>({action:'control-check',group,aliases});
+   const permission=await cupApi<{allowed:boolean;channelAllowed:boolean}>({action:'control-check',group,aliases});
+   if(!permission.allowed&&permission.channelAllowed&&inChannel(group,'minicamp')&&!centralOnly&&auth.data.cupInbox!.length<100){
+    auth.data.cupInbox!.push({group,aliases,id,name:message.pushName??'Participante',text:text.trim(),at:eventAt});
+    auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);await auth.save();void cupTick();return;
+   }
    let response='🔒 Só as contas cadastradas como ADMs no painel podem usar comandos administrativos.';
    let restartRequested=false;
    if(permission.allowed){
@@ -111,7 +118,7 @@ async function connect(){
      if(power.next){const previous=auth.data.controls;auth.data.controls=power.next;try{await auth.save();}catch{auth.data.controls=previous;throw Error('Settings persistence failed');}log('BOT_CONTROLS_UPDATED_BY_WA');}
      response=power.restart&&!process.connected?'⚠️ O supervisor de reinício não está disponível. Use o botão Reiniciar no painel.':power.text;
      restartRequested=power.restart===true&&Boolean(process.connected);
-    }else if(!enabled('minicamp'))response='⏸️ Copa ou bot pausado. Use !acordarbot para liberar os comandos da central.';
+    }else if(!enabled('minicamp')&&!seasonCommand)response='⏸️ Copa ou bot pausado. Use !acordarbot para liberar os comandos da central.';
     else{
      const participating=Object.values(await current.groupFetchAllParticipating());
      const targets:ControlTarget[]=participating.filter(g=>auth.data.groups.includes(g.id)&&allowsGroup(auth.data.groupModes,g.id,'minicamp')).map(g=>({id:g.id,name:g.subject})).sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
@@ -130,7 +137,12 @@ async function connect(){
       const members=await Promise.all(metadata.participants.map(p=>cupAliases(p.id,current).catch(():string[]=>[])));
       return members.find(m=>m.includes(jid))??null;
      };
-     response=await adminControl(text,room,targets,api,()=>auth.save(),Date.now(),{controlGroup:group,aliases,messageId:id,resolveMember});
+     response=await adminControl(text,room,targets,api,()=>auth.save(),Date.now(),{controlGroup:group,aliases,messageId:id,resolveMember},auth.data.controlRooms);
+     if(response.startsWith('✅ TEMPORADA REINICIADA')){
+      auth.data.cupInbox=[];auth.data.scoreReactions=[];
+      for(const workspace of Object.values(auth.data.controlRooms)){delete workspace.draft;delete workspace.staged;delete workspace.draw;delete workspace.roster;delete workspace.seasonReset;}
+      configuredCups.clear();
+     }
     }
    }
    auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);await auth.save();
@@ -148,7 +160,7 @@ async function connect(){
   auth.data.cupInbox??=[];
   if(auth.data.cupInbox.length>=100){await current.sendMessage(group,{text:'⚠️ Muitas consultas aguardando. Tente !meujogo novamente em instantes.'});return;}
   auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);
-  auth.data.cupInbox.push({group,aliases,id,name:message.pushName??'Participante',text:question});await auth.save();void cupTick();return;
+  auth.data.cupInbox.push({group,aliases,id,name:message.pushName??'Participante',text:question,at:eventAt});await auth.save();void cupTick();return;
  }
  if(/^!supabase\s*$/i.test(text)&&inChannel(group,'minicamp')&&enabled('minicamp')){
   const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
@@ -217,7 +229,7 @@ async function connect(){
     const metadata=await current.groupMetadata(group);
     targets=await Promise.all(metadata.participants.slice(0,100).map(p=>cupAliases(p.id,current)));
    }
-  auth.data.cupInbox.push({group,aliases,targets,id,name:message.pushName??'Participante',text:text.trim()});await auth.save();
+  auth.data.cupInbox.push({group,aliases,targets,id,name:message.pushName??'Participante',text:text.trim(),at:eventAt});await auth.save();
   if(/^!resultado(?:\s|$)/i.test(text.trim())&&message.key.participant){
    auth.data.scoreReactions??=[];
    auth.data.scoreReactions.push({group,participant:message.key.participant,id,at:Date.now()});
@@ -273,19 +285,24 @@ async function cupTick(){
    await configureCup(event.group,current);await cupApi({action:'event',event});
    auth.data.cupInbox=auth.data.cupInbox!.filter(e=>e!==event);await auth.save();
   }
-  const batch=await cupApi<{messages:{id:string;group_id:string;body:string;wa_message_id:string;lease:string}[]}>({action:'poll'});
+  const batch=await cupApi<{messages:{id:string;group_id:string;body:string;wa_message_id:string;lease:string;mentions?:string[]}[]}>({action:'poll'});
   for(const m of batch.messages){
    if(!inChannel(m.group_id,'minicamp')||socket!==current||stopping||!enabled('minicamp')){await cupApi({action:'ack',id:m.id,lease:m.lease,sent:false});continue;}
    let sent=false;
    try{
+    const requested=(m.mentions??[]).filter(j=>/^[0-9]+@s\.whatsapp\.net$/.test(j)).slice(0,32);
+    const participants=requested.length?(await current.groupMetadata(m.group_id)).participants:[];
+    const aliases=await Promise.all(participants.map(p=>cupAliases(p.id,current).catch(():string[]=>[])));
+    const mentions=requested.filter(j=>aliases.some(groupMember=>groupMember.includes(j)));
+    const body=mentions.length?m.body+'\n\n📣 '+(m.body.startsWith('🎲 SORTEIO · ')?'@todos · ':'')+mentions.map(j=>'@'+j.split('@')[0]).join(' '):m.body;
     const card=cupMediaFor(m.body);
     if(card){
      try{
       const path=card==='sorteio'?'../assets/mlg-sorteio.jpg':card==='campeao'?'../assets/mlg-campeao.jpg':card==='classificacao'?'../assets/mlg-classificacao.jpg':card==='proxima-copa'?'../assets/mlg-proxima-copa.jpg':'../assets/mlg-partida.jpg';
-      await current.sendMessage(m.group_id,{image:await readFile(new URL(path,import.meta.url)),caption:m.body},{messageId:m.wa_message_id});sent=true;
+      await current.sendMessage(m.group_id,{image:await readFile(new URL(path,import.meta.url)),caption:body,mentions},{messageId:m.wa_message_id});sent=true;
      }catch{log('MINICAMP_IMAGE_FALLBACK');}
     }
-    if(!sent){await current.sendMessage(m.group_id,{text:m.body},{messageId:m.wa_message_id});sent=true;}
+    if(!sent){await current.sendMessage(m.group_id,{text:body,mentions},{messageId:m.wa_message_id});sent=true;}
    }catch{log('MINICAMP_SEND_RETRY');}
    await cupApi({action:'ack',id:m.id,lease:m.lease,sent});
   }
