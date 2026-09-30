@@ -41,7 +41,7 @@ test('empréstimo exige administrador do grupo e gestão convidada fica restrita
  const guest=async(command:string)=>adminControl(command,loanRoom,[{id:group,name:'Liga do Amério'}],async payload=>{touched++;assert.equal(payload.group,group);return {competition:{name:'Liga',teamKind:'clube',teams:['A','B','C','D']},activeCup:null,preparing:false};},async()=>{},Date.now(),{controlGroup:group,aliases:['5511888888888@s.whatsapp.net'],messageId:'wa-51'}, {[group]:loanRoom},true);
  assert.match(await guest('!painel'),/ORGANIZADOR/);
  assert.match(await guest('!reiniciar temporada'),/reservado/);
- assert.match(await guest('!daradm 5511777777777 | geral'),/reservado/);
+ assert.match(await guest('!daradm 5511777777777 | geral'),/Use !daradm/);
  assert.match(await guest('!grupos'),/reservado/);
  assert.equal(touched,0);
  assert.match(await guest('!novacopa'),/NOVO CAMPEONATO/);
@@ -83,6 +83,32 @@ test('organizador escolhe a foto do próprio grupo ou texto sem alterar a Copa',
  assert.match(await send('!imagemtexto'),/sem imagens da MLG/);
  assert.equal(room.guestImage,'text');assert.equal(saves,3);
  assert.match(await send('!painel'),/um time por linha/);
+});
+test('organizador aceita lista longa, corrige um clube e revisa de novo',async()=>{
+ const room:ControlWorkspace={targetId:'convidado@g.us'},api=async(body:Record<string,unknown>)=>body.action==='guest-status'?{cup:null}:{opened:true};
+ const send=(text:string)=>adminControl(text,room,[],api,async()=>{},Date.now(),undefined,undefined,true);
+ await send('!novacopa');await send('!modalidade liga');await send('!vagas 3');
+ const clubs=Array.from({length:220},(_,i)=>'Clube '+i);
+ await send('!equipes '+clubs.slice(0,100).join('\n'));
+ await send('!adicionar '+clubs.slice(100).join('\n'));
+ assert.equal(room.guestDraft?.teams.length,220);
+ assert.match(await send('!times 9'),/220\. Clube 219/);
+ assert.match(await send('!corrigirclubes Clube 0 | Clube certo'),/Atualizado/);
+ assert.match(await send('!corrigirclubes Clube 1 | Clube certo'),/já cadastrado/);
+ assert.match(await send('!revisar'),/220 times/);
+ await send('!remover Clube 219');
+ assert.match(await send('!abrircopa'),/Revise/);
+});
+test('auxiliar convidado depende da permissão do grupo, sem papel geral',async()=>{
+ const room:ControlWorkspace={targetId:'convidado@g.us'},calls:Record<string,unknown>[]=[],aliases=['5511888888888@s.whatsapp.net'];
+ const api=async(body:Record<string,unknown>)=>{calls.push(body);return body.operation==='list'?{admins:[{role:'manager',jid:aliases[0]}]}:{updated:true};};
+ const actor={aliases,controlGroup:room.targetId!,resolveGroupAdmin:async()=>['5511777777777@s.whatsapp.net']};
+ const send=(text:string)=>adminControl(text,room,[],api,async()=>{},Date.now(),actor,undefined,true);
+ assert.match(await send('!daradm 5511777777777'),/apenas neste grupo/);
+ assert.deepEqual(calls[0],{action:'guest-admin',group:room.targetId,aliases,operation:'grant',targetAliases:['5511777777777@s.whatsapp.net']});
+ assert.match(await send('!adms'),/Organizador/);
+ assert.match(await send('!tiraradm 5511777777777'),/removido/);
+ assert.match(await send('!bloquear 5511777777777'),/reservado/);
 });
 test('troca de temporada exige revisão, mesmo ADM e código válido dentro do prazo',async()=>{
  const room:ControlWorkspace={},actor={controlGroup:'adm@g.us',aliases:['5511999999999@s.whatsapp.net'],messageId:'wa-1'};
