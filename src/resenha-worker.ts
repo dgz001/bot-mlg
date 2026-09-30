@@ -106,7 +106,11 @@ async function connect(){
    const aliases=await cupAliases(message.key.participant,current);
    const members=(await current.groupMetadata(group)).participants;
    if(!members.some(p=>aliases.includes(jidNormalizedUser(p.id)))&&!(await Promise.all(members.map(p=>cupAliases(p.id,current).catch(()=>[])))).some(a=>a.some(j=>aliases.includes(j))))return;
-   const permission=await cupApi<{allowed:boolean;channelAllowed:boolean;loanAllowed:boolean}>({action:'control-check',group,aliases});
+   const permission=await cupApi<{allowed:boolean;channelAllowed:boolean;loanAllowed:boolean;loanGroup:boolean}>({action:'control-check',group,aliases});
+   if(loanSetup&&!centralOnly&&inChannel(group,'minicamp')&&!permission.loanGroup&&auth.data.cupInbox!.length<100){
+    auth.data.cupInbox!.push({group,aliases,id,name:message.pushName??'Participante',text:text.trim(),at:eventAt});
+    auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);await auth.save();void cupTick();return;
+   }
    if(!permission.allowed&&permission.channelAllowed&&inChannel(group,'minicamp')&&!centralOnly&&!loanSetup&&auth.data.cupInbox!.length<100){
     auth.data.cupInbox!.push({group,aliases,id,name:message.pushName??'Participante',text:text.trim(),at:eventAt});
     auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);await auth.save();void cupTick();return;

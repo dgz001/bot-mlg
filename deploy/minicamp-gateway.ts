@@ -151,7 +151,8 @@ Deno.serve(async req=>{
    const id=await identity(q,body.aliases);
    const allowed=await q.query("SELECT a.role,a.group_id FROM mlg_bot.admins a JOIN mlg_bot.groups g ON g.id=a.group_id WHERE a.user_id=$1 AND g.authorized AND g.admins_configured AND NOT EXISTS(SELECT 1 FROM mlg_bot.member_blocks b WHERE b.user_id=a.user_id)",[id]);
    const loan=await q.query('SELECT 1 FROM mlg_bot.loan_groups WHERE group_id=$1 AND manager_id=$2 AND active',[body.group,id]);
-   return {allowed:allowed.rows.some(a=>a.role==='owner'||a.role==='admin'),channelAllowed:allowed.rows.some(a=>a.group_id===body.group&&a.role==='channel'),loanAllowed:loan.rows.length===1};
+   const loanGroup=await q.query('SELECT 1 FROM mlg_bot.loan_groups WHERE group_id=$1 AND active',[body.group]);
+   return {allowed:allowed.rows.some(a=>a.role==='owner'||a.role==='admin'),channelAllowed:allowed.rows.some(a=>a.group_id===body.group&&a.role==='channel'),loanAllowed:loan.rows.length===1,loanGroup:loanGroup.rows.length===1};
   });
  }
  else if(body.action==='loan-manage'){
