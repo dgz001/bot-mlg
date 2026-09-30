@@ -1,6 +1,6 @@
 import {loanCommand,loanGuide,loanPhone} from './loan-invitation.ts';
 export type ControlDraft={name:string;teamKind:'clube'|'seleção'|'misto';teams:string[];size:number|null;teamsApproved?:boolean;reviewed?:string;reviewedAt?:number};
-export type ControlWorkspace={targetId?:string;draft?:ControlDraft;guestDraft?:{name:string;mode:'liga'|'copa';legs:1|2;size:number|null;teams:string[];reviewed?:string};staged?:{name:string;teamKind:ControlDraft['teamKind'];teams:string[];size:number};draw?:{group:string;cupId:string;fingerprint:string;mode:'equipes'|'chave'|'completo';reason:string;expiresAt:number};roster?:{group:string;fingerprint:string;change:'incluir'|'retirar'|'trocar';position?:number;targetAliases?:string[];targetName?:string;reason:string;expiresAt:number};seasonReset?:{code:string;fingerprint:string;actorAliases:string[];expiresAt:number}};
+export type ControlWorkspace={targetId?:string;guestImage?:'group'|'text';draft?:ControlDraft;guestDraft?:{name:string;mode:'liga'|'copa';legs:1|2;size:number|null;teams:string[];reviewed?:string};staged?:{name:string;teamKind:ControlDraft['teamKind'];teams:string[];size:number};draw?:{group:string;cupId:string;fingerprint:string;mode:'equipes'|'chave'|'completo';reason:string;expiresAt:number};roster?:{group:string;fingerprint:string;change:'incluir'|'retirar'|'trocar';position?:number;targetAliases?:string[];targetName?:string;reason:string;expiresAt:number};seasonReset?:{code:string;fingerprint:string;actorAliases:string[];expiresAt:number}};
 export type ControlTarget={id:string;name:string};
 type Api=(body:Record<string,unknown>)=>Promise<any>;
 const label=(kind:ControlDraft['teamKind'])=>kind==='seleção'?'seleções':kind==='misto'?'clubes e seleções':'clubes';
@@ -97,9 +97,13 @@ function requireSuccess<T>(value:any):T {if(value?.error)throw Error(value.error
 
 async function guestControl(text:string,room:ControlWorkspace,group:string,api:Api,save:()=>Promise<void>):Promise<string>{
  const [command='']=text.trim().split(/\s+/,1),cmd=command.toLocaleLowerCase('pt-BR'),arg=text.trim().slice(command.length).trim();
- if(['!ajuda','!comandos','!painel'].includes(cmd))return '🤝 GUIA DO ORGANIZADOR\n!novacopa — iniciar o preparo\n!nome Nome do campeonato\n!modalidade liga (pontos corridos) ou !modalidade copa (mata-mata)\n!vagas N — liga: 2 a 16; copa: 4, 8, 16 ou 32\n!jogos 1 (jogo único) ou !jogos 2 (ida e volta)\n!equipes Time A | Time B | ... — times para sorteio\n!revisar · !abrircopa — abrir inscrições\n!central · !cancelarcopa motivo\nJogadores: !entrar, !meujogo, !copa, !tabela, !resultado CÓDIGO MxV, !confirmar CÓDIGO MxV. O mandante vem primeiro. ADM: !forcarresultado CÓDIGO MxV motivo. !campeoes mostra o histórico.';
- const only=new Set(['!novacopa','!nome','!modalidade','!vagas','!formato','!jogos','!equipes','!adicionar','!remover','!times','!revisar','!abrircopa','!concluir','!central','!pendencias','!cancelarcopa','!descartar']);
+ if(['!ajuda','!comandos','!painel'].includes(cmd))return '🤝 GUIA DO ORGANIZADOR\n!novacopa — iniciar o preparo\n!nome Nome do campeonato\n!modalidade liga (pontos corridos) ou !modalidade copa (mata-mata)\n!vagas N — liga: 2 a 16; copa: 4, 8, 16 ou 32 (fases automáticas)\n!jogos 1 (jogo único) ou !jogos 2 (ida e volta)\n!equipes Time A | Time B | ... — ou um time por linha, para sorteio\n!imagemgrupo — usar a foto do grupo nos anúncios; !imagemtexto — só texto\n!revisar · !abrircopa — abrir inscrições\n!central · !cancelarcopa motivo\nJogadores: !entrar, !meujogo, !copa, !tabela, !resultado CÓDIGO MxV, !confirmar CÓDIGO MxV. O mandante vem primeiro. ADM: !forcarresultado CÓDIGO MxV motivo. !campeoes mostra o histórico.';
+ const only=new Set(['!novacopa','!nome','!modalidade','!vagas','!formato','!jogos','!equipes','!adicionar','!remover','!times','!revisar','!abrircopa','!concluir','!central','!pendencias','!cancelarcopa','!descartar','!imagemgrupo','!imagemtexto']);
  if(!only.has(cmd))return '🔒 Este comando é reservado aos ADMs gerais da MLG. Use !painel para administrar somente este grupo.';
+ if(cmd==='!imagemgrupo'||cmd==='!imagemtexto'){
+  room.guestImage=cmd==='!imagemgrupo'?'group':'text';await save();
+  return room.guestImage==='group'?'🖼️ Os anúncios do campeonato usarão a foto atual deste grupo. Se ela não estiver disponível, envio só o texto.':'📝 Anúncios em texto, sem imagens da MLG.';
+ }
  if(cmd==='!central'||cmd==='!pendencias'){
   const status=await api({action:'guest-status',group});if(status.error)return '⚠️ '+status.error;
   const cup=status.cup;return '🤝 CAMPEONATO DESTE GRUPO\n'+(cup?`${cup.name} · ${cup.mode==='liga'?'pontos corridos':'mata-mata'} · ${cup.legs===2?'ida e volta':'jogo único'} · ${cup.size} vagas · ${cup.status}`:'Nenhum campeonato aberto.')+(room.guestDraft?'\n📝 Preparação: '+room.guestDraft.name:'')+'\n!painel mostra o guia.';
@@ -114,7 +118,7 @@ async function guestControl(text:string,room:ControlWorkspace,group:string,api:A
   if(status.cup)return 'Já há campeonato aberto: '+status.cup.name+'. Use !central.';
   if(room.guestDraft)return 'Preparação em andamento: '+room.guestDraft.name+'. Use !revisar ou !descartar.';
   room.guestDraft={name:'Campeonato convidado',mode:'copa',legs:1,size:null,teams:[]};await save();
-  return '🏆 NOVO CAMPEONATO\n1. !nome Nome\n2. !modalidade liga ou !modalidade copa\n3. !vagas N\n4. !jogos 1 ou !jogos 2\n5. !equipes Time A | Time B | ... (separe com |)\n6. !revisar e !abrircopa. Nada foi aberto ainda.';
+  return '🏆 NOVO CAMPEONATO\n1. !nome Nome\n2. !modalidade liga ou !modalidade copa\n3. !vagas N (define as fases do mata-mata)\n4. !jogos 1 ou !jogos 2\n5. !equipes Time A | Time B | ... ou um time por linha\n6. !imagemgrupo se quiser usar a foto do grupo; por padrão, só texto\n7. !revisar e !abrircopa. Nada foi aberto ainda.';
  }
  const d=room.guestDraft;if(!d)return 'Comece com !novacopa neste grupo.';
  if(cmd==='!nome'){
