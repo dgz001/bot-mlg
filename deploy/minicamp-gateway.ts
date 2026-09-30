@@ -200,7 +200,8 @@ Deno.serve(async req=>{
    const manager=await identity(q,body.targetAliases);
    if((await q.query('SELECT 1 FROM mlg_bot.member_blocks WHERE user_id=$1',[manager])).rows.length)return {error:'Esta pessoa está bloqueada.'};
    const existing=await q.query('SELECT claimed_group,active FROM mlg_bot.loan_invitations WHERE manager_id=$1 FOR UPDATE',[manager]);
-   if(existing.rows[0]?.active)return {error:existing.rows[0].claimed_group?'Esse número já administra um grupo emprestado.':'Esse número já tem um convite pendente.'};
+   // Retrying sends the guide again without resetting a claimed group.
+   if(existing.rows[0]?.active)return {invited:true,existing:true};
    await q.query(`INSERT INTO mlg_bot.loan_invitations(manager_id,granted_by) VALUES($1,$2)
     ON CONFLICT(manager_id) DO UPDATE SET granted_by=excluded.granted_by,active=true,granted_at=now(),claimed_group=NULL,revoked_at=NULL`,[manager,actor]);
    await q.query("INSERT INTO mlg_bot.control_audit(action,user_id) VALUES('loan-invited',$1)",[manager]);
@@ -211,6 +212,7 @@ Deno.serve(async req=>{
   if(!groupId.test(body.group)||!validAliases(body.aliases))throw Error('Invalid claim');
   result=await db.transaction(async q=>{
    const manager=await identity(q,body.aliases,body.name);
+   if((await q.query('SELECT 1 FROM mlg_bot.member_blocks WHERE user_id=$1',[manager])).rows.length)return {error:'Esta pessoa está bloqueada no bot.'};
    const invitation=await q.query('SELECT claimed_group FROM mlg_bot.loan_invitations WHERE manager_id=$1 AND active FOR UPDATE',[manager]);
    if(!invitation.rows.length)return {error:'Não há convite ativo para este administrador. Peça a um ADM geral para enviar !emprestar telefone.'};
    if(invitation.rows[0].claimed_group&&invitation.rows[0].claimed_group!==body.group)return {error:'Este empréstimo já pertence a outro grupo.'};

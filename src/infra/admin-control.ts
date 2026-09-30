@@ -1,3 +1,4 @@
+import {loanCommand,loanGuide,loanPhone} from './loan-invitation.ts';
 export type ControlDraft={name:string;teamKind:'clube'|'seleção'|'misto';teams:string[];size:number|null;teamsApproved?:boolean;reviewed?:string;reviewedAt?:number};
 export type ControlWorkspace={targetId?:string;draft?:ControlDraft;guestDraft?:{name:string;mode:'liga'|'copa';legs:1|2;size:number|null;teams:string[];reviewed?:string};staged?:{name:string;teamKind:ControlDraft['teamKind'];teams:string[];size:number};draw?:{group:string;cupId:string;fingerprint:string;mode:'equipes'|'chave'|'completo';reason:string;expiresAt:number};roster?:{group:string;fingerprint:string;change:'incluir'|'retirar'|'trocar';position?:number;targetAliases?:string[];targetName?:string;reason:string;expiresAt:number};seasonReset?:{code:string;fingerprint:string;actorAliases:string[];expiresAt:number}};
 export type ControlTarget={id:string;name:string};
@@ -39,7 +40,8 @@ Preserva jogadores, nomes, contas, ADMs e modelos. Apaga Copas, partidas e estat
 🤝 EMPRÉSTIMO POR GRUPO
 !emprestar telefone — enviar convite e guia no privado
 Depois adicione o bot ao grupo do convidado; ele abre !novacopa lá.
-!emprestimo — consultar convites pendentes e grupos
+!emprestimo — consultar convites; !emprestimo telefone também convida
+Repita !emprestar telefone se precisar reenviar o guia privado.
 !devolverbot telefone — cancelar convite ainda sem grupo
 Para devolver um grupo em uso: !usar número e !devolverbot.
 
@@ -96,7 +98,7 @@ function requireSuccess<T>(value:any):T {if(value?.error)throw Error(value.error
 async function guestControl(text:string,room:ControlWorkspace,group:string,api:Api,save:()=>Promise<void>):Promise<string>{
  const [command='']=text.trim().split(/\s+/,1),cmd=command.toLocaleLowerCase('pt-BR'),arg=text.trim().slice(command.length).trim();
  if(['!ajuda','!comandos','!painel'].includes(cmd))return '🤝 GUIA DO ORGANIZADOR\n!novacopa — iniciar o preparo\n!nome Nome do campeonato\n!modalidade liga (pontos corridos) ou !modalidade copa (mata-mata)\n!vagas N — liga: 2 a 16; copa: 4, 8, 16 ou 32\n!jogos 1 (jogo único) ou !jogos 2 (ida e volta)\n!equipes Time A | Time B | ... — times para sorteio\n!revisar · !abrircopa — abrir inscrições\n!central · !cancelarcopa motivo\nJogadores: !entrar, !meujogo, !copa, !tabela, !resultado CÓDIGO MxV, !confirmar CÓDIGO MxV. O mandante vem primeiro. ADM: !forcarresultado CÓDIGO MxV motivo. !campeoes mostra o histórico.';
- const only=new Set(['!novacopa','!nome','!modalidade','!vagas','!jogos','!equipes','!adicionar','!remover','!times','!revisar','!abrircopa','!concluir','!central','!pendencias','!cancelarcopa','!descartar']);
+ const only=new Set(['!novacopa','!nome','!modalidade','!vagas','!formato','!jogos','!equipes','!adicionar','!remover','!times','!revisar','!abrircopa','!concluir','!central','!pendencias','!cancelarcopa','!descartar']);
  if(!only.has(cmd))return '🔒 Este comando é reservado aos ADMs gerais da MLG. Use !painel para administrar somente este grupo.';
  if(cmd==='!central'||cmd==='!pendencias'){
   const status=await api({action:'guest-status',group});if(status.error)return '⚠️ '+status.error;
@@ -118,12 +120,14 @@ async function guestControl(text:string,room:ControlWorkspace,group:string,api:A
  if(cmd==='!nome'){
   if(arg.length<3||arg.length>60||/[\r\n\x00-\x1f\x7f*_~`]/.test(arg))return 'Use !nome Nome do campeonato (3 a 60 caracteres).';d.name=arg;
  }else if(cmd==='!modalidade'){
-  if(!['liga','copa'].includes(arg.toLowerCase()))return 'Use !modalidade liga para pontos corridos ou !modalidade copa para mata-mata.';
-  d.mode=arg.toLowerCase() as 'liga'|'copa';if(d.size&&(d.mode==='liga'?d.size>16||d.size<2:![4,8,16,32].includes(d.size)))d.size=null;
- }else if(cmd==='!vagas'){
+  const mode=({'pontos corridos':'liga','mata-mata':'copa','mata mata':'copa'} as Record<string,string>)[arg.toLowerCase()]??arg.toLowerCase();
+  if(!['liga','copa'].includes(mode))return 'Use !modalidade liga para pontos corridos ou !modalidade copa para mata-mata.';
+  d.mode=mode as 'liga'|'copa';if(d.size&&(d.mode==='liga'?d.size>16||d.size<2:![4,8,16,32].includes(d.size)))d.size=null;
+ }else if(cmd==='!vagas'||cmd==='!formato'){
   const size=Number(arg);if(!Number.isSafeInteger(size)||d.mode==='liga'&&(size<2||size>16)||d.mode==='copa'&&![4,8,16,32].includes(size))return d.mode==='liga'?'Escolha !vagas de 2 a 16 para pontos corridos.':'Escolha !vagas 4, 8, 16 ou 32 para mata-mata.';d.size=size;
  }else if(cmd==='!jogos'){
-  if(arg!=='1'&&arg!=='2')return 'Use !jogos 1 para jogo único ou !jogos 2 para ida e volta.';d.legs=Number(arg) as 1|2;
+  const legs=({'ida':'1','jogo único':'1','jogo unico':'1','ida e volta':'2'} as Record<string,string>)[arg.toLowerCase()]??arg;
+  if(legs!=='1'&&legs!=='2')return 'Use !jogos 1 para jogo único ou !jogos 2 para ida e volta.';d.legs=Number(legs) as 1|2;
  }else if(cmd==='!equipes'||cmd==='!adicionar'){
   const teams=(cmd==='!adicionar'?[...d.teams]:[]).concat(arg.split(/\||\n/).map(s=>s.trim()).filter(Boolean));
   if(teams.length<2||!validTeams(teams))return 'Envie pelo menos dois times diferentes, separados por |. Máximo de 200, com nomes de 2 a 60 caracteres.';d.teams=teams;
@@ -145,7 +149,7 @@ async function guestControl(text:string,room:ControlWorkspace,group:string,api:A
 }
 
 export async function adminControl(text:string,room:ControlWorkspace,targets:ControlTarget[],api:Api,save:()=>Promise<void>,now=Date.now(),actor?:{controlGroup:string;aliases:string[];messageId?:string;resolveMember?:(group:string,phone:string)=>Promise<string[]|null>;resolveGroupAdmin?:(group:string,phone:string)=>Promise<string[]|null>;sendInvitation?:(phone:string,guide:string)=>Promise<void>},workspaces?:Record<string,ControlWorkspace>,loanMode=false):Promise<string>{
- const trimmed=text.trim();const [command='']=trimmed.split(/\s+/,1);const arg=trimmed.slice(command.length).trim();const cmd=command.toLocaleLowerCase('pt-BR');
+ const trimmed=loanCommand(text.trim());const [command='']=trimmed.split(/\s+/,1);const arg=trimmed.slice(command.length).trim();const cmd=command.toLocaleLowerCase('pt-BR');
  if(loanMode)return guestControl(text,room,room.targetId!,api,save);
  if(cmd==='!ajuda'||cmd==='!comandos'||cmd==='!painel')return menu;
  if(cmd==='!reiniciartemporada'||cmd==='!reiniciar'&&arg==='temporada'){
@@ -174,17 +178,21 @@ export async function adminControl(text:string,room:ControlWorkspace,targets:Con
  if(['!emprestar','!emprestimo'].includes(cmd)||cmd==='!devolverbot'&&arg){
   if(!actor?.aliases.length)return 'Apenas ADMs gerais podem administrar convites.';
   const request={action:'loan-invite',source:actor.controlGroup,aliases:actor.aliases};
-  if(cmd==='!emprestimo'){
+  if(cmd==='!emprestimo'&&!arg){
    const result=await api({...request,operation:'get'});
    return result.error?'⚠️ '+result.error:'🤝 EMPRÉSTIMOS\n'+(result.invitations?.map((x:{jid?:string;name:string;claimed_group?:string})=>`${x.jid?.split('@')[0]??x.name} · ${x.claimed_group?'grupo em uso':'aguardando grupo'}`).join('\n')||'Nenhum convite ativo.')+'\n\n!emprestar telefone · !devolverbot telefone para convite pendente.';
   }
-  if(!/^\d{10,15}$/.test(arg))return cmd==='!emprestar'?'Use !emprestar telefone com DDI e DDD.':'Use !devolverbot telefone para cancelar um convite ainda não usado.';
-  const result=await api({...request,operation:cmd==='!emprestar'?'grant':'revoke',targetAliases:[arg+'@s.whatsapp.net']});
+  const phone=loanPhone(arg);
+  if(!phone)return cmd!=='!devolverbot'?'Use !emprestar telefone com DDI e DDD.':'Use !devolverbot telefone para cancelar um convite ainda não usado.';
+  const result=await api({...request,operation:cmd==='!devolverbot'?'revoke':'grant',targetAliases:[phone+'@s.whatsapp.net']});
   if(result.error)return '⚠️ '+result.error;
   if(cmd==='!devolverbot')return '✅ Convite cancelado. Nenhum grupo foi alterado.';
-  const guide='🤝 CONVITE PARA USAR O BOT MLG\nSeu número foi liberado para organizar um campeonato. Peça que adicionem o bot ao seu grupo do WhatsApp. Você precisa ser administrador desse grupo.\n\nNO SEU GRUPO\n1. Envie !novacopa para ativar o acesso e começar o preparo.\n2. !nome Nome do campeonato\n3. !modalidade liga (pontos corridos) ou !modalidade copa (mata-mata)\n4. !vagas N (liga: 2 a 16; copa: 4, 8, 16 ou 32)\n5. !jogos 1 (jogo único) ou !jogos 2 (ida e volta)\n6. !equipes Time A | Time B | ... para escolher os times\n7. !revisar e !abrircopa. Jogadores usam !entrar.\n\n!painel mostra o guia completo no grupo; !meujogo mostra o código da partida. Placar: !resultado CÓDIGO MxV, mandante primeiro; adversário confirma com !confirmar CÓDIGO MxV. Como organizador, use !forcarresultado CÓDIGO MxV motivo para corrigir.\n\nEste privado envia orientações automáticas. O bot não processa respostas aqui. Fale com os ADMs da MLG no grupo se precisar de ajuda.';
-  try{await actor.sendInvitation?.(arg,guide);return '✅ Convite registrado para '+arg+'. O guia foi enviado no privado. Adicione o bot ao grupo do convidado e peça que ele envie !novacopa lá.';}
-  catch{return '✅ Convite registrado para '+arg+', mas o WhatsApp não confirmou a entrega do guia privado. Adicione o bot ao grupo e peça que ele envie !novacopa e !painel lá.';}
+  const recorded=result.existing?'Empréstimo já registrado':'Convite registrado';
+  try{
+   if(!actor.sendInvitation)throw Error('Private sender unavailable');
+   await actor.sendInvitation(phone,loanGuide);
+   return '✅ '+recorded+' para '+phone+'. O guia foi enviado no privado. Adicione o bot ao grupo do convidado e peça que ele envie !novacopa lá.';
+  }catch{return '✅ '+recorded+' para '+phone+', mas o WhatsApp não confirmou o envio do guia privado. Quando o bot estiver conectado, repita !emprestar '+phone+' para reenviar sem criar outro empréstimo.';}
  }
  if(cmd==='!usar'){
   const n=Number(arg);if(!Number.isSafeInteger(n)||n<1||n>targets.length)return 'Use !grupos e depois !usar número da lista.';

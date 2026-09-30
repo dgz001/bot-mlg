@@ -1,6 +1,29 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {adminControl,type ControlWorkspace} from '../src/infra/admin-control.ts';
+import {loanCommand,loanGuide,loanPhone} from '../src/infra/loan-invitation.ts';
+test('convite aceita acentos e telefone formatado e não anuncia envio sem remetente',async()=>{
+ assert.equal(loanCommand('!empréstimo +55 (11) 88888-8888'),'!emprestimo +55 (11) 88888-8888');
+ assert.equal(loanCommand('!empréstar 5511888888888'),'!emprestar 5511888888888');
+ assert.equal(loanPhone('+55 (11) 88888-8888'),'5511888888888');
+ assert.equal(loanPhone('5511888888888 errado'),null);
+ const calls:Record<string,unknown>[]=[],sent:string[]=[];
+ const api=async(body:Record<string,unknown>)=>{calls.push(body);return {invited:true,existing:true};};
+ const actor={controlGroup:'central@g.us',aliases:['5511999999999@s.whatsapp.net']};
+ const send=(text:string,by=actor)=>adminControl(text,{},[],api,async()=>{},Date.now(),by);
+ assert.match(await send('!empréstimo +55 (11) 88888-8888'),/não confirmou o envio/);
+ assert.deepEqual(calls[0]?.targetAliases,['5511888888888@s.whatsapp.net']);
+ const delivered=await send('!emprestar 5511888888888',{...actor,sendInvitation:async(phone:string,guide:string)=>{sent.push(phone,guide);}} as typeof actor);
+ assert.match(delivered,/já registrado.*guia foi enviado/s);
+ assert.deepEqual(sent,['5511888888888',loanGuide]);
+ assert.match(loanGuide,/!modalidade liga.*!modalidade copa/);
+ assert.match(loanGuide,/!jogos 1.*!jogos 2/);
+ assert.match(loanGuide,/não há atendimento humano/);
+ assert.match(loanGuide,/não processa respostas aqui/);
+ const failed=await send('!emprestar 5511888888888',{...actor,sendInvitation:async()=>{throw Error('offline');}} as typeof actor);
+ assert.match(failed,/repita !emprestar 5511888888888/);
+ assert.doesNotMatch(failed,/guia foi enviado/);
+});
 test('empréstimo exige administrador do grupo e gestão convidada fica restrita ao próprio canal',async()=>{
  const group='convidado@g.us',room:ControlWorkspace={},calls:Record<string,unknown>[]=[],messages:string[]=[];
  const actor={controlGroup:'central@g.us',aliases:['5511999999999@s.whatsapp.net'],messageId:'wa-50',sendInvitation:async(phone:string,guide:string)=>{messages.push(phone,guide);}};
@@ -38,6 +61,17 @@ test('organizador escolhe liga ou copa e ida e volta antes de abrir vagas',async
  assert.match(await send('!abrircopa'),/inscrições abertas/);
  assert.deepEqual(calls.at(-1),{action:'guest-open',group,name:'Liga do Amério',mode:'liga',legs:2,size:3,teams:['Palmeiras','Bahia','Santos']});
  assert.equal(room.guestDraft,undefined);
+});
+test('configuração convidada aceita termos esportivos e exige revisar de novo após mudar',async()=>{
+ const group='convidado@g.us',room:ControlWorkspace={targetId:group};let opened=0;
+ const send=(text:string)=>adminControl(text,room,[],async request=>{if(request.action==='guest-open')opened++;return {cup:null,opened:true};},async()=>{},Date.now(),undefined,undefined,true);
+ await send('!novacopa');await send('!modalidade pontos corridos');await send('!formato 3');await send('!jogos ida e volta');await send('!equipes Bahia | Santos | Palmeiras');
+ assert.match(await send('!revisar'),/Pontos corridos · ida e volta/);
+ assert.match(await send('!abrircopa'),/inscrições abertas/);assert.equal(opened,1);
+ await send('!novacopa');await send('!modalidade mata-mata');await send('!vagas 4');await send('!equipes Bahia | Santos | Palmeiras | Flamengo');await send('!revisar');await send('!jogos ida e volta');
+ assert.match(await send('!abrircopa'),/Revise/);assert.equal(opened,1);
+ assert.match(await send('!revisar'),/Mata-mata · ida e volta/);
+ assert.match(await send('!abrircopa'),/inscrições abertas/);assert.equal(opened,2);
 });
 test('troca de temporada exige revisão, mesmo ADM e código válido dentro do prazo',async()=>{
  const room:ControlWorkspace={},actor={controlGroup:'adm@g.us',aliases:['5511999999999@s.whatsapp.net'],messageId:'wa-1'};
