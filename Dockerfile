@@ -6,6 +6,8 @@ RUN npm ci --ignore-scripts
 COPY tsconfig.json ./
 COPY src ./src
 COPY scripts ./scripts
+COPY deploy ./deploy
+COPY assets ./assets
 COPY migrations ./migrations
 COPY tests ./tests
 # Disposable database exists only in the build stage. No production secret is
@@ -19,6 +21,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 COPY --from=verify --chown=node:node /app/src ./src
 COPY --from=verify --chown=node:node /app/scripts ./scripts
+COPY --from=verify --chown=node:node /app/assets ./assets
 COPY --from=verify --chown=node:node /app/migrations ./migrations
 USER node
 RUN mkdir -p /home/node/.ssh && chmod 0700 /home/node/.ssh
