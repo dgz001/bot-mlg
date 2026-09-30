@@ -2,7 +2,7 @@ import {loanCommand} from './infra/loan-invitation.ts';
 import {minicampClubs} from './minicamp/clubs.ts';
 import {moduleEnabled,parseControls} from './infra/bot-controls.ts';
 import {allowsGroup,groupMode,validGroupMode} from './infra/group-modes.ts';
-import {adminControl,type ControlTarget} from './infra/admin-control.ts';
+import {adminControl,guestPrepared,type ControlTarget} from './infra/admin-control.ts';
 import {whatsappControls} from './infra/whatsapp-controls.ts';
 import {minicampClient,minicampCommand,pendingCupBatch,type PendingCupEvent} from './minicamp/client.ts';
 import {cupQuestion} from './minicamp/question.ts';
@@ -61,8 +61,25 @@ async function connect(){
  current.ev.on('messages.upsert',event=>{
  if(event.type!=='notify'||socket!==current)return;
  for(const message of orderMessages(event.messages)){queue=queue.then(async()=>{
- const group=message.key.remoteJid,id=message.key.id;if(stopping||!group?.endsWith('@g.us')||!id||message.key.fromMe)return;
+ const group=message.key.remoteJid,id=message.key.id;if(stopping||!group||!id||message.key.fromMe)return;
  const body=extractMessageContent(message.message);const text=loanCommand((body?.conversation??body?.extendedTextMessage?.text??'').trim());const context=body?.extendedTextMessage?.contextInfo;
+ if(/^[0-9]+@(s\.whatsapp\.net|lid)$/.test(group)){
+  if(!cupApi||!/^!(?:novacopa|nome|modalidade|formato|vagas|jogos|equipes|adicionar|remover|corrigirclubes|times|revisar|confirmar|descartar|central|pendencias|painel|ajuda|comandos|imagemgrupo|imagemtexto)(?:\s|$)/i.test(text))return;
+  const dedup=JSON.stringify([group,id]);if(auth.data.seen.includes(dedup))return;
+  if(text.length>16000){await current.sendMessage(group,{text:'⚠️ Lista muito longa. Envie em partes com !adicionar.'});return;}
+  try{
+  const aliases=await cupAliases(group,current);
+  const check=await cupApi<{allowed:boolean;manager?:string;grantedAt?:number}>({action:'loan-private-check',aliases});
+  if(!check.allowed||!check.manager||!Number.isFinite(check.grantedAt))return;
+  auth.data.controlRooms??={};const key='loan-private:'+check.manager,room=auth.data.controlRooms[key]??={};auth.data.controlRooms[key]=room;room.targetId='private';
+  if(room.guestInvitationAt!==check.grantedAt){delete room.guestDraft;delete room.guestImage;room.guestInvitationAt=check.grantedAt;await auth.save();}
+  const response=await adminControl(text,room,[],async()=>({error:'Operação indisponível no privado.'}),()=>auth.save(),Date.now(),{controlGroup:group,aliases,messageId:id},auth.data.controlRooms,true,true);
+  auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);await auth.save();
+  if(socket===current&&!stopping)await current.sendMessage(group,{text:response});
+  }catch{log('LOAN_PRIVATE_RETRY');if(socket===current&&!stopping)await current.sendMessage(group,{text:'⚠️ Não consegui salvar agora. Tente o comando novamente em instantes.'}).catch(()=>{});}
+  return;
+ }
+ if(!group.endsWith('@g.us'))return;
  const receivedAt=Number(message.messageTimestamp)*1000;
  const eventAt=Number.isSafeInteger(receivedAt)&&receivedAt>1577836800000&&receivedAt<Date.now()+60000?receivedAt:Date.now();
  if(!auth.data.groups.includes(group)&&/^!novacopa\s*$/i.test(text.trim())&&cupApi&&message.key.participant){
@@ -152,7 +169,18 @@ async function connect(){
       }
       return null;
      };
-     response=await adminControl(text,room,[target],api,()=>auth.save(),Date.now(),{controlGroup:group,aliases,messageId:id,resolveGroupAdmin},auth.data.controlRooms,true);
+     const privateCheck=/^!novacopa\s*$/i.test(text.trim())?await cupApi<{allowed:boolean;manager?:string;claimedGroup?:string|null;grantedAt?:number}>({action:'loan-private-check',aliases}).catch(()=>null):null;
+     const privateRoom=privateCheck?.allowed&&(!privateCheck.claimedGroup||privateCheck.claimedGroup===group)?auth.data.controlRooms['loan-private:'+privateCheck.manager]:undefined;
+     if(privateRoom&&privateRoom.guestInvitationAt!==privateCheck?.grantedAt){delete privateRoom.guestDraft;delete privateRoom.guestImage;privateRoom.guestInvitationAt=privateCheck?.grantedAt;await auth.save();}
+     const prepared=privateRoom?guestPrepared(privateRoom):null;
+     if(prepared){
+      const opened=await api({action:'guest-open',group,...prepared});
+      if(opened.error)response='⚠️ '+opened.error+' O preparo continua salvo no privado.';
+      else{
+       room.guestImage=privateRoom?.guestImage??'text';delete privateRoom!.guestDraft;await auth.save();
+       response=`🏆 ${prepared.name} · inscrições abertas para ${prepared.size} jogadores! ${prepared.mode==='liga'?'Pontos corridos':'Mata-mata'}, ${prepared.legs===2?'ida e volta':'jogo único'}. Enviem !entrar. Ao completar as vagas, o bot anuncia os confrontos e explica !resultado CÓDIGO MxV.`;
+      }
+     }else response=await adminControl(text,room,[target],api,()=>auth.save(),Date.now(),{controlGroup:group,aliases,messageId:id,resolveGroupAdmin},auth.data.controlRooms,true);
     }else{
     const power=whatsappControls(text,auth.data.controls);
     if(power){
