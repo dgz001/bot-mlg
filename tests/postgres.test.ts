@@ -7,7 +7,7 @@ import { processEvent, autoConfirmDue, pgDatabase, checkpointCup, canonicalCheck
 import { authStore } from '../src/whatsapp/auth-store.ts';
 import { randomBytes } from 'node:crypto';
 // @ts-ignore The Edge bundle uses runtime JavaScript without declaration files.
-import {guestOpen,guestEvent,guestAutoConfirm,guestArchive} from '../deploy/guest-competition.ts';
+import {guestOpen,guestEvent,guestAutoConfirm,guestArchive,guestStandings,guestFixtures,seededBracket} from '../deploy/guest-competition.ts';
 
 const migration = await readFile(new URL('../migrations/001_initial.sql',import.meta.url),'utf8');
 const integration = { skip: !process.env.MLG_TEST_DATABASE_URL };
@@ -48,6 +48,7 @@ async function setup(db: Pool) {
   await db.query(await readFile(new URL('../migrations/020_loan_groups.sql',import.meta.url),'utf8'));
   await db.query(await readFile(new URL('../migrations/021_loan_invitations.sql',import.meta.url),'utf8'));
   await db.query(await readFile(new URL('../migrations/022_guest_competitions.sql',import.meta.url),'utf8'));
+  await db.query(await readFile(new URL('../migrations/023_guest_hybrid.sql',import.meta.url),'utf8'));
   await db.query("INSERT INTO mlg_bot.users VALUES ('admin','Admin'); INSERT INTO mlg_bot.groups(id,authorized,admins_configured) VALUES ('g',true,true); INSERT INTO mlg_bot.admins VALUES ('g','admin','owner');");
   for (let i=0;i<16;i++) await db.query('INSERT INTO mlg_bot.club_pool VALUES ($1,$2)',['g',`Club ${i}`]);
 }
@@ -65,6 +66,62 @@ async function guestGateway(pool:Pool) {
   assert.equal(response.status,200);return response.json();
  };
 }
+
+test('modalidade mista forma chave dos oito melhores e protege resultados posteriores',integration,async()=>{
+ const f=await fixture();try{
+  await setup(f.pool);const group='270@g.us';
+  await f.pool.query('INSERT INTO mlg_bot.groups(id,authorized,admins_configured) VALUES($1,true,true)',[group]);
+  await f.pool.query("INSERT INTO mlg_bot.loan_groups(group_id,manager_id,granted_by) VALUES($1,'admin','admin')",[group]);
+  const db=pgDatabase(f.pool),teams=Array.from({length:9},(_,i)=>'Clube '+i);
+  assert.equal((await guestOpen(db,{group,name:'Liga e mata-mata',mode:'misto',legs:1,size:9,qualifiers:8,teams})).opened,true);
+  assert.rejects(()=>guestOpen(db,{group:'271@g.us',name:'Invalida',mode:'misto',legs:1,size:8,qualifiers:8,teams}),/Invalid guest competition/);
+  const identity=async(q:any,aliases:string[])=>{const user=aliases[0];await q.query('INSERT INTO mlg_bot.users(id,display_name) VALUES($1,$1) ON CONFLICT DO NOTHING',[user]);return user;};
+  let serial=0;const event=(user:string,text:string)=>guestEvent(db,{group,aliases:[user],messageId:'hybrid-'+ ++serial,name:user,text},identity);
+  for(let i=0;i<9;i++)await event('p'+i,'!entrar');
+  const cup=(await f.pool.query('SELECT * FROM mlg_bot.guest_competitions WHERE group_id=$1',[group])).rows[0];
+  const first=(await f.pool.query('SELECT * FROM mlg_bot.guest_matches WHERE cup_id=$1 ORDER BY code LIMIT 1',[cup.id])).rows[0];
+  assert.equal((await f.pool.query('SELECT count(*)::int AS n FROM mlg_bot.guest_matches WHERE cup_id=$1',[cup.id])).rows[0].n,36);
+  const league=(await f.pool.query('SELECT code FROM mlg_bot.guest_matches WHERE cup_id=$1 ORDER BY code',[cup.id])).rows;
+  for(const m of league)await event('admin',`!forcarresultado ${m.code} 2x0 revisão oficial da liga`);
+  const table=guestStandings((await f.pool.query('SELECT * FROM mlg_bot.guest_players WHERE cup_id=$1',[cup.id])).rows,(await f.pool.query('SELECT * FROM mlg_bot.guest_matches WHERE cup_id=$1 AND round<9',[cup.id])).rows);
+  let knockout=(await f.pool.query('SELECT * FROM mlg_bot.guest_matches WHERE cup_id=$1 AND round=9 ORDER BY position,leg',[cup.id])).rows;
+  assert.equal(knockout.length,4);
+  const seeds=seededBracket(8);
+  for(let i=0;i<4;i++)assert.deepEqual([knockout[i].home,knockout[i].away],[table[seeds[i*2]!-1]!.id,table[seeds[i*2+1]!-1]!.id]);
+  assert.match((await f.pool.query("SELECT body FROM mlg_bot.outbox WHERE body LIKE '%FASE DE LIGA ENCERRADA%' ORDER BY id DESC LIMIT 1")).rows[0].body,/8º/);
+  await event('admin',`!forcarresultado ${first.code} 0x2 correção oficial da liga`);
+  knockout=(await f.pool.query('SELECT * FROM mlg_bot.guest_matches WHERE cup_id=$1 AND round=9 ORDER BY position,leg',[cup.id])).rows;
+  assert.equal(knockout.length,4);
+  await event('admin',`!forcarresultado ${knockout[0].code} 2x0 jogo eliminatório oficial`);
+  await event('admin',`!forcarresultado ${first.code} 2x0 correção tardia indevida`);
+  assert.match((await f.pool.query('SELECT body FROM mlg_bot.outbox ORDER BY id DESC LIMIT 1')).rows[0].body,/Há placar na fase seguinte/);
+  assert.equal((await f.pool.query('SELECT home_score FROM mlg_bot.guest_matches WHERE code=$1',[first.code])).rows[0].home_score,0);
+  for(let stage=0;stage<3;stage++){
+   const pending=(await f.pool.query("SELECT code FROM mlg_bot.guest_matches WHERE cup_id=$1 AND round=$2 AND status='scheduled' ORDER BY position",[cup.id,9+stage])).rows;
+   for(const m of pending)await event('admin',`!forcarresultado ${m.code} 2x0 partida eliminatória oficial`);
+  }
+  assert.equal((await f.pool.query('SELECT status FROM mlg_bot.guest_competitions WHERE id=$1',[cup.id])).rows[0].status,'completed');
+ }finally{await f.close();}
+});
+
+test('liga mista com 25 participantes agenda ida e volta sem códigos duplicados',integration,async()=>{
+ const f=await fixture();try{
+  await setup(f.pool);const group='271@g.us';
+  await f.pool.query('INSERT INTO mlg_bot.groups(id,authorized,admins_configured) VALUES($1,true,true)',[group]);
+  await f.pool.query("INSERT INTO mlg_bot.loan_groups(group_id,manager_id,granted_by) VALUES($1,'admin','admin')",[group]);
+  const db=pgDatabase(f.pool),teams=Array.from({length:25},(_,i)=>'Equipe '+i);
+  await guestOpen(db,{group,name:'Brasileirão convidado',mode:'misto',legs:2,size:25,qualifiers:8,teams});
+  const identity=async(q:any,aliases:string[])=>{const user=aliases[0];await q.query('INSERT INTO mlg_bot.users(id,display_name) VALUES($1,$1) ON CONFLICT DO NOTHING',[user]);return user;};
+  for(let i=0;i<25;i++)await guestEvent(db,{group,aliases:['u'+i],messageId:'large-'+i,name:'Jogador '+i,text:'!entrar'},identity);
+  const games=(await f.pool.query('SELECT count(*)::int AS total,count(DISTINCT code)::int AS unique_codes,max(round)::int AS last_round FROM mlg_bot.guest_matches WHERE cup_id=(SELECT id FROM mlg_bot.guest_competitions WHERE group_id=$1)',[group])).rows[0];
+  assert.deepEqual(games,{total:600,unique_codes:600,last_round:49});
+ }finally{await f.close();}
+});
+
+test('ordenação de chaves e calendário de ida e volta com número ímpar',()=>{
+ assert.deepEqual(seededBracket(8),[1,8,4,5,2,7,3,6]);
+ assert.equal(guestFixtures('misto',2,Array.from({length:25},(_,i)=>String(i))).length,600);
+});
 
 test('auxiliar convidado só administra o próprio grupo e perde acesso ao devolver',integration,async()=>{
  const f=await fixture();try{
@@ -98,7 +155,12 @@ for(const mode of ['liga','copa'] as const)for(const legs of [1,2] as const){
    assert.equal((await call({...invite,aliases:['5511777777777@s.whatsapp.net']})).invited,undefined);
    assert.equal((await call(invite)).invited,true);
    assert.equal((await call(invite)).existing,true);
+   const privateAccess=await call({action:'loan-private-check',aliases:[phone]});
+   assert.equal(privateAccess.allowed,true);assert.equal(privateAccess.claimedGroup,null);assert.ok(Number.isFinite(privateAccess.grantedAt));
+   assert.equal((await call({action:'loan-private-check',aliases:['5511777777777@s.whatsapp.net']})).allowed,false);
+   assert.equal((await f.pool.query("SELECT count(*)::int AS n FROM mlg_bot.wa_identities WHERE jid='5511777777777@s.whatsapp.net'")).rows[0].n,0);
    assert.equal((await call({action:'loan-claim',group,aliases:['777@lid',phone],name:'Convidado'})).claimed,true);
+   assert.equal((await call({action:'loan-private-check',aliases:[phone]})).claimedGroup,group);
    assert.equal((await call(invite)).existing,true);
    const permissions=await call({action:'control-check',group,aliases:[phone]});
    assert.equal(permissions.allowed,false);assert.equal(permissions.loanAllowed,true);

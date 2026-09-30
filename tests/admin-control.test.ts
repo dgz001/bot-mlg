@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {adminControl,type ControlWorkspace} from '../src/infra/admin-control.ts';
+import {adminControl,guestPrepared,type ControlWorkspace} from '../src/infra/admin-control.ts';
 import {loanCommand,loanGuide,loanPhone} from '../src/infra/loan-invitation.ts';
 test('convite aceita acentos e telefone formatado e não anuncia envio sem remetente',async()=>{
  assert.equal(loanCommand('!empréstimo +55 (11) 88888-8888'),'!emprestimo +55 (11) 88888-8888');
@@ -19,10 +19,11 @@ test('convite aceita acentos e telefone formatado e não anuncia envio sem remet
  assert.match(loanGuide,/!modalidade liga.*!modalidade copa/);
  assert.match(loanGuide,/!jogos 1.*!jogos 2/);
  assert.match(loanGuide,/Adicione este bot ao grupo.*administrador do grupo/s);
- assert.match(loanGuide,/envie !novacopa.*grupo, não responda/s);
+ assert.match(loanGuide,/envie !novacopa.*!revisar e !confirmar/s);
+ assert.match(loanGuide,/!novacopa no grupo publica/);
  assert.match(loanGuide,/!forcarresultado CÓDIGO MxV motivo/);
- assert.match(loanGuide,/não há atendimento humano/);
- assert.match(loanGuide,/não processa respostas aqui/);
+ assert.match(loanGuide,/Ninguém acompanha este chat como atendimento humano/);
+ assert.match(loanGuide,/aceita somente os comandos de configuração/);
  const failed=await send('!emprestar 5511888888888',{...actor,sendInvitation:async()=>{throw Error('offline');}} as typeof actor);
  assert.match(failed,/repita !emprestar 5511888888888/);
  assert.doesNotMatch(failed,/guia foi enviado/);
@@ -35,7 +36,7 @@ test('empréstimo exige administrador do grupo e gestão convidada fica restrita
  assert.match(await send('!emprestar errado'),/DDI e DDD/);assert.equal(calls.length,0);
  assert.match(await send('!emprestar 5511888888888'),/guia foi enviado/);
  assert.deepEqual(calls[0],{action:'loan-invite',source:'central@g.us',aliases:actor.aliases,operation:'grant',targetAliases:['5511888888888@s.whatsapp.net']});
- assert.equal(messages[0],'5511888888888');assert.match(messages[1]!,/não processa respostas aqui/);
+ assert.equal(messages[0],'5511888888888');assert.match(messages[1]!,/aceita somente os comandos de configuração/);
  assert.match(await send('!emprestimo'),/5511888888888/);
  assert.match(await send('!devolverbot 5511888888888'),/cancelado/);
  room.targetId=group;
@@ -79,7 +80,7 @@ test('configuração convidada aceita termos esportivos e exige revisar de novo 
 test('organizador escolhe a foto do próprio grupo ou texto sem alterar a Copa',async()=>{
  const room:ControlWorkspace={targetId:'convidado@g.us'};let saves=0;
  const send=(text:string)=>adminControl(text,room,[],async()=>({cup:null}),async()=>{saves++;},Date.now(),undefined,undefined,true);
- assert.match(await send('!imagemgrupo'),/foto atual deste grupo/);
+ assert.match(await send('!imagemgrupo'),/foto do grupo onde você publicar/);
  assert.equal(room.guestImage,'group');
  await send('!novacopa');
  assert.equal(room.guestImage,'group');
@@ -101,6 +102,32 @@ test('organizador aceita lista longa, corrige um clube e revisa de novo',async()
  assert.match(await send('!revisar'),/220 times/);
  await send('!remover Clube 219');
  assert.match(await send('!abrircopa'),/Revise/);
+});
+test('preparo no privado salva por organizador e exige nova confirmação após edição',async()=>{
+ const a:ControlWorkspace={targetId:'private'},b:ControlWorkspace={targetId:'private'};
+ const send=(room:ControlWorkspace,text:string)=>adminControl(text,room,[],async()=>{throw Error('O privado não deve publicar a Copa');},async()=>{},Date.now(),undefined,undefined,true,true);
+ assert.match(await send(a,'!novacopa'),/PREPARO PRIVADO/);
+ await send(a,'!nome Campeonato do Amério');await send(a,'!modalidade liga');await send(a,'!vagas 3');await send(a,'!jogos 2');await send(a,'!equipes Santos\nBahia\nFlamengo');
+ assert.match(await send(a,'!confirmar'),/Revise/);
+ assert.match(await send(a,'!revisar'),/Envie !confirmar/);
+ assert.match(await send(a,'!confirmar'),/salva no seu privado/);
+ assert.deepEqual(guestPrepared(a),{name:'Campeonato do Amério',mode:'liga',legs:2,size:3,teams:['Santos','Bahia','Flamengo']});
+ assert.equal(guestPrepared(b),null);
+ assert.match(await send(a,'!abrircopa'),/No privado/);
+ await send(a,'!corrigirclubes Bahia | Palmeiras');assert.equal(guestPrepared(a),null);
+ await send(a,'!revisar');await send(a,'!confirmar');assert.deepEqual(guestPrepared(a)?.teams,['Santos','Palmeiras','Flamengo']);
+});
+test('preparo misto escolhe oito classificados e invalida revisão ao mudar vagas',async()=>{
+ const room:ControlWorkspace={targetId:'private'};
+ const send=(text:string)=>adminControl(text,room,[],async()=>({}),async()=>{},Date.now(),undefined,undefined,true,true);
+ await send('!novacopa');await send('!nome Brasileirão convidado');await send('!modalidade misto');await send('!vagas 10');
+ await send('!equipes '+Array.from({length:10},(_,i)=>'Clube '+i).join('\n'));
+ assert.match(await send('!classificados 8'),/Atualizado/);
+ assert.match(await send('!revisar'),/Pontos corridos → mata-mata · 8 avançam/);
+ await send('!confirmar');assert.equal(guestPrepared(room)?.qualifiers,8);
+ assert.match(await send('!vagas 8'),/Atualizado/);assert.equal(guestPrepared(room),null);
+ assert.match(await send('!revisar'),/menor que !vagas/);
+ await send('!classificados 4');await send('!revisar');await send('!confirmar');assert.equal(guestPrepared(room)?.qualifiers,4);
 });
 test('auxiliar convidado depende da permissão do grupo, sem papel geral',async()=>{
  const room:ControlWorkspace={targetId:'convidado@g.us'},calls:Record<string,unknown>[]=[],aliases=['5511888888888@s.whatsapp.net'];

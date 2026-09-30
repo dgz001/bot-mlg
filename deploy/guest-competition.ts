@@ -26,7 +26,7 @@ export const guestStandings=(players,matches)=>{
 const standingsText=(rows)=>rows.map((p,i)=>`${i+1}. ${p.name} (${p.team}) · ${p.points} pts · J${p.played} V${p.wins} E${p.draws} · SG${p.goals-p.against} GP${p.goals}`).join('\n');
 export function guestFixtures(mode,legs,ids){
  const fixtures=[];
- if(mode==='liga'){
+ if(mode==='liga'||mode==='misto'){
   const rotation=ids.length%2?[...ids,null]:[...ids];const count=rotation.length,cycles=count-1;
   for(let round=0;round<cycles;round++){
    for(let position=0;position<count/2;position++){
@@ -41,11 +41,19 @@ export function guestFixtures(mode,legs,ids){
  }
  return fixtures;
 }
+const leagueRounds=(cup)=>(cup.size%2?cup.size:cup.size-1)*cup.legs;
+export function seededBracket(count){
+ let seeds=[1,2];while(seeds.length<count){const next=seeds.length*2+1;seeds=seeds.flatMap(s=>[s,next-s]);}return seeds;
+}
 async function schedule(q,cup,players){
  const ids=players.map(p=>p.user_id);
  for(let i=ids.length-1;i>0;i--){const j=randomInt(i+1);[ids[i],ids[j]]=[ids[j],ids[i]];}
- for(const m of guestFixtures(cup.mode,cup.legs,ids))await q.query(`INSERT INTO mlg_bot.guest_matches(code,cup_id,round,position,leg,home,away,status)
- VALUES($1,$2,$3,$4,$5,$6,$7,'scheduled')`,[await numbered(q),cup.id,m.round,m.position,m.leg,m.home,m.away]);
+ const fixtures=guestFixtures(cup.mode,cup.legs,ids);
+ const first=(await q.query("UPDATE mlg_bot.counters SET next_code=next_code+$1 WHERE id='match' RETURNING next_code-$1 AS first",[fixtures.length])).rows[0].first;
+ await q.query(`INSERT INTO mlg_bot.guest_matches(code,cup_id,round,position,leg,home,away,status)
+ SELECT $1::bigint+x.ord-1,$2,(x.value->>'round')::smallint,(x.value->>'position')::smallint,
+ (x.value->>'leg')::smallint,x.value->>'home',x.value->>'away','scheduled'
+ FROM jsonb_array_elements($3::jsonb) WITH ORDINALITY AS x(value,ord) ORDER BY x.ord`,[first,cup.id,JSON.stringify(fixtures)]);
 }
 async function createTie(q,cup,round,position,home,away){
  for(let leg=1;leg<=cup.legs;leg++)await q.query(`INSERT INTO mlg_bot.guest_matches(code,cup_id,round,position,leg,home,away,status)
@@ -78,11 +86,22 @@ async function progress(q,cup,players,group){
   await q.query("UPDATE mlg_bot.guest_competitions SET status='completed',champion_id=$2,completed_at=$3 WHERE id=$1",[cup.id,winner.id,Date.now()]);
   return '🏆 CAMPEÃO · '+players.find(p=>p.user_id===winner.id).display_name+'\n\n'+standingsText(table)+'\n\nO campeão fica registrado em !campeoes.';
  }
- for(let round=0;round<Math.log2(cup.size);round++){
+ const start=cup.mode==='misto'?leagueRounds(cup):0,bracketSize=cup.mode==='misto'?cup.qualifiers:cup.size;
+ if(cup.mode==='misto'){
+  const league=matches.filter(m=>m.round<start);
+  if(league.some(m=>m.status!=='confirmed'))return '';
+  if(!matches.some(m=>m.round===start)){
+   const table=guestStandings(players,league),qualified=table.slice(0,cup.qualifiers),seeds=seededBracket(cup.qualifiers);
+   for(let i=0;i<seeds.length/2;i++)await createTie(q,cup,start,i,qualified[seeds[i*2]-1].id,qualified[seeds[i*2+1]-1].id);
+   return '✅ FASE DE LIGA ENCERRADA · '+cup.name+'\n🏅 CLASSIFICADOS: '+qualified.map((p,i)=>`${i+1}º ${p.name}`).join(' · ')+'\n🚫 Eliminados: '+table.slice(cup.qualifiers).map(p=>p.name).join(' · ')+'\n\n⚔️ Mata-mata formado pelos melhores da tabela. Consulte !copa para os códigos e !meujogo para seu confronto. Placar: !resultado CÓDIGO MxV.';
+  }
+ }
+ for(let stage=0;stage<Math.log2(bracketSize);stage++){
+  const round=start+stage;
   const games=matches.filter(m=>m.round===round);
-  if(games.length<cup.size/2**(round+1)*cup.legs)return '';
+  if(games.length<bracketSize/2**(stage+1)*cup.legs)return '';
   const winners=[];
-  for(let position=0;position<cup.size/2**(round+1);position++){
+  for(let position=0;position<bracketSize/2**(stage+1);position++){
    const tie=games.filter(m=>m.position===position),first=tie.find(m=>m.leg===1),second=tie.find(m=>m.leg===2),decider=tie.find(m=>m.leg===3);
    if(!first||first.status!=='confirmed'||cup.legs===2&&(!second||second.status!=='confirmed'))return '';
    const a=first.home,b=first.away;
@@ -109,14 +128,14 @@ async function progress(q,cup,players,group){
 }
 
 export async function guestOpen(db,request){
- const {group,name,mode,legs,size,teams}=request;
- if(!/^[0-9-]+@g\.us$/.test(group)||typeof name!=='string'||name.length<3||name.length>60||!['liga','copa'].includes(mode)||![1,2].includes(legs)||!Number.isInteger(size)||size<2||size>16&&!(mode==='copa'&&size===32)||mode==='copa'&&![4,8,16,32].includes(size)||!Array.isArray(teams)||teams.length<size||JSON.stringify(teams).length>=100000||new Set(teams.map(t=>typeof t==='string'?t.trim().toLocaleLowerCase('pt-BR'):t)).size!==teams.length||teams.some(t=>typeof t!=='string'||t.length<2||t.length>60||/[\r\n\x00-\x1f\x7f*_~`]/.test(t)))throw Error('Invalid guest competition');
+ const {group,name,mode,legs,size,teams,qualifiers}=request;
+ if(!/^[0-9-]+@g\.us$/.test(group)||typeof name!=='string'||name.length<3||name.length>60||!['liga','copa','misto'].includes(mode)||![1,2].includes(legs)||!Number.isInteger(size)||size<2||size>32||mode==='copa'&&![4,8,16,32].includes(size)||mode==='misto'&&(![4,8,16].includes(qualifiers)||qualifiers>=size)||mode!=='misto'&&qualifiers!==undefined||!Array.isArray(teams)||teams.length<size||JSON.stringify(teams).length>=100000||new Set(teams.map(t=>typeof t==='string'?t.trim().toLocaleLowerCase('pt-BR'):t)).size!==teams.length||teams.some(t=>typeof t!=='string'||t.length<2||t.length>60||/[\r\n\x00-\x1f\x7f*_~`]/.test(t)))throw Error('Invalid guest competition');
  return db.transaction(async q=>{
   const owner=(await q.query('SELECT manager_id FROM mlg_bot.loan_groups WHERE group_id=$1 AND active',[group])).rows[0];
   if(!owner)return {error:'Empréstimo não está ativo neste grupo.'};
   await q.query('SELECT id FROM mlg_bot.groups WHERE id=$1 AND authorized FOR UPDATE',[group]);
   if((await q.query("SELECT 1 FROM mlg_bot.guest_competitions WHERE group_id=$1 AND status IN ('open','playing')",[group])).rows.length||(await q.query("SELECT 1 FROM mlg_bot.cups WHERE group_id=$1 AND status IN ('open','playing')",[group])).rows.length)return {error:'Há um campeonato em andamento neste grupo.'};
-  const id=randomUUID();await q.query("INSERT INTO mlg_bot.guest_competitions(id,group_id,name,mode,legs,size,status,created_at) VALUES($1,$2,$3,$4,$5,$6,'open',$7)",[id,group,name.trim(),mode,legs,size,Date.now()]);
+  const id=randomUUID();await q.query("INSERT INTO mlg_bot.guest_competitions(id,group_id,name,mode,legs,size,qualifiers,status,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,'open',$8)",[id,group,name.trim(),mode,legs,size,mode==='misto'?qualifiers:null,Date.now()]);
   await q.query('DELETE FROM mlg_bot.club_pool WHERE group_id=$1',[group]);
   await q.query('INSERT INTO mlg_bot.club_pool(group_id,name) SELECT $1,unnest($2::text[])',[group,teams]);
   await q.query('UPDATE mlg_bot.groups SET competition_name=$2 WHERE id=$1',[group,name.trim()]);
@@ -147,7 +166,7 @@ export async function guestEvent(db,request,identity){
   const [command,...args]=text.trim().split(/\s+/),cmd=command.toLocaleLowerCase('pt-BR');
   const n=Number(args[0]),selected=matches.find(m=>String(m.code)===String(n));
   let reply='Comando não reconhecido. Use !ajuda.';
-  if(cmd==='!ajuda'||cmd==='!comandos')reply='🏆 '+(cup?.name??'CAMPEONATO')+'\n!entrar · !sair (antes do sorteio)\n!copa · !meujogo · !jogo CÓDIGO · !tabela · !classificacao · !proximafase\n!resultado CÓDIGO MxV (mandante primeiro)\n!confirmar CÓDIGO MxV · !cancelar CÓDIGO · !contestar CÓDIGO\n!campeoes · !historico\nADM: !painel · !forcarresultado CÓDIGO MxV motivo';
+  if(cmd==='!ajuda'||cmd==='!comandos')reply='🏆 '+(cup?.name??'CAMPEONATO')+'\n!entrar · !sair (antes do sorteio)\n!copa · !meujogo · !jogo CÓDIGO · !tabela · !classificacao · !proximafase\n!resultado CÓDIGO MxV (mandante primeiro)\n!confirmar CÓDIGO MxV · !cancelar CÓDIGO · !contestar CÓDIGO\n!campeoes · !historico\nADM: !painel · !forcarresultado CÓDIGO MxV motivo'+(cup?.mode==='misto'?'\nNeste formato, os '+cup.qualifiers+' melhores da liga avançam para o mata-mata.':'');
   else if(cmd==='!campeoes'||cmd==='!campeões'||cmd==='!historico'||cmd==='!histórico'){
    const saved=(await q.query('SELECT competition_name,champion_name,edition FROM mlg_bot.loan_champions WHERE group_id=$1 ORDER BY edition DESC LIMIT 15',[group])).rows;
    const current=(await q.query("SELECT c.name,p.display_name FROM mlg_bot.guest_competitions c JOIN mlg_bot.guest_players p ON p.cup_id=c.id AND p.user_id=c.champion_id WHERE c.group_id=$1 AND c.status='completed' ORDER BY c.created_at DESC LIMIT 5",[group])).rows;
@@ -170,7 +189,7 @@ export async function guestEvent(db,request,identity){
       await q.query("UPDATE mlg_bot.guest_competitions SET status='playing' WHERE id=$1",[cup.id]);
       await schedule(q,cup,players);
       const opening=(await q.query('SELECT * FROM mlg_bot.guest_matches WHERE cup_id=$1 AND round=0 AND leg=1 ORDER BY position',[cup.id])).rows;
-      reply='🎲 CONFRONTOS · '+cup.name+'\n👥 INSCRITOS\n'+players.map(p=>'• '+p.display_name+' · '+p.team).join('\n')+'\n\n⚔️ '+(cup.mode==='liga'?'PRIMEIRA RODADA':'PRIMEIRA FASE')+'\n'+opening.map(m=>card(m,people)).join('\n')+'\n\n'+(cup.legs===2?'Ida e volta':'Jogo único')+'\n\n📋 COMO REGISTRAR\nCada jogador consulta seu código # em !meujogo (ou todos em !copa). Depois envia !resultado CÓDIGO MxV: primeiro os gols do mandante, depois os do visitante. Confira o print e os lados antes de enviar.\nO adversário usa !confirmar CÓDIGO MxV ou !contestar CÓDIGO. O autor pode usar !cancelar CÓDIGO e reenviar; sem contestação, o bot confirma após cinco minutos.\nSe um placar confirmado estiver errado, o organizador ou ADM deste grupo corrige com !forcarresultado CÓDIGO MxV motivo. Cada partida usa seu próprio código.';
+      reply='🎲 CONFRONTOS · '+cup.name+'\n👥 INSCRITOS\n'+players.map(p=>'• '+p.display_name+' · '+p.team).join('\n')+'\n\n⚔️ '+(cup.mode==='copa'?'PRIMEIRA FASE':'PRIMEIRA RODADA')+(cup.mode==='misto'?' · liga; os '+cup.qualifiers+' melhores avançam ao mata-mata':'')+'\n'+opening.map(m=>card(m,people)).join('\n')+'\n\n'+(cup.legs===2?'Ida e volta':'Jogo único')+'\n\n📋 COMO REGISTRAR\nCada jogador consulta seu código # em !meujogo (ou todos em !copa). Depois envia !resultado CÓDIGO MxV: primeiro os gols do mandante, depois os do visitante. Confira o print e os lados antes de enviar.\nO adversário usa !confirmar CÓDIGO MxV ou !contestar CÓDIGO. O autor pode usar !cancelar CÓDIGO e reenviar; sem contestação, o bot confirma após cinco minutos.\nSe um placar confirmado estiver errado, o organizador ou ADM deste grupo corrige com !forcarresultado CÓDIGO MxV motivo. Cada partida usa seu próprio código.';
      }
     }
    }
@@ -182,12 +201,16 @@ export async function guestEvent(db,request,identity){
    reply=selected?'⚔️ '+cup.name+'\n'+card(selected,people):'Partida não encontrada. Confira o código com !copa ou !meujogo.';
   }else if(['!copa','!tabela','!classificacao','!classificação','!proximafase','!meujogo'].includes(cmd)){
    if(cup.status==='open')reply='🏆 '+cup.name+' · '+players.length+'/'+cup.size+' inscritos. Envie !entrar.';
-   else if(cmd==='!tabela'||cmd==='!classificacao'||cmd==='!classificação')reply=cup.mode==='liga'?'📊 CLASSIFICAÇÃO · '+cup.name+'\n'+standingsText(guestStandings(players,matches.filter(m=>m.leg!==3))):'Esta Copa usa mata-mata. Veja !copa.';
+   else if(cmd==='!tabela'||cmd==='!classificacao'||cmd==='!classificação'){
+    const league=cup.mode==='misto'?matches.filter(m=>m.round<leagueRounds(cup)):matches.filter(m=>m.leg!==3);
+    const complete=league.length>0&&league.every(m=>m.status==='confirmed');
+    reply=cup.mode==='copa'?'Esta Copa usa mata-mata. Veja !copa.':'📊 CLASSIFICAÇÃO · '+cup.name+'\n'+standingsText(guestStandings(players,league))+(cup.mode==='misto'?'\n\n🏅 '+cup.qualifiers+' vagas no mata-mata · '+(complete?'liga encerrada; classificados definidos.':'tabela parcial.')+' Desempate: pontos, saldo, gols, vitórias e nome.':'');
+   }
    else{
     let pending=matches.filter(m=>m.status!=='confirmed');
     if(cmd==='!meujogo')pending=pending.filter(m=>m.home===user||m.away===user).slice(0,2);
     if(cmd==='!proximafase'&&pending.length)pending=pending.filter(m=>m.round===Math.min(...pending.map(x=>x.round)));
-    reply='⚔️ '+cup.name+' · '+(cup.mode==='liga'?'pontos corridos':'mata-mata')+' · '+(cup.legs===2?'ida e volta':'jogo único')+'\n'+(pending.slice(0,24).map(m=>card(m,people)).join('\n')||'Nenhum jogo pendente.')+(pending.length>24?'\n…mais '+(pending.length-24)+' jogos; use !meujogo.':'')+'\nPlacar: !resultado CÓDIGO MxV (mandante primeiro).';
+    reply='⚔️ '+cup.name+' · '+(cup.mode==='liga'?'pontos corridos':cup.mode==='copa'?'mata-mata':pending.some(m=>m.round<leagueRounds(cup))?'fase de liga':'mata-mata')+' · '+(cup.legs===2?'ida e volta':'jogo único')+'\n'+(pending.slice(0,24).map(m=>card(m,people)).join('\n')||'Nenhum jogo pendente.')+(pending.length>24?'\n…mais '+(pending.length-24)+' jogos; use !meujogo.':'')+'\nPlacar: !resultado CÓDIGO MxV (mandante primeiro).';
    }
   }else if(cmd==='!resultado'||cmd==='!confirmar'||cmd==='!cancelar'||cmd==='!contestar'||cmd==='!forcarresultado'){
    const forced=cmd==='!forcarresultado',scoreArg=args[1],goals=safeScore(scoreArg??'');
@@ -211,7 +234,8 @@ export async function guestEvent(db,request,identity){
      else if(selected.home_score!==goals[0]||selected.away_score!==goals[1])reply='O placar informado é diferente. Confira o print e use !contestar '+n+'.';
      else{await q.query("UPDATE mlg_bot.guest_matches SET status='confirmed',confirmed_by=$2 WHERE code=$1",[n,user]);await audit(q,cup,selected,user,'confirm',score(selected),score(selected));reply='✅ Partida #'+n+' confirmada. '+await progress(q,cup,players,group);}
     }else{
-     const downstream=matches.filter(m=>cup.mode==='copa'?m.round>selected.round||m.round===selected.round&&m.position===selected.position&&m.leg===3&&selected.leg!==3:m.leg===3&&selected.leg!==3);
+     const start=cup.mode==='misto'?leagueRounds(cup):0;
+     const downstream=matches.filter(m=>cup.mode==='misto'&&selected.round<start?m.round>=start:cup.mode==='copa'||cup.mode==='misto'?m.round>selected.round||m.round===selected.round&&m.position===selected.position&&m.leg===3&&selected.leg!==3:m.leg===3&&selected.leg!==3);
      if(cup.status==='completed'&&Date.now()-cup.completed_at>600000)reply='Edição já arquivada; o campeão está preservado no histórico.';
      else if(downstream.some(m=>m.status!=='scheduled'))reply='Há placar na fase seguinte ou desempate. Não alterei o resultado; peça uma revisão dos jogos dependentes.';
      else{

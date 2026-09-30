@@ -176,6 +176,17 @@ Deno.serve(async req=>{
    return {allowed:allowed.rows.some(a=>a.role==='owner'||a.role==='admin'),channelAllowed:allowed.rows.some(a=>a.group_id===body.group&&a.role==='channel'),loanAllowed:loanGroup.rows.length===1&&(loan.rows.length===1||allowed.rows.some(a=>a.group_id===body.group&&a.role==='channel')),loanGroup:loanGroup.rows.length===1};
   });
  }
+ else if(body.action==='loan-private-check'){
+  if(!validAliases(body.aliases))throw Error('Invalid private identity');
+  result=await db.transaction(async q=>{
+   const known=await q.query('SELECT DISTINCT user_id FROM mlg_bot.wa_identities WHERE jid=ANY($1::text[])',[body.aliases]);
+   if(known.rows.length!==1)return {allowed:false};
+   const manager=known.rows[0].user_id;
+   if((await q.query('SELECT 1 FROM mlg_bot.member_blocks WHERE user_id=$1',[manager])).rows.length)return {allowed:false};
+   const invitation=await q.query('SELECT claimed_group,extract(epoch from granted_at)*1000 AS granted_at_ms FROM mlg_bot.loan_invitations WHERE manager_id=$1 AND active',[manager]);
+   return invitation.rows.length?{allowed:true,manager,claimedGroup:invitation.rows[0].claimed_group??null,grantedAt:Number(invitation.rows[0].granted_at_ms)}:{allowed:false};
+  });
+ }
  else if(body.action==='loan-invite'){
   if(!groupId.test(body.source)||!validAliases(body.aliases)||!['get','grant','revoke'].includes(body.operation)||body.operation!=='get'&&!validAliases(body.targetAliases))throw Error('Invalid invitation');
   result=await db.transaction(async q=>{
@@ -768,6 +779,15 @@ Deno.serve(async req=>{
       JOIN mlg_bot.guest_competitions c ON c.id=p.cup_id JOIN mlg_bot.wa_identities w ON w.user_id=p.user_id
       WHERE c.group_id=$1 AND c.status='playing' AND w.jid LIKE '%@s.whatsapp.net'
       ORDER BY w.user_id,w.jid LIMIT 32`,[m.group_id]);
+     mentions=found.rows.map(x=>x.jid);
+    }
+    if(m.body.includes('✅ FASE DE LIGA ENCERRADA · ')){
+     const found=await q.query(`SELECT DISTINCT ON(w.user_id) w.jid FROM mlg_bot.guest_matches game
+      JOIN mlg_bot.guest_competitions c ON c.id=game.cup_id
+      JOIN mlg_bot.wa_identities w ON w.user_id IN(game.home,game.away)
+      WHERE c.group_id=$1 AND c.mode='misto' AND c.status='playing'
+      AND game.round=(CASE WHEN c.size%2=1 THEN c.size ELSE c.size-1 END)*c.legs
+      AND w.jid LIKE '%@s.whatsapp.net' ORDER BY w.user_id,w.jid LIMIT 32`,[m.group_id]);
      mentions=found.rows.map(x=>x.jid);
     }
     messages.push({...m,mentions,lease});
