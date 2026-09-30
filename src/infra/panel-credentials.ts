@@ -1,27 +1,35 @@
-import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 const scrypt = promisify(scryptCallback);
 const hash = async (password: string, salt: string) => (await scrypt(password, Buffer.from(salt, 'hex'), 32)) as Buffer;
 const same = (a: Buffer, b: Buffer) => a.length === b.length && timingSafeEqual(a, b);
-type Stored = {version: 1; salt: string; digest: string};
+type Stored = {version: 1; salt: string; digest: string; recoveryUsed?: string};
 
 // Separate private vault object: the WhatsApp session object is never read or overwritten here.
 export function panelCredentials(vaultUrl: string, token: string, initialPassword: string) {
   const endpoint = vaultUrl.replace(/\/+$/, '') + '/panel-credentials';
   const headers = {Authorization: 'Bearer ' + token, 'Content-Type': 'application/json'};
+  const recoveryPassword = process.env.PANEL_RECOVERY_PASSWORD;
+  const recoveryUntil = Number(process.env.PANEL_RECOVERY_UNTIL);
+  const recoveryId = recoveryPassword && recoveryPassword.length >= 32 && Number.isSafeInteger(recoveryUntil) && recoveryUntil > Date.now()
+    ? createHash('sha256').update(recoveryPassword).digest('hex') : undefined;
   let rotating = false;
   async function current(): Promise<Stored | null> {
     const response = await fetch(endpoint, {headers, signal: AbortSignal.timeout(12000), cache: 'no-store'});
     if (!response.ok) throw Error('Credential vault unavailable');
     const data = await response.json() as {value: Stored | null};
-    if (data.value !== null && (data.value?.version !== 1 || !/^[0-9a-f]{32}$/.test(data.value.salt) || !/^[0-9a-f]{64}$/.test(data.value.digest))) throw Error('Invalid credential record');
+    if (data.value !== null && (data.value?.version !== 1 || !/^[0-9a-f]{32}$/.test(data.value.salt) || !/^[0-9a-f]{64}$/.test(data.value.digest) || data.value.recoveryUsed !== undefined && !/^[0-9a-f]{64}$/.test(data.value.recoveryUsed))) throw Error('Invalid credential record');
     return data.value;
   }
   async function verify(header: string | undefined) {
     if (!header?.startsWith('Bearer ') || header.length > 512) return false;
     const password = header.slice(7);
     const row = await current();
-    if (row) return same(await hash(password, row.salt), Buffer.from(row.digest, 'hex'));
+    if (row) {
+      if (same(await hash(password, row.salt), Buffer.from(row.digest, 'hex'))) return true;
+      return !!recoveryId && Date.now() < recoveryUntil && row.recoveryUsed !== recoveryId &&
+        same(createHash('sha256').update(password).digest(), Buffer.from(recoveryId, 'hex'));
+    }
     if (initialPassword.length < 32) return false;
     const salt = '00000000000000000000000000000000';
     return same(await hash(password, salt), await hash(initialPassword, salt));
@@ -34,7 +42,10 @@ export function panelCredentials(vaultUrl: string, token: string, initialPasswor
     if (!await verify(header)) throw Error('Senha atual inválida.');
     if (header?.slice(7) === next) throw Error('Escolha uma senha diferente.');
     const salt = randomBytes(16).toString('hex');
-    const value: Stored = {version: 1, salt, digest: (await hash(next, salt)).toString('hex')};
+    const previous = await current();
+    const usedRecovery = !!recoveryId && header?.slice(7) === recoveryPassword && previous?.recoveryUsed !== recoveryId;
+    const value: Stored = {version: 1, salt, digest: (await hash(next, salt)).toString('hex'),
+      ...(usedRecovery ? {recoveryUsed: recoveryId} : previous?.recoveryUsed ? {recoveryUsed: previous.recoveryUsed} : {})};
     const response = await fetch(endpoint, {method: 'PUT', headers, body: JSON.stringify(value), signal: AbortSignal.timeout(12000)});
     if (!response.ok) throw Error('Não foi possível salvar a nova senha. Tente novamente.');
     } finally { rotating = false; }
