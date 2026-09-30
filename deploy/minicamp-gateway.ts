@@ -781,6 +781,15 @@ Deno.serve(async req=>{
       ORDER BY w.user_id,w.jid LIMIT 32`,[m.group_id]);
      mentions=found.rows.map(x=>x.jid);
     }
+    if(m.body.includes('✅ FASE DE LIGA ENCERRADA · ')){
+     const found=await q.query(`SELECT DISTINCT ON(w.user_id) w.jid FROM mlg_bot.guest_matches game
+      JOIN mlg_bot.guest_competitions c ON c.id=game.cup_id
+      JOIN mlg_bot.wa_identities w ON w.user_id IN(game.home,game.away)
+      WHERE c.group_id=$1 AND c.mode='misto' AND c.status='playing'
+      AND game.round=(CASE WHEN c.size%2=1 THEN c.size ELSE c.size-1 END)*c.legs
+      AND w.jid LIKE '%@s.whatsapp.net' ORDER BY w.user_id,w.jid LIMIT 32`,[m.group_id]);
+     mentions=found.rows.map(x=>x.jid);
+    }
     messages.push({...m,mentions,lease});
    }
    return {messages};
