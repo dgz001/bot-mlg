@@ -117,6 +117,18 @@ test('preparo no privado salva por organizador e exige nova confirmação após 
  await send(a,'!corrigirclubes Bahia | Palmeiras');assert.equal(guestPrepared(a),null);
  await send(a,'!revisar');await send(a,'!confirmar');assert.deepEqual(guestPrepared(a)?.teams,['Santos','Palmeiras','Flamengo']);
 });
+test('preparo misto escolhe oito classificados e invalida revisão ao mudar vagas',async()=>{
+ const room:ControlWorkspace={targetId:'private'};
+ const send=(text:string)=>adminControl(text,room,[],async()=>({}),async()=>{},Date.now(),undefined,undefined,true,true);
+ await send('!novacopa');await send('!nome Brasileirão convidado');await send('!modalidade misto');await send('!vagas 10');
+ await send('!equipes '+Array.from({length:10},(_,i)=>'Clube '+i).join('\n'));
+ assert.match(await send('!classificados 8'),/Atualizado/);
+ assert.match(await send('!revisar'),/Pontos corridos → mata-mata · 8 avançam/);
+ await send('!confirmar');assert.equal(guestPrepared(room)?.qualifiers,8);
+ assert.match(await send('!vagas 8'),/Atualizado/);assert.equal(guestPrepared(room),null);
+ assert.match(await send('!revisar'),/menor que !vagas/);
+ await send('!classificados 4');await send('!revisar');await send('!confirmar');assert.equal(guestPrepared(room)?.qualifiers,4);
+});
 test('auxiliar convidado depende da permissão do grupo, sem papel geral',async()=>{
  const room:ControlWorkspace={targetId:'convidado@g.us'},calls:Record<string,unknown>[]=[],aliases=['5511888888888@s.whatsapp.net'];
  const api=async(body:Record<string,unknown>)=>{calls.push(body);return body.operation==='list'?{admins:[{role:'manager',jid:aliases[0]}]}:{updated:true};};
