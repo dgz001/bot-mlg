@@ -170,7 +170,7 @@ export async function guestEvent(db,request,identity){
       await q.query("UPDATE mlg_bot.guest_competitions SET status='playing' WHERE id=$1",[cup.id]);
       await schedule(q,cup,players);
       const opening=(await q.query('SELECT * FROM mlg_bot.guest_matches WHERE cup_id=$1 AND round=0 AND leg=1 ORDER BY position',[cup.id])).rows;
-      reply='🎲 CONFRONTOS · '+cup.name+'\n👥 INSCRITOS\n'+players.map(p=>'• '+p.display_name+' · '+p.team).join('\n')+'\n\n⚔️ '+(cup.mode==='liga'?'PRIMEIRA RODADA':'PRIMEIRA FASE')+'\n'+opening.map(m=>card(m,people)).join('\n')+'\n\n'+(cup.legs===2?'Ida e volta':'Jogo único')+' · !meujogo mostra o código; !resultado CÓDIGO MxV registra placar, mandante primeiro. Consulte !copa para todos os jogos.';
+      reply='🎲 CONFRONTOS · '+cup.name+'\n👥 INSCRITOS\n'+players.map(p=>'• '+p.display_name+' · '+p.team).join('\n')+'\n\n⚔️ '+(cup.mode==='liga'?'PRIMEIRA RODADA':'PRIMEIRA FASE')+'\n'+opening.map(m=>card(m,people)).join('\n')+'\n\n'+(cup.legs===2?'Ida e volta':'Jogo único')+'\n\n📋 COMO REGISTRAR\nCada jogador consulta seu código # em !meujogo (ou todos em !copa). Depois envia !resultado CÓDIGO MxV: primeiro os gols do mandante, depois os do visitante. Confira o print e os lados antes de enviar.\nO adversário usa !confirmar CÓDIGO MxV ou !contestar CÓDIGO. O autor pode usar !cancelar CÓDIGO e reenviar; sem contestação, o bot confirma após cinco minutos.\nSe um placar confirmado estiver errado, o organizador ou ADM deste grupo corrige com !forcarresultado CÓDIGO MxV motivo. Cada partida usa seu próprio código.';
      }
     }
    }
