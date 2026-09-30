@@ -459,13 +459,14 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  }throw new Error('Unknown operation');
  })().then(r=>client.end(JSON.stringify(r)+'\n')).catch(()=>client.end(JSON.stringify({error:'Operação recusada. Confira conexão, número e seleção.'})+'\n'));});});
 const health=httpServer((req,res)=>{if(req.url==='/livez'||req.url==='/readyz'){const ok=!stopping&&(req.url==='/livez'||(phase==='CONNECTED'&&(!enabled('minicamp')||!cupApi||(cupHealthy&&Date.now()-lastCupTick<120000))));res.writeHead(ok?200:503,{'Cache-Control':'no-store'}).end(ok?'OK':'UNAVAILABLE');return;}void portal(req,res).catch(()=>{if(!res.headersSent)res.writeHead(500);res.end();});});
-function fail(event:string){log(event);void shutdown(1);}
+function safeError(error:unknown){const raw=error instanceof Error?`${error.name}: ${error.message}`:String(error);return raw.replaceAll(process.env.SESSION_VAULT_TOKEN??'','[vault-token]').replaceAll(process.env.AUTH_ENCRYPTION_KEY??'','[encryption-key]').slice(0,240);}
+function fail(event:string,error?:unknown){log(error?event+':'+safeError(error):event);void shutdown(1);}
 async function shutdown(code:number){if(stopping)return;stopping=true;if(cupTimer)clearInterval(cupTimer);if(timer)clearTimeout(timer);if(stable)clearTimeout(stable);const deadline=setTimeout(()=>process.exit(code),12000);deadline.unref();controls.close();health.close();socket?.end(undefined);await queue;while(cupBusy)await new Promise(r=>setTimeout(r,50));await auth?.flush();key.fill(0);process.exit(code);}
-process.on('SIGTERM',()=>{void shutdown(0);});process.on('SIGINT',()=>{void shutdown(0);});process.on('uncaughtException',()=>fail('UNCAUGHT_ERROR'));process.on('unhandledRejection',()=>fail('UNHANDLED_REJECTION'));
+process.on('SIGTERM',()=>{void shutdown(0);});process.on('SIGINT',()=>{void shutdown(0);});process.on('uncaughtException',error=>fail('UNCAUGHT_ERROR',error));process.on('unhandledRejection',error=>fail('UNHANDLED_REJECTION',error));
 async function main(){auth=await vaultAuth(endpoint!,token!,key);auth.data.replyHistory??={};auth.data.cupInbox??=[];if(cupApi){try{await cupApi({action:'health'});cupHealthy=true;}catch{cupHealthy=false;log('MINICAMP_RETRY');}cupTimer=setInterval(()=>{void cupTick();},15000);}banterReply=createBanterReply(auth.data.replyHistory);await auth.save();await unlink(controlPath).catch(()=>undefined);controls.listen(controlPath,()=>{void chmod(controlPath,0o600).catch(()=>fail('CONTROL_PERMISSIONS_FAILED'));});if(!process.send)health.listen(Number(process.env.PORT??3000),'0.0.0.0');if(auth.state.creds.registered)await connect();else {phase='NEEDS_PAIRING';log(phase);}}
 // Parent owns HTTP while this process owns the WhatsApp session and queues.
 if(process.send){
  const pulse=setInterval(()=>{if(process.connected)process.send?.({type:'health',phase,ready:!stopping&&phase==='CONNECTED'&&(!enabled('minicamp')||!cupApi||(cupHealthy&&Date.now()-lastCupTick<120000))});},2000);
  pulse.unref();process.on('disconnect',()=>{void shutdown(0);});
 }
-void main().catch(()=>fail('SESSION_STORAGE_UNAVAILABLE'));
+void main().catch(error=>fail('SESSION_STORAGE_UNAVAILABLE',error));
