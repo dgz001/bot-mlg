@@ -1,6 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {adminControl,type ControlWorkspace} from '../src/infra/admin-control.ts';
+test('empréstimo exige administrador do grupo e gestão convidada fica restrita ao próprio canal',async()=>{
+ const group='convidado@g.us',room:ControlWorkspace={targetId:group},calls:Record<string,unknown>[]=[];
+ const actor={controlGroup:'central@g.us',aliases:['5511999999999@s.whatsapp.net'],messageId:'wa-50',resolveGroupAdmin:async(_group:string,phone:string)=>phone==='5511888888888'?['5511888888888@s.whatsapp.net']:null};
+ const api=async(payload:Record<string,unknown>)=>{calls.push(payload);return payload.action==='loan-manage'&&payload.operation==='get'?{loan:{name:'Amério',active:true}}:{granted:true,revoked:true};};
+ const send=(command:string)=>adminControl(command,room,[{id:group,name:'Liga do Amério'}],api,async()=>{},Date.now(),actor);
+ assert.match(await send('!emprestar 5511777777777'),/administrador do WhatsApp/);assert.equal(calls.length,0);
+ assert.match(await send('!emprestar 5511888888888'),/emprestado/);
+ assert.deepEqual(calls[0],{action:'loan-manage',source:'central@g.us',group,aliases:actor.aliases,operation:'grant',targetAliases:['5511888888888@s.whatsapp.net']});
+ assert.match(await send('!emprestimo'),/Amério/);
+ assert.match(await send('!devolverbot'),/encerrado/);
+ const loanRoom:ControlWorkspace={targetId:group};let touched=0;
+ const guest=async(command:string)=>adminControl(command,loanRoom,[{id:group,name:'Liga do Amério'}],async payload=>{touched++;assert.equal(payload.group,group);return {competition:{name:'Liga',teamKind:'clube',teams:['A','B','C','D']},activeCup:null,preparing:false};},async()=>{},Date.now(),{controlGroup:group,aliases:['5511888888888@s.whatsapp.net'],messageId:'wa-51'}, {[group]:loanRoom},true);
+ assert.match(await guest('!painel'),/ORGANIZADOR/);
+ assert.match(await guest('!reiniciar temporada'),/reservado/);
+ assert.match(await guest('!daradm 5511777777777 | geral'),/reservado/);
+ assert.match(await guest('!grupos'),/reservado/);
+ assert.equal(touched,0);
+ assert.match(await guest('!novacopa'),/PREPARAÇÃO INICIADA/);
+ assert.equal(touched,2);
+});
 test('troca de temporada exige revisão, mesmo ADM e código válido dentro do prazo',async()=>{
  const room:ControlWorkspace={},actor={controlGroup:'adm@g.us',aliases:['5511999999999@s.whatsapp.net'],messageId:'wa-1'};
  const calls:Record<string,unknown>[]=[];let reset=0,saves=0;
