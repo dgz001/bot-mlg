@@ -111,6 +111,19 @@ for(const mode of ['liga','copa'] as const)for(const legs of [1,2] as const){
    const event=(aliases:string[],text:string)=>call({action:'guest-event',group,aliases,name:'Jogador '+aliases[0],messageId:'guest-e2e-'+ ++serial,text});
    const players=[phone,'5511666666666@s.whatsapp.net','5511555555555@s.whatsapp.net','5511444444444@s.whatsapp.net'].slice(0,size);
    for(const player of players)assert.equal((await event([player],'!entrar')).accepted,true);
+   const opening=(await f.pool.query("SELECT body FROM mlg_bot.outbox WHERE group_id=$1 AND body LIKE '🎲 CONFRONTOS · %' ORDER BY id DESC LIMIT 1",[group])).rows[0].body as string;
+   assert.match(opening,/!resultado CÓDIGO MxV/);
+   assert.match(opening,/!confirmar CÓDIGO MxV/);
+   assert.match(opening,/!forcarresultado CÓDIGO MxV motivo/);
+   let announced:{mentions:string[]}|undefined;
+   for(let page=0;page<3&&!announced;page++){
+    const batch=await call({action:'poll'});
+    for(const message of batch.messages){
+     if(message.body.startsWith('🎲 CONFRONTOS · '))announced=message;
+     await call({action:'ack',id:String(message.id),lease:message.lease,sent:true});
+    }
+   }
+   assert.deepEqual(new Set(announced?.mentions),new Set(players));
    const lookup=async(user:string)=>(await f.pool.query('SELECT jid FROM mlg_bot.wa_identities WHERE user_id=$1 AND jid LIKE $2',[user,'%@s.whatsapp.net'])).rows[0].jid as string;
    const manager=(await f.pool.query('SELECT manager_id FROM mlg_bot.loan_groups WHERE group_id=$1',[group])).rows[0].manager_id;
    for(let round=0;round<8;round++){
