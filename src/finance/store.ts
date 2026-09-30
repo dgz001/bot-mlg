@@ -1,4 +1,5 @@
 import {randomUUID} from 'node:crypto';
+import {initialClubs,referenceDate,euroText} from './reference.ts';
 import {financeCommand,financeHelp,type FinanceCommand} from './commands.ts';
 import {MAX_MONEY,moneyText} from './money.ts';
 export interface FinanceQuery {query<T=Record<string,any>>(sql:string,values?:unknown[]):Promise<{rows:T[]}>}
@@ -92,6 +93,7 @@ export async function financeEvent(db:FinanceDatabase,event:FinanceEvent,now=Dat
     const id=randomUUID();await q.query('INSERT INTO mlg_finance.seasons(id,group_id,label,created_at) VALUES($1,$2,$3,$4)',[id,event.group,command.season,now]);
     s=(await q.query<Season>('SELECT * FROM mlg_finance.seasons WHERE id=$1',[id])).rows[0]!;
     await wallet(q,id,'bank');await wallet(q,id,'issuance');
+    for(const club of initialClubs)await q.query('INSERT INTO mlg_finance.clubs(season_id,slug,name,reference_balance,coach_label,transfer_ban,source_date,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[id,club.slug,club.name,club.balance,club.coach,club.transferBan,referenceDate,now]);
     return result(q,s,event,actor,'prepare',`🗓️ Financeiro ${s.label} preparado e DESLIGADO. Saldo inicial: zero. Escolha o modelo, revise as regras e distribua o saldo virtual antes de ativar.`,now);
    }
    if((command.type==='report'||command.type==='statement'||command.type==='debts')&&command.season)s=(await q.query<Season>('SELECT * FROM mlg_finance.seasons WHERE group_id=$1 AND label=$2',[event.group,command.season])).rows[0]??null;
@@ -100,6 +102,22 @@ export async function financeEvent(db:FinanceDatabase,event:FinanceEvent,now=Dat
    const expired=s.status==='open'?await q.query<{id:string}>("UPDATE mlg_finance.loans SET status='expired' WHERE season_id=$1 AND status IN ('pending_approval','pending_acceptance') AND expires_at<=$2 RETURNING id",[s.id,now]):{rows:[]};
    const user=await wallet(q,s.id,'user',actor),bank=await wallet(q,s.id,'bank');
    const modeLabel=({off:'DESLIGADO',bank:'Banco virtual',peer:'Entre pessoas',both:'Ambos os modelos'} as const)[s.mode];
+   if(command.type==='clubs'){
+    const clubs=await q.query<{slug:string;name:string;reference_balance:string;coach_label:string;owner_id:string|null;transfer_ban:boolean}>('SELECT * FROM mlg_finance.clubs WHERE season_id=$1 ORDER BY name',[s.id]);
+    return result(q,s,event,actor,'clubs',`📋 EQUIPES · ${s.label} · REFERÊNCIA PROVISÓRIA EUR\n`+clubs.rows.map(c=>`${c.name} (${c.slug}): ${euroText(exact(c.reference_balance))} · ${c.coach_label}${c.owner_id?' · WhatsApp vinculado':' · identidade ainda não vinculada'}${c.transfer_ban?' · TRANSFER BAN':''}`).join('\n')+'\nNão é saldo disponível na carteira de empréstimos MLG. Atualizações só por ADM, com histórico.',now);
+   }
+   if(command.type==='clubBalance'||command.type==='clubLink'||command.type==='clubBan'){
+    needAdmin();const club=(await q.query<{reference_balance:string;owner_id:string|null;transfer_ban:boolean}>('SELECT * FROM mlg_finance.clubs WHERE season_id=$1 AND slug=$2',[s.id,command.club])).rows[0];
+    if(!club)fail('Clube não encontrado. Use o identificador exibido em !financeiro equipes.');
+    if(command.type==='clubBalance')await q.query('UPDATE mlg_finance.clubs SET reference_balance=$3,updated_at=$4 WHERE season_id=$1 AND slug=$2',[s.id,command.club,command.balance,now]);
+    if(command.type==='clubBan')await q.query('UPDATE mlg_finance.clubs SET transfer_ban=$3,updated_at=$4 WHERE season_id=$1 AND slug=$2',[s.id,command.club,command.ban,now]);
+    if(command.type==='clubLink'){
+     const owner=await target();if((await q.query('SELECT 1 FROM mlg_finance.clubs WHERE season_id=$1 AND owner_id=$2 AND slug<>$3',[s.id,owner,command.club])).rows.length)fail('Esta pessoa já está vinculada a outro clube nesta temporada. Peça revisão aos ADMs.');
+     await q.query('UPDATE mlg_finance.clubs SET owner_id=$3,updated_at=$4 WHERE season_id=$1 AND slug=$2',[s.id,command.club,owner,now]);
+     return result(q,s,event,actor,'club_link','✅ Clube vinculado à identidade real marcada. O nome da lista não concede permissão administrativa nem cria saldo.',now,[owner],{club:command.club,before:club.owner_id,after:owner});
+    }
+    return result(q,s,event,actor,'club_update',`✅ Referência provisória de ${command.club} atualizada. Motivo: ${command.reason}. Sem movimentar carteira ou reserva do banco.`,now,[],{club:command.club,before:club,after:command});
+   }
    if(command.type==='status')return result(q,s,event,actor,'status',`💰 TEMPORADA ${s.label}\nModelo: ${modeLabel}\nBanco: ${moneyText(await financeBalance(q,bank.id))}\nLimite por empréstimo: ${moneyText(exact(s.max_loan))}\nLimite total de dívida: ${moneyText(exact(s.max_debt))}\nPrazo máximo: ${s.max_days} dias · ${s.max_active} empréstimo(s)/propostas por pessoa\nBanco: aprovação ${s.approval==='manual'?'por ADM':'automática pelas regras'}\nSaldo virtual; sem juros ou multas.`,now,[],{expired:expired.rows.map(r=>r.id)});
    if(command.type==='mode'){
     needAdmin();if(command.season!==s.label)fail('A temporada informada não é a temporada aberta.');

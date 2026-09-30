@@ -58,8 +58,27 @@ Schema privado `mlg_finance`, separado das copas e do cofre WhatsApp. Livro de m
 
 1. Validar novamente a versão candidata com `npm run typecheck` e `npm run test:isolated`.
 2. Aplicar **somente na liberação futura** `supabase/migrations/20260930150109_finance_loans.sql` no projeto do bot. É a primeira migração nesse diretório; não equivale às versões 1–22 do diretório legado `migrations/`. Conferir o histórico remoto antes de qualquer `supabase db push`. O startup atual não aplica essa migração.
-3. Preparar uma nova função Edge com `deploy/finance-gateway.ts` como `index.ts` e os arquivos `src/finance/{store,commands,money}.ts` no mesmo diretório. Substituir `__DIGEST__` pelo SHA-256 da string completa `Bearer TOKEN_ALEATORIO`, usando segredo exclusivo de alta entropia, sem imprimir o token. Configurar `SUPABASE_DB_URL`, mantendo o papel financeiro privado.
+3. Preparar uma nova função Edge com `deploy/finance-gateway.ts` como `index.ts` e os arquivos `src/finance/{store,commands,money,reference}.ts` no mesmo diretório. Substituir `__DIGEST__` pelo SHA-256 da string completa `Bearer TOKEN_ALEATORIO`, usando segredo exclusivo de alta entropia, sem imprimir o token. Configurar `SUPABASE_DB_URL`, mantendo o papel financeiro privado.
 4. Configurar os dois portões independentes: `FINANCE_ENABLED=true` na função e no worker, além de `FINANCE_URL` e `FINANCE_TOKEN` no worker. Não reutilizar token de sessão ou de copas. A função exige seu próprio token, mesmo quando o gateway Supabase não valida JWT.
 5. Fazer teste com contas controladas: abastecimento, pedido, consentimento, pagamento parcial, quitação, concorrência, cobrança privada e destino administrativo. Depois preparar e ativar a temporada real com os comandos acima.
 
 O código e `render.yaml` mantêm `FINANCE_ENABLED=false`. Não foi aplicada migração financeira nem publicada função financeira em produção. A hospedagem Render precisa estar operacional para que o bot e seus lembretes funcionem; a suspensão por faturamento identificada na revisão anterior é independente deste módulo.
+
+
+## Base provisória da liga em 30/09/2026
+
+Os 25 clubes e treinadores enviados pela administração estão em `src/finance/reference.ts`, com total líquido de **€977 milhões**. Mantém Bayer Leverkusen com **-€20 milhões** e **transfer ban**. Corrige apenas grafias dos clubes: Tottenham, Brighton, Bayern München e Beşiktaş. Nomes de treinadores são rótulos de referência; não inferem telefone, identidade nem papel de ADM.
+
+Ao preparar uma temporada financeira no futuro, a lista é copiada como referência provisória separada das carteiras MLG. **Não importa saldos automaticamente para as carteiras** nem converte EUR em MLG. Depois da abertura da janela, a administração precisa decidir essa integração e confirmar a base. Uma nova temporada usa a referência inicial datada; os valores atuais da temporada anterior não são transportados automaticamente.
+
+Comandos preparados para consultar e atualizar a base pelo bot após a liberação:
+
+```
+!financeiro equipes
+!financeiro equipe juventus 54M Conferência antes da janela
+!financeiro equipe bayer-leverkusen -20M Saldo final confirmado pela administração
+!financeiro transferban bayer-leverkusen sim Penalidade para a próxima janela
+!financeiro vincular @pessoa juventus
+```
+
+A atualização de saldo é **absoluta**, não uma soma: repetir `54M` mantém €54 milhões. Aceita `0`, negativos e valores completos, além de `M` para milhões; `54M` equivale a `54000000`. Transfer ban muda por comando próprio: quitar saldo negativo não retira a penalidade automaticamente. Os exemplos usam menções reais do WhatsApp, necessárias para vincular cada treinador; o texto colado com apelidos não identifica uma conta com segurança. Uma pessoa só pode estar vinculada a um clube por temporada. Os eventos guardam valores anteriores, novos valores, ADM, mensagem, data e motivo. Só ADMs gerais cadastrados podem alterar ou vincular. Esses comandos não concedem permissão administrativa aos nomes listados como ADM.

@@ -1,4 +1,5 @@
 import {money} from './money.ts';
+import {referenceMoney} from './reference.ts';
 export type FinanceCommand=
  | {type:'help'|'status'|'balance'}
  | {type:'statement'|'debts'|'report';page:number;season?:string}
@@ -15,6 +16,10 @@ export type FinanceCommand=
  | {type:'alerts';emission:number;utilization:number}
  | {type:'transfer';amount:number;reason:string}
  | {type:'ranking';page:number}
+ | {type:'clubs'}
+ | {type:'clubBalance';club:string;balance:number;reason:string}
+ | {type:'clubLink';club:string}
+ | {type:'clubBan';club:string;ban:boolean;reason:string}
  | {type:'close';season:string};
 export const financeHelp=`💰 FINANCEIRO · SALDO VIRTUAL
 !banco pedir VALOR DIAS — solicitar ao banco.
@@ -35,6 +40,9 @@ ADM: !financeiro preparar TEMPORADA; !financeiro ativar banco|pessoas|ambos TEMP
 !financeiro alertas EMISSAO_DIARIA PERCENTUAL_BANCO — sinais de risco (ADM).
 !financeiro transferir @pessoa VALOR motivo — transferir seu saldo.
 !financeiro ranking [página] — comparação dos empréstimos (ADM).
+!financeiro equipes — referência provisória de clubes (EUR).
+ADM: !financeiro equipe CLUBE SALDO motivo; !financeiro vincular @pessoa CLUBE;
+!financeiro transferban CLUBE sim|nao motivo. Referência não movimenta saldo MLG.
 !financeiro relatorio [página]; !financeiro encerrar TEMPORADA.`;
 export function financeCommand(text:string):FinanceCommand|null {
  const normalized=text.trim().replace(/^!adicionarsaldo\s+(\S+)$/i,'!financeiro creditar banco $1 Abastecimento autorizado pelo ADM').replace(/^!não(?=\s|$)/i,'!nao');
@@ -64,6 +72,10 @@ export function financeCommand(text:string):FinanceCommand|null {
  if(verb==='alertas'&&args.length===2)return {type:'alerts',emission:money(args[0]!),utilization:integer(args[1],100)};
  if(verb==='transferir'&&args.length>=3&&args[0]!.startsWith('@'))return {type:'transfer',amount:money(args[1]!),reason:reason(args.slice(2))};
  if(verb==='ranking'&&args.length<=1)return {type:'ranking',page:args[0]?integer(args[0],10000):1};
+ if(verb==='equipes'&&!args.length)return {type:'clubs'};
+ if(verb==='equipe'&&args.length>=3)return {type:'clubBalance',club:args[0]!,balance:referenceMoney(args[1]!),reason:reason(args.slice(2))};
+ if(verb==='vincular'&&args.length===2&&args[0]!.startsWith('@'))return {type:'clubLink',club:args[1]!};
+ if(verb==='transferban'&&args.length>=3&&['sim','nao','não'].includes(args[1]!))return {type:'clubBan',club:args[0]!,ban:args[1]==='sim',reason:reason(args.slice(2))};
  if(verb==='preparar'&&args.length===1)return {type:'prepare',season:season(args[0])};
  if(verb==='encerrar'&&args.length===1)return {type:'close',season:season(args[0])};
  if((verb==='ativar'||verb==='pausar')&&args.length===(verb==='pausar'?1:2)){

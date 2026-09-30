@@ -235,3 +235,32 @@ test('vencimento gera apenas avisos privados/administração por dia; emissão g
   assert.equal((await f.pool.query("SELECT count(*)::int n FROM mlg_finance.outbox WHERE message_id LIKE '%overdue%'")).rows[0].n,4);
  }finally{await f.close();}
 });
+
+test('base de 25 clubes conserva saldo negativo, transfer ban e total; referência aceita milhões sem afetar dinheiro',async()=>{
+ const {initialClubs,referenceMoney}=await import('../src/finance/reference.ts');
+ assert.equal(initialClubs.length,25);assert.equal(initialClubs.reduce((n,c)=>n+c.balance,0),97700000000);
+ const bayer=initialClubs.find(c=>c.slug==='bayer-leverkusen')!;assert.equal(bayer.balance,-2000000000);assert.equal(bayer.transferBan,true);
+ assert.equal(referenceMoney('54M'),5400000000);assert.equal(referenceMoney('-20M'),-2000000000);assert.equal(referenceMoney('0'),0);assert.equal(referenceMoney('0M'),0);
+ assert.throws(()=>referenceMoney('100000M'));assert.throws(()=>referenceMoney('NaN'));
+ assert.deepEqual(financeCommand('!financeiro equipe juventus 54M Conferência antes da janela'),{type:'clubBalance',club:'juventus',balance:5400000000,reason:'Conferência antes da janela'});
+});
+
+test('atualização administrativa da base é absoluta, auditada e não cria saldo de empréstimo',integration,async()=>{
+ const f=await fixture();try{
+  await f.setup('banco','automatico');
+  assert.match((await f.send('bob','!financeiro equipes')).body!,/TRANSFER BAN/);
+  assert.match((await f.send('bob','!financeiro equipe juventus 70M Revisão de saldo para janela')).body!,/Somente ADMs/);
+  await f.send('adm','!financeiro equipe juventus 70M Revisão de saldo para janela');
+  await f.send('adm','!financeiro equipe juventus 70M Conferência final para janela');
+  assert.equal((await f.pool.query("SELECT reference_balance::text FROM mlg_finance.clubs WHERE slug='juventus'")).rows[0].reference_balance,'7000000000');
+  await f.send('adm','!financeiro vincular @Alice juventus','alice');
+  assert.match((await f.send('adm','!financeiro vincular @Alice porto','alice')).body!,/já está vinculada/);
+  await f.send('adm','!financeiro equipe bayer-leverkusen 0 Regularização do saldo da equipe');
+  assert.equal((await f.pool.query("SELECT transfer_ban FROM mlg_finance.clubs WHERE slug='bayer-leverkusen'")).rows[0].transfer_ban,true);
+  await f.send('adm','!financeiro transferban bayer-leverkusen nao Penalidade retirada pela administração');
+  assert.equal((await f.pool.query("SELECT transfer_ban FROM mlg_finance.clubs WHERE slug='bayer-leverkusen'")).rows[0].transfer_ban,false);
+  assert.equal(await f.balance('alice'),100000);
+  const audited=(await f.pool.query("SELECT result FROM mlg_finance.events WHERE action='club_update' AND result->>'club'='juventus' ORDER BY at LIMIT 1")).rows[0].result;
+  assert.equal(audited.before.reference_balance,'5400000000');assert.equal(audited.after.balance,7000000000);
+ }finally{await f.close();}
+});

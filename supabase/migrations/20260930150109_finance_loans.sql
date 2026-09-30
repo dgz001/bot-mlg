@@ -32,6 +32,24 @@ CREATE TABLE mlg_finance.seasons (
 );
 CREATE UNIQUE INDEX finance_one_open ON mlg_finance.seasons(group_id) WHERE status='open';
 
+-- Separate provisional team economy: signed EUR references are NOT loan wallets.
+CREATE TABLE mlg_finance.clubs (
+ season_id uuid NOT NULL REFERENCES mlg_finance.seasons(id),
+ slug text NOT NULL CHECK(slug ~ '^[a-z0-9-]{2,40}$'),
+ name text NOT NULL,
+ reference_balance bigint NOT NULL CHECK(reference_balance BETWEEN -1000000000000 AND 1000000000000),
+ coach_label text NOT NULL,
+ owner_id text REFERENCES mlg_bot.users(id),
+ transfer_ban boolean NOT NULL DEFAULT false,
+ source_date text NOT NULL,
+ updated_at bigint NOT NULL,
+ PRIMARY KEY(season_id,slug),
+ UNIQUE(season_id,owner_id)
+);
+ALTER TABLE mlg_finance.clubs ENABLE ROW LEVEL SECURITY;
+CREATE POLICY finance_backend ON mlg_finance.clubs TO mlg_finance_gateway USING(true) WITH CHECK(true);
+GRANT SELECT,INSERT,UPDATE ON mlg_finance.clubs TO mlg_finance_gateway;
+
 CREATE TABLE mlg_finance.wallets (
  id uuid PRIMARY KEY,
  season_id uuid NOT NULL REFERENCES mlg_finance.seasons(id),
