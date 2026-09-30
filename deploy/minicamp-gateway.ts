@@ -103,7 +103,7 @@ Deno.serve(async req=>{
  if(digest!==EXPECTED_DIGEST)return new Response('Unauthorized',{status:401});
  if(req.method!=='POST')return new Response('Method not allowed',{status:405});
  try{
- const raw=await req.text();if(raw.length>32000)return new Response('Too large',{status:413});
+ const raw=await req.text();if(raw.length>120000)return new Response('Too large',{status:413});
  const body=JSON.parse(raw);let result={};
  if(body.action==='health'){await db.transaction(q=>q.query('SELECT 1'));result={database:true};}
  else if(body.action==='guest-open')result=await guestOpen(db,body);
@@ -173,7 +173,7 @@ Deno.serve(async req=>{
    const allowed=await q.query("SELECT a.role,a.group_id FROM mlg_bot.admins a JOIN mlg_bot.groups g ON g.id=a.group_id WHERE a.user_id=$1 AND g.authorized AND g.admins_configured AND NOT EXISTS(SELECT 1 FROM mlg_bot.member_blocks b WHERE b.user_id=a.user_id)",[id]);
    const loan=await q.query('SELECT 1 FROM mlg_bot.loan_groups WHERE group_id=$1 AND manager_id=$2 AND active',[body.group,id]);
    const loanGroup=await q.query('SELECT 1 FROM mlg_bot.loan_groups WHERE group_id=$1 AND active',[body.group]);
-   return {allowed:allowed.rows.some(a=>a.role==='owner'||a.role==='admin'),channelAllowed:allowed.rows.some(a=>a.group_id===body.group&&a.role==='channel'),loanAllowed:loan.rows.length===1,loanGroup:loanGroup.rows.length===1};
+   return {allowed:allowed.rows.some(a=>a.role==='owner'||a.role==='admin'),channelAllowed:allowed.rows.some(a=>a.group_id===body.group&&a.role==='channel'),loanAllowed:loanGroup.rows.length===1&&(loan.rows.length===1||allowed.rows.some(a=>a.group_id===body.group&&a.role==='channel')),loanGroup:loanGroup.rows.length===1};
   });
  }
  else if(body.action==='loan-invite'){
@@ -247,7 +247,7 @@ Deno.serve(async req=>{
     if(!existing.rows[0]?.active)return {error:'Não há empréstimo ativo neste grupo.'};
     await q.query('UPDATE mlg_bot.loan_groups SET active=false,revoked_at=now() WHERE group_id=$1',[body.group]);
     await q.query('UPDATE mlg_bot.loan_invitations SET active=false,revoked_at=now() WHERE claimed_group=$1',[body.group]);
-    await q.query("DELETE FROM mlg_bot.admins WHERE group_id=$1 AND user_id=$2 AND role='channel'",[body.group,existing.rows[0].manager_id]);
+    await q.query("DELETE FROM mlg_bot.admins WHERE group_id=$1 AND role='channel'",[body.group]);
     await q.query("INSERT INTO mlg_bot.control_audit(action,group_id,user_id) VALUES('loan-revoked',$1,$2)",[body.group,actor]);
     return {revoked:true};
    }
@@ -263,6 +263,39 @@ Deno.serve(async req=>{
    await q.query('UPDATE mlg_bot.groups SET admins_configured=true WHERE id=$1',[body.group]);
    await q.query("INSERT INTO mlg_bot.control_audit(action,group_id,user_id) VALUES('loan-granted',$1,$2)",[body.group,actor]);
    return {granted:true,name:existing.rows[0]?.name??'Responsável'};
+  });
+ }
+ else if(body.action==='guest-admin'){
+  if(!groupId.test(body.group)||!validAliases(body.aliases)||!['list','grant','revoke'].includes(body.operation)||body.operation!=='list'&&!validAliases(body.targetAliases))throw Error('Invalid guest ADM request');
+  result=await db.transaction(async q=>{
+   const actor=await identity(q,body.aliases);
+   const loan=await q.query('SELECT manager_id FROM mlg_bot.loan_groups WHERE group_id=$1 AND active FOR UPDATE',[body.group]);
+   if(!loan.rows.length)return {error:'Empréstimo não está ativo neste grupo.'};
+   if((await q.query('SELECT 1 FROM mlg_bot.member_blocks WHERE user_id=$1',[actor])).rows.length)return {error:'Conta bloqueada.'};
+   const manager=loan.rows[0].manager_id;
+   const global=(await q.query("SELECT 1 FROM mlg_bot.admins a JOIN mlg_bot.groups g ON g.id=a.group_id WHERE a.user_id=$1 AND a.role IN ('owner','admin') AND g.authorized AND g.admins_configured LIMIT 1",[actor])).rows.length>0;
+   if(body.operation==='list'){
+    if(actor!==manager&&!global&&!(await q.query("SELECT 1 FROM mlg_bot.admins WHERE group_id=$1 AND user_id=$2 AND role='channel'",[body.group,actor])).rows.length)return {error:'Sem acesso a este grupo.'};
+    const rows=await q.query(`SELECT w.jid,CASE WHEN a.user_id=$2 THEN 'manager' ELSE 'channel' END AS role
+     FROM mlg_bot.admins a LEFT JOIN LATERAL(SELECT jid FROM mlg_bot.wa_identities WHERE user_id=a.user_id AND jid LIKE '%@s.whatsapp.net' ORDER BY jid LIMIT 1) w ON true
+     WHERE a.group_id=$1 AND (a.role='channel' OR a.user_id=$2) ORDER BY role,w.jid LIMIT 100`,[body.group,manager]);
+    return {admins:rows.rows};
+   }
+   if(actor!==manager&&!global)return {error:'Só o organizador deste grupo pode alterar auxiliares.'};
+   const found=await q.query('SELECT DISTINCT user_id FROM mlg_bot.wa_identities WHERE jid=ANY($1::text[])',[body.targetAliases]);
+   if(found.rows.length>1)return {error:'Contas conflitantes. Confira o número.'};
+   if(body.operation==='revoke'&&!found.rows.length)return {error:'Número não cadastrado.'};
+   const target=found.rows[0]?.user_id??await identity(q,body.targetAliases);
+   if(target===manager)return {error:'O organizador principal é definido pelo empréstimo da MLG.'};
+   if(body.operation==='grant'){
+    if((await q.query('SELECT 1 FROM mlg_bot.member_blocks WHERE user_id=$1',[target])).rows.length)return {error:'Conta bloqueada.'};
+    await q.query("INSERT INTO mlg_bot.admins(group_id,user_id,role) VALUES($1,$2,'channel') ON CONFLICT DO NOTHING",[body.group,target]);
+   }else{
+    const removed=await q.query("DELETE FROM mlg_bot.admins WHERE group_id=$1 AND user_id=$2 AND role='channel' RETURNING user_id",[body.group,target]);
+    if(!removed.rows.length)return {error:'Esta pessoa não é auxiliar deste grupo.'};
+   }
+   await q.query('INSERT INTO mlg_bot.control_audit(action,group_id,user_id) VALUES($1,$2,$3)',[body.operation==='grant'?'guest-admin-granted':'guest-admin-revoked',body.group,actor]);
+   return {updated:true};
   });
  }
  else if(body.action==='admin-access'){
