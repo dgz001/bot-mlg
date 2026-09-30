@@ -64,7 +64,7 @@ async function connect(){
  const group=message.key.remoteJid,id=message.key.id;if(stopping||!group||!id||message.key.fromMe)return;
  const body=extractMessageContent(message.message);const text=loanCommand((body?.conversation??body?.extendedTextMessage?.text??'').trim());const context=body?.extendedTextMessage?.contextInfo;
  if(/^[0-9]+@(s\.whatsapp\.net|lid)$/.test(group)){
-  if(!cupApi||!/^!(?:novacopa|nome|modalidade|formato|vagas|jogos|equipes|adicionar|remover|corrigirclubes|times|revisar|confirmar|descartar|central|pendencias|painel|ajuda|comandos|imagemgrupo|imagemtexto)(?:\s|$)/i.test(text))return;
+  if(!cupApi||!/^!(?:novacopa|nome|modalidade|formato|vagas|classificados|jogos|equipes|adicionar|remover|corrigirclubes|times|revisar|confirmar|descartar|central|pendencias|painel|ajuda|comandos|imagemgrupo|imagemtexto)(?:\s|$)/i.test(text))return;
   const dedup=JSON.stringify([group,id]);if(auth.data.seen.includes(dedup))return;
   if(text.length>16000){await current.sendMessage(group,{text:'⚠️ Lista muito longa. Envie em partes com !adicionar.'});return;}
   try{
@@ -126,9 +126,9 @@ async function connect(){
  }
  const mode=groupMode(auth.data.groupModes,group);
  const seasonCommand=/^!(?:reiniciartemporada|reiniciar\s+temporada|confirmartemporada|confirmar\s+temporada|cancelartemporada|cancelar\s+temporada)(?:\s|$)/i.test(text.trim());
- const centralOnly=seasonCommand||/^!(?:painel|grupos|usar|central|pendencias|equipes|confirmartimes|adicionar|remover|corrigirclubes|vagas|revisar|concluir|descartar|adms|daradm|tiraradm|emprestimo|emprestar|devolverbot|inscritosadm|inscrever|retirar|trocar|confirmarelenco|cancelarelenco|bloquear|desbloquear|bloqueados|refazersorteio|confirmarsorteio|cancelarsorteio)(?:\s|$)/i.test(text.trim());
+ const centralOnly=seasonCommand||/^!(?:painel|grupos|usar|central|pendencias|equipes|confirmartimes|adicionar|remover|corrigirclubes|vagas|classificados|revisar|concluir|descartar|adms|daradm|tiraradm|emprestimo|emprestar|devolverbot|inscritosadm|inscrever|retirar|trocar|confirmarelenco|cancelarelenco|bloquear|desbloquear|bloqueados|refazersorteio|confirmarsorteio|cancelarsorteio)(?:\s|$)/i.test(text.trim());
  const outsideCup=!inChannel(group,'minicamp')&&/^!(?:modelos|ativarmodelo|sorteio|novacopa|cancelarcopa|anularcopa|nome|categoria|times|abrircopa|forcarresultado|resolver|deletar|vistoria)(?:\s|$)/i.test(text.trim());
- const loanSetup=/^!(?:novacopa|nome|modalidade|formato|jogos|times|abrircopa|cancelarcopa|modelos|imagemgrupo|imagemtexto|corrigirclubes|daradm|tiraradm|adms)(?:\s|$)/i.test(text.trim());
+ const loanSetup=/^!(?:novacopa|nome|modalidade|formato|jogos|classificados|times|abrircopa|cancelarcopa|modelos|imagemgrupo|imagemtexto|corrigirclubes|daradm|tiraradm|adms)(?:\s|$)/i.test(text.trim());
  if(auth.data.groups.includes(group)&&(mode==='controle'||centralOnly||outsideCup||loanSetup)){
   if(!text.trim().startsWith('!')||!cupApi||!message.key.participant)return;
   if(text.length>16000){await current.sendMessage(group,{text:'⚠️ Mensagem muito longa. Envie os times em mensagens menores com !adicionar.'});return;}
@@ -151,7 +151,7 @@ async function connect(){
    if(permission.allowed||permission.loanAllowed&&inChannel(group,'minicamp')){
     const loanMode=!permission.allowed;
     if(loanMode&&!enabled('minicamp'))response='⏸️ O bot está pausado. Aguarde um ADM geral da MLG.';
-    else if(loanMode||(permission.loanGroup||auth.data.loanGroups?.includes(group))&&/^(?:!(?:painel|central|pendencias|novacopa|nome|modalidade|formato|jogos|equipes|adicionar|remover|corrigirclubes|times|vagas|revisar|abrircopa|concluir|descartar|cancelarcopa|imagemgrupo|imagemtexto|daradm|tiraradm|adms)(?:\s|$))/i.test(text.trim())){
+    else if(loanMode||(permission.loanGroup||auth.data.loanGroups?.includes(group))&&/^(?:!(?:painel|central|pendencias|novacopa|nome|modalidade|formato|jogos|classificados|equipes|adicionar|remover|corrigirclubes|times|vagas|revisar|abrircopa|concluir|descartar|cancelarcopa|imagemgrupo|imagemtexto|daradm|tiraradm|adms)(?:\s|$))/i.test(text.trim())){
      auth.data.controlRooms??={};const room=auth.data.controlRooms[group]??={};auth.data.controlRooms[group]=room;
      room.targetId=group;
      const target={id:group,name:(await current.groupMetadata(group)).subject};
@@ -178,7 +178,7 @@ async function connect(){
       if(opened.error)response='⚠️ '+opened.error+' O preparo continua salvo no privado.';
       else{
        room.guestImage=privateRoom?.guestImage??'text';delete privateRoom!.guestDraft;await auth.save();
-       response=`🏆 ${prepared.name} · inscrições abertas para ${prepared.size} jogadores! ${prepared.mode==='liga'?'Pontos corridos':'Mata-mata'}, ${prepared.legs===2?'ida e volta':'jogo único'}. Enviem !entrar. Ao completar as vagas, o bot anuncia os confrontos e explica !resultado CÓDIGO MxV.`;
+       response=`🏆 ${prepared.name} · inscrições abertas para ${prepared.size} jogadores! ${prepared.mode==='liga'?'Pontos corridos':prepared.mode==='copa'?'Mata-mata':'Pontos corridos → mata-mata'+` · ${prepared.qualifiers} avançam`}, ${prepared.legs===2?'ida e volta':'jogo único'}. Enviem !entrar. Ao completar as vagas, o bot anuncia os confrontos e explica !resultado CÓDIGO MxV.`;
       }
      }else response=await adminControl(text,room,[target],api,()=>auth.save(),Date.now(),{controlGroup:group,aliases,messageId:id,resolveGroupAdmin},auth.data.controlRooms,true);
     }else{
