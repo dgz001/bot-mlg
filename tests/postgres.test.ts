@@ -98,7 +98,12 @@ for(const mode of ['liga','copa'] as const)for(const legs of [1,2] as const){
    assert.equal((await call({...invite,aliases:['5511777777777@s.whatsapp.net']})).invited,undefined);
    assert.equal((await call(invite)).invited,true);
    assert.equal((await call(invite)).existing,true);
+   const privateAccess=await call({action:'loan-private-check',aliases:[phone]});
+   assert.equal(privateAccess.allowed,true);assert.equal(privateAccess.claimedGroup,null);assert.ok(Number.isFinite(privateAccess.grantedAt));
+   assert.equal((await call({action:'loan-private-check',aliases:['5511777777777@s.whatsapp.net']})).allowed,false);
+   assert.equal((await f.pool.query("SELECT count(*)::int AS n FROM mlg_bot.wa_identities WHERE jid='5511777777777@s.whatsapp.net'")).rows[0].n,0);
    assert.equal((await call({action:'loan-claim',group,aliases:['777@lid',phone],name:'Convidado'})).claimed,true);
+   assert.equal((await call({action:'loan-private-check',aliases:[phone]})).claimedGroup,group);
    assert.equal((await call(invite)).existing,true);
    const permissions=await call({action:'control-check',group,aliases:[phone]});
    assert.equal(permissions.allowed,false);assert.equal(permissions.loanAllowed,true);
