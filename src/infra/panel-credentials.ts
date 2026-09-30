@@ -30,6 +30,8 @@ export function panelCredentials(vaultUrl: string, token: string, initialPasswor
       return !!recoveryId && Date.now() < recoveryUntil && row.recoveryUsed !== recoveryId &&
         same(createHash('sha256').update(password).digest(), Buffer.from(recoveryId, 'hex'));
     }
+    if (recoveryId && Date.now() < recoveryUntil &&
+      same(createHash('sha256').update(password).digest(), Buffer.from(recoveryId, 'hex'))) return true;
     if (initialPassword.length < 32) return false;
     const salt = '00000000000000000000000000000000';
     return same(await hash(password, salt), await hash(initialPassword, salt));
