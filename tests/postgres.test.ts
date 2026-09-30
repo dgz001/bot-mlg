@@ -72,6 +72,7 @@ test('modalidade mista forma chave dos oito melhores e protege resultados poster
   await setup(f.pool);const group='270@g.us';
   await f.pool.query('INSERT INTO mlg_bot.groups(id,authorized,admins_configured) VALUES($1,true,true)',[group]);
   await f.pool.query("INSERT INTO mlg_bot.loan_groups(group_id,manager_id,granted_by) VALUES($1,'admin','admin')",[group]);
+  await f.pool.query("INSERT INTO mlg_bot.users(id,display_name) VALUES ('mod1','Mod 1'),('mod2','Mod 2'); INSERT INTO mlg_bot.admins(group_id,user_id,role) VALUES ('g','mod1','admin'),('g','mod2','admin');");
   const db=pgDatabase(f.pool),teams=Array.from({length:9},(_,i)=>'Clube '+i);
   assert.equal((await guestOpen(db,{group,name:'Liga e mata-mata',mode:'misto',legs:1,size:9,qualifiers:8,teams})).opened,true);
   assert.rejects(()=>guestOpen(db,{group:'271@g.us',name:'Invalida',mode:'misto',legs:1,size:8,qualifiers:8,teams}),/Invalid guest competition/);
@@ -82,23 +83,25 @@ test('modalidade mista forma chave dos oito melhores e protege resultados poster
   const first=(await f.pool.query('SELECT * FROM mlg_bot.guest_matches WHERE cup_id=$1 ORDER BY code LIMIT 1',[cup.id])).rows[0];
   assert.equal((await f.pool.query('SELECT count(*)::int AS n FROM mlg_bot.guest_matches WHERE cup_id=$1',[cup.id])).rows[0].n,36);
   const league=(await f.pool.query('SELECT code FROM mlg_bot.guest_matches WHERE cup_id=$1 ORDER BY code',[cup.id])).rows;
-  for(const m of league)await event('admin',`!forcarresultado ${m.code} 2x0 revisão oficial da liga`);
+  const moderators=['admin','mod1','mod2'];let action=0;
+  const force=(code:number,score='2x0',reason='revisão oficial da liga')=>event(moderators[action++%moderators.length]!,`!forcarresultado ${code} ${score} ${reason}`);
+  for(const m of league)await force(m.code);
   const table=guestStandings((await f.pool.query('SELECT * FROM mlg_bot.guest_players WHERE cup_id=$1',[cup.id])).rows,(await f.pool.query('SELECT * FROM mlg_bot.guest_matches WHERE cup_id=$1 AND round<9',[cup.id])).rows);
   let knockout=(await f.pool.query('SELECT * FROM mlg_bot.guest_matches WHERE cup_id=$1 AND round=9 ORDER BY position,leg',[cup.id])).rows;
   assert.equal(knockout.length,4);
   const seeds=seededBracket(8);
   for(let i=0;i<4;i++)assert.deepEqual([knockout[i].home,knockout[i].away],[table[seeds[i*2]!-1]!.id,table[seeds[i*2+1]!-1]!.id]);
   assert.match((await f.pool.query("SELECT body FROM mlg_bot.outbox WHERE body LIKE '%FASE DE LIGA ENCERRADA%' ORDER BY id DESC LIMIT 1")).rows[0].body,/8º/);
-  await event('admin',`!forcarresultado ${first.code} 0x2 correção oficial da liga`);
+  await force(first.code,'0x2','correção oficial da liga');
   knockout=(await f.pool.query('SELECT * FROM mlg_bot.guest_matches WHERE cup_id=$1 AND round=9 ORDER BY position,leg',[cup.id])).rows;
   assert.equal(knockout.length,4);
-  await event('admin',`!forcarresultado ${knockout[0].code} 2x0 jogo eliminatório oficial`);
-  await event('admin',`!forcarresultado ${first.code} 2x0 correção tardia indevida`);
+  await force(knockout[0].code,'2x0','jogo eliminatório oficial');
+  await force(first.code,'2x0','correção tardia indevida');
   assert.match((await f.pool.query('SELECT body FROM mlg_bot.outbox ORDER BY id DESC LIMIT 1')).rows[0].body,/Há placar na fase seguinte/);
   assert.equal((await f.pool.query('SELECT home_score FROM mlg_bot.guest_matches WHERE code=$1',[first.code])).rows[0].home_score,0);
   for(let stage=0;stage<3;stage++){
    const pending=(await f.pool.query("SELECT code FROM mlg_bot.guest_matches WHERE cup_id=$1 AND round=$2 AND status='scheduled' ORDER BY position",[cup.id,9+stage])).rows;
-   for(const m of pending)await event('admin',`!forcarresultado ${m.code} 2x0 partida eliminatória oficial`);
+   for(const m of pending)await force(m.code,'2x0','partida eliminatória oficial');
   }
   assert.equal((await f.pool.query('SELECT status FROM mlg_bot.guest_competitions WHERE id=$1',[cup.id])).rows[0].status,'completed');
  }finally{await f.close();}
@@ -157,8 +160,8 @@ for(const mode of ['liga','copa'] as const)for(const legs of [1,2] as const){
    assert.equal((await call(invite)).existing,true);
    const privateAccess=await call({action:'loan-private-check',aliases:[phone]});
    assert.equal(privateAccess.allowed,true);assert.equal(privateAccess.claimedGroup,null);assert.ok(Number.isFinite(privateAccess.grantedAt));
-   assert.equal((await call({action:'loan-private-check',aliases:['5511777777777@s.whatsapp.net']})).allowed,false);
-   assert.equal((await f.pool.query("SELECT count(*)::int AS n FROM mlg_bot.wa_identities WHERE jid='5511777777777@s.whatsapp.net'")).rows[0].n,0);
+   assert.equal((await call({action:'loan-private-check',aliases:['5511000000000@s.whatsapp.net']})).allowed,false);
+   assert.equal((await f.pool.query("SELECT count(*)::int AS n FROM mlg_bot.wa_identities WHERE jid='5511000000000@s.whatsapp.net'")).rows[0].n,0);
    assert.equal((await call({action:'loan-claim',group,aliases:['777@lid',phone],name:'Convidado'})).claimed,true);
    assert.equal((await call({action:'loan-private-check',aliases:[phone]})).claimedGroup,group);
    assert.equal((await call(invite)).existing,true);
