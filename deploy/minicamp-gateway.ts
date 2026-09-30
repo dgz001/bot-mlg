@@ -4,6 +4,7 @@ import {Pool} from 'npm:pg@8.23.0';
 import {randomUUID} from 'node:crypto';
 import {pgDatabase,processEvent,autoConfirmDue,checkpointCup,cupDraw,cupRoster,cupRerollTeam} from './postgres.ts';
 import {memberCommand} from './member-commands.ts';
+import {guestOpen,guestEvent,guestAutoConfirm,guestArchive} from './guest-competition.ts';
 const EXPECTED_DIGEST='__DIGEST__';
 const pool=new Pool({connectionString:Deno.env.get('SUPABASE_DB_URL'),max:2,connectionTimeoutMillis:8000});
 const base=pgDatabase(pool);
@@ -105,6 +106,26 @@ Deno.serve(async req=>{
  const raw=await req.text();if(raw.length>32000)return new Response('Too large',{status:413});
  const body=JSON.parse(raw);let result={};
  if(body.action==='health'){await db.transaction(q=>q.query('SELECT 1'));result={database:true};}
+ else if(body.action==='guest-open')result=await guestOpen(db,body);
+ else if(body.action==='guest-event'){
+  if(!validAliases(body.aliases))throw Error('Invalid guest identity');
+  result=await guestEvent(db,body,identity);
+ }
+ else if(body.action==='guest-status'||body.action==='guest-cancel'){
+  if(!groupId.test(body.group))throw Error('Invalid guest group');
+  result=await db.transaction(async q=>{
+   const loan=await q.query('SELECT 1 FROM mlg_bot.loan_groups WHERE group_id=$1 AND active',[body.group]);
+   if(!loan.rows.length)return {error:'Empréstimo não está ativo.'};
+   await q.query('SELECT id FROM mlg_bot.groups WHERE id=$1 FOR UPDATE',[body.group]);
+   const c=await q.query("SELECT * FROM mlg_bot.guest_competitions WHERE group_id=$1 AND status IN ('open','playing') ORDER BY created_at DESC LIMIT 1 FOR UPDATE",[body.group]);
+   if(body.action==='guest-status')return {cup:c.rows[0]??null};
+   if(!c.rows.length)return {error:'Nenhum campeonato em andamento.'};
+   if(typeof body.reason!=='string'||body.reason.trim().length<8||body.reason.length>160)throw Error('Invalid cancellation reason');
+   await q.query("UPDATE mlg_bot.guest_competitions SET status='cancelled' WHERE id=$1",[c.rows[0].id]);
+   await panelNotice(q,body.group,'🚫 '+c.rows[0].name+' cancelado pelo organizador. Motivo: '+body.reason.trim());
+   return {cancelled:true};
+  });
+ }
  else if(body.action==='season-preview'||body.action==='season-reset'){
   if(!groupId.test(body.source)||!validAliases(body.aliases)||body.action==='season-reset'&&(typeof body.messageId!=='string'||body.messageId.length<1||body.messageId.length>150||typeof body.fingerprint!=='string'||body.fingerprint.length>500))throw Error('Invalid season request');
   result=await db.transaction(async q=>{
@@ -155,6 +176,59 @@ Deno.serve(async req=>{
    return {allowed:allowed.rows.some(a=>a.role==='owner'||a.role==='admin'),channelAllowed:allowed.rows.some(a=>a.group_id===body.group&&a.role==='channel'),loanAllowed:loan.rows.length===1,loanGroup:loanGroup.rows.length===1};
   });
  }
+ else if(body.action==='loan-invite'){
+  if(!groupId.test(body.source)||!validAliases(body.aliases)||!['get','grant','revoke'].includes(body.operation)||body.operation!=='get'&&!validAliases(body.targetAliases))throw Error('Invalid invitation');
+  result=await db.transaction(async q=>{
+   const actor=await verifiedSeasonActor(q,body.source,body.aliases);
+   if(!actor)return {error:'Somente ADMs gerais da MLG podem emprestar o bot.'};
+   if(body.operation==='get'){
+    const rows=await q.query(`SELECT u.display_name AS name,l.active,l.claimed_group,w.jid FROM mlg_bot.loan_invitations l
+     JOIN mlg_bot.users u ON u.id=l.manager_id LEFT JOIN LATERAL
+     (SELECT jid FROM mlg_bot.wa_identities WHERE user_id=l.manager_id AND jid LIKE '%@s.whatsapp.net' LIMIT 1) w ON true
+     WHERE l.active ORDER BY l.granted_at DESC LIMIT 30`);
+    return {invitations:rows.rows};
+   }
+   if(body.operation==='revoke'){
+    const found=await q.query('SELECT DISTINCT user_id FROM mlg_bot.wa_identities WHERE jid=ANY($1::text[])',[body.targetAliases]);
+    if(found.rows.length!==1)return {error:'Convite não encontrado.'};
+    const invite=await q.query('SELECT claimed_group FROM mlg_bot.loan_invitations WHERE manager_id=$1 AND active FOR UPDATE',[found.rows[0].user_id]);
+    if(!invite.rows.length)return {error:'Não há convite ativo para este número.'};
+    if(invite.rows[0].claimed_group)return {error:'Este convite já está em uso. Selecione o grupo com !usar e envie !devolverbot.'};
+    await q.query('UPDATE mlg_bot.loan_invitations SET active=false,revoked_at=now() WHERE manager_id=$1',[found.rows[0].user_id]);
+    return {revoked:true};
+   }
+   const manager=await identity(q,body.targetAliases);
+   if((await q.query('SELECT 1 FROM mlg_bot.member_blocks WHERE user_id=$1',[manager])).rows.length)return {error:'Esta pessoa está bloqueada.'};
+   const existing=await q.query('SELECT claimed_group,active FROM mlg_bot.loan_invitations WHERE manager_id=$1 FOR UPDATE',[manager]);
+   if(existing.rows[0]?.active)return {error:existing.rows[0].claimed_group?'Esse número já administra um grupo emprestado.':'Esse número já tem um convite pendente.'};
+   await q.query(`INSERT INTO mlg_bot.loan_invitations(manager_id,granted_by) VALUES($1,$2)
+    ON CONFLICT(manager_id) DO UPDATE SET granted_by=excluded.granted_by,active=true,granted_at=now(),claimed_group=NULL,revoked_at=NULL`,[manager,actor]);
+   await q.query("INSERT INTO mlg_bot.control_audit(action,user_id) VALUES('loan-invited',$1)",[manager]);
+   return {invited:true};
+  });
+ }
+ else if(body.action==='loan-claim'){
+  if(!groupId.test(body.group)||!validAliases(body.aliases))throw Error('Invalid claim');
+  result=await db.transaction(async q=>{
+   const manager=await identity(q,body.aliases,body.name);
+   const invitation=await q.query('SELECT claimed_group FROM mlg_bot.loan_invitations WHERE manager_id=$1 AND active FOR UPDATE',[manager]);
+   if(!invitation.rows.length)return {error:'Não há convite ativo para este administrador. Peça a um ADM geral para enviar !emprestar telefone.'};
+   if(invitation.rows[0].claimed_group&&invitation.rows[0].claimed_group!==body.group)return {error:'Este empréstimo já pertence a outro grupo.'};
+   const existing=await q.query('SELECT id,authorized FROM mlg_bot.groups WHERE id=$1 FOR UPDATE',[body.group]);
+   if(existing.rows.length&&!invitation.rows[0].claimed_group)return {error:'O grupo já possui configuração da MLG. Use um grupo novo para o empréstimo.'};
+   if(!existing.rows.length){
+    await q.query("INSERT INTO mlg_bot.groups(id,authorized,admins_configured,competition_name,team_kind) VALUES($1,true,true,'Campeonato convidado','clube')",[body.group]);
+    for(const team of minicampClubs)await q.query('INSERT INTO mlg_bot.club_pool(group_id,name) VALUES($1,$2) ON CONFLICT DO NOTHING',[body.group,team]);
+   }
+   if(!invitation.rows[0].claimed_group){
+    await q.query('INSERT INTO mlg_bot.loan_groups(group_id,manager_id,granted_by) SELECT $1,manager_id,granted_by FROM mlg_bot.loan_invitations WHERE manager_id=$2',[body.group,manager]);
+    await q.query('UPDATE mlg_bot.loan_invitations SET claimed_group=$2 WHERE manager_id=$1',[manager,body.group]);
+    await q.query("INSERT INTO mlg_bot.admins(group_id,user_id,role) VALUES($1,$2,'channel') ON CONFLICT DO NOTHING",[body.group,manager]);
+    await q.query("INSERT INTO mlg_bot.control_audit(action,group_id,user_id) VALUES('loan-claimed',$1,$2)",[body.group,manager]);
+   }
+   return {claimed:true};
+  });
+ }
  else if(body.action==='loan-manage'){
   if(!groupId.test(body.source)||!groupId.test(body.group)||!validAliases(body.aliases)||!['get','grant','revoke'].includes(body.operation)||body.operation==='grant'&&!validAliases(body.targetAliases))throw Error('Invalid loan request');
   result=await db.transaction(async q=>{
@@ -165,11 +239,12 @@ Deno.serve(async req=>{
    const existing=await q.query(`SELECT l.manager_id,l.active,u.display_name AS name FROM mlg_bot.loan_groups l
     JOIN mlg_bot.users u ON u.id=l.manager_id WHERE l.group_id=$1`,[body.group]);
    if(body.operation==='get')return {loan:existing.rows[0]??null};
-   const live=await q.query("SELECT 1 FROM mlg_bot.cups WHERE group_id=$1 AND status IN ('open','playing') LIMIT 1",[body.group]);
+   const live=await q.query("SELECT 1 FROM mlg_bot.cups WHERE group_id=$1 AND status IN ('open','playing') UNION SELECT 1 FROM mlg_bot.guest_competitions WHERE group_id=$1 AND status IN ('open','playing') LIMIT 1",[body.group]);
    if(live.rows.length)return {error:'Encerre ou cancele a Copa ativa neste grupo antes de alterar o empréstimo.'};
    if(body.operation==='revoke'){
     if(!existing.rows[0]?.active)return {error:'Não há empréstimo ativo neste grupo.'};
     await q.query('UPDATE mlg_bot.loan_groups SET active=false,revoked_at=now() WHERE group_id=$1',[body.group]);
+    await q.query('UPDATE mlg_bot.loan_invitations SET active=false,revoked_at=now() WHERE claimed_group=$1',[body.group]);
     await q.query("DELETE FROM mlg_bot.admins WHERE group_id=$1 AND user_id=$2 AND role='channel'",[body.group,existing.rows[0].manager_id]);
     await q.query("INSERT INTO mlg_bot.control_audit(action,group_id,user_id) VALUES('loan-revoked',$1,$2)",[body.group,actor]);
     return {revoked:true};
@@ -628,6 +703,8 @@ Deno.serve(async req=>{
   await processInbox();
   await autoConfirmDue(db);
   await archiveLoanCups();
+  await guestAutoConfirm(db);
+  await guestArchive(db);
   result=await db.transaction(async q=>{
    const rows=await q.query("SELECT id FROM mlg_bot.outbox WHERE (status='pending' AND available_at<=now()) OR (status='sending' AND lease_until<now()) ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 3");
    const messages=[];
@@ -650,6 +727,13 @@ Deno.serve(async req=>{
       WHERE cup.group_id=$1 AND game.code=ANY($2::bigint[]) AND w.jid LIKE '%@s.whatsapp.net'
       ORDER BY w.user_id,w.jid`,[m.group_id,codes]);
      mentions=found.rows.map(x=>x.jid).slice(0,32);
+    }
+    if(m.body.startsWith('🎲 CONFRONTOS · ')){
+     const found=await q.query(`SELECT DISTINCT ON(w.user_id) w.jid FROM mlg_bot.guest_players p
+      JOIN mlg_bot.guest_competitions c ON c.id=p.cup_id JOIN mlg_bot.wa_identities w ON w.user_id=p.user_id
+      WHERE c.group_id=$1 AND c.status='playing' AND w.jid LIKE '%@s.whatsapp.net'
+      ORDER BY w.user_id,w.jid LIMIT 32`,[m.group_id]);
+     mentions=found.rows.map(x=>x.jid);
     }
     messages.push({...m,mentions,lease});
    }
