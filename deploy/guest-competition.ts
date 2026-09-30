@@ -144,9 +144,9 @@ export async function guestEvent(db,request,identity){
   const matches=cup?(await q.query('SELECT * FROM mlg_bot.guest_matches WHERE cup_id=$1 ORDER BY round,position,leg',[cup.id])).rows:[];
   const people=names(players),admin=user===loan.manager_id||(await q.query("SELECT 1 FROM mlg_bot.admins WHERE user_id=$1 AND role IN ('owner','admin') LIMIT 1",[user])).rows.length>0;
   const [command,...args]=text.trim().split(/\s+/),cmd=command.toLocaleLowerCase('pt-BR');
-  const n=Number(args[0]),selected=matches.find(m=>m.code===n);
+  const n=Number(args[0]),selected=matches.find(m=>String(m.code)===String(n));
   let reply='Comando não reconhecido. Use !ajuda.';
-  if(cmd==='!ajuda'||cmd==='!comandos')reply='🏆 '+(cup?.name??'CAMPEONATO')+'\n!entrar · !sair (antes do sorteio)\n!copa · !meujogo · !tabela · !classificacao · !proximafase\n!resultado CÓDIGO MxV (mandante primeiro)\n!confirmar CÓDIGO MxV · !cancelar CÓDIGO · !contestar CÓDIGO\n!campeoes · !historico\nADM: !painel · !forcarresultado CÓDIGO MxV motivo';
+  if(cmd==='!ajuda'||cmd==='!comandos')reply='🏆 '+(cup?.name??'CAMPEONATO')+'\n!entrar · !sair (antes do sorteio)\n!copa · !meujogo · !jogo CÓDIGO · !tabela · !classificacao · !proximafase\n!resultado CÓDIGO MxV (mandante primeiro)\n!confirmar CÓDIGO MxV · !cancelar CÓDIGO · !contestar CÓDIGO\n!campeoes · !historico\nADM: !painel · !forcarresultado CÓDIGO MxV motivo';
   else if(cmd==='!campeoes'||cmd==='!campeões'||cmd==='!historico'||cmd==='!histórico'){
    const saved=(await q.query('SELECT competition_name,champion_name,edition FROM mlg_bot.loan_champions WHERE group_id=$1 ORDER BY edition DESC LIMIT 15',[group])).rows;
    const current=(await q.query("SELECT c.name,p.display_name FROM mlg_bot.guest_competitions c JOIN mlg_bot.guest_players p ON p.cup_id=c.id AND p.user_id=c.champion_id WHERE c.group_id=$1 AND c.status='completed' ORDER BY c.created_at DESC LIMIT 5",[group])).rows;
@@ -177,6 +177,8 @@ export async function guestEvent(db,request,identity){
    if(cup.status!=='open')reply='Após o sorteio, peça ao organizador para resolver a desistência.';
    else if(!players.some(p=>p.user_id===user))reply='Você não está inscrito.';
    else{await q.query('DELETE FROM mlg_bot.guest_players WHERE cup_id=$1 AND user_id=$2',[cup.id,user]);reply='✅ Sua vaga foi liberada.';}
+  }else if(cmd==='!jogo'){
+   reply=selected?'⚔️ '+cup.name+'\n'+card(selected,people):'Partida não encontrada. Confira o código com !copa ou !meujogo.';
   }else if(['!copa','!tabela','!classificacao','!classificação','!proximafase','!meujogo'].includes(cmd)){
    if(cup.status==='open')reply='🏆 '+cup.name+' · '+players.length+'/'+cup.size+' inscritos. Envie !entrar.';
    else if(cmd==='!tabela'||cmd==='!classificacao'||cmd==='!classificação')reply=cup.mode==='liga'?'📊 CLASSIFICAÇÃO · '+cup.name+'\n'+standingsText(guestStandings(players,matches.filter(m=>m.leg!==3))):'Esta Copa usa mata-mata. Veja !copa.';
@@ -238,12 +240,13 @@ export async function guestAutoConfirm(db){
  return db.transaction(async q=>{
   const row=(await q.query(`SELECT g.group_id,g.id AS cup_id,m.code FROM mlg_bot.guest_matches m
    JOIN mlg_bot.guest_competitions g ON g.id=m.cup_id JOIN mlg_bot.loan_groups l ON l.group_id=g.group_id AND l.active
-   WHERE m.status='pending' AND m.reported_at<$1 ORDER BY m.reported_at LIMIT 1`,[Date.now()-300000])).rows[0];
+   WHERE g.status='playing' AND m.status='pending' AND m.reported_at<$1 ORDER BY m.reported_at LIMIT 1`,[Date.now()-300000])).rows[0];
   if(!row)return {confirmed:false};
   await q.query('SELECT id FROM mlg_bot.groups WHERE id=$1 FOR UPDATE',[row.group_id]);
   const match=(await q.query('SELECT * FROM mlg_bot.guest_matches WHERE code=$1 FOR UPDATE',[row.code])).rows[0];
   if(match.status!=='pending'||match.reported_at>Date.now()-300000)return {confirmed:false};
   const cup=(await q.query('SELECT * FROM mlg_bot.guest_competitions WHERE id=$1',[row.cup_id])).rows[0];
+  if(cup.status!=='playing')return {confirmed:false};
   const players=(await q.query('SELECT * FROM mlg_bot.guest_players WHERE cup_id=$1 ORDER BY position',[row.cup_id])).rows;
   await q.query("UPDATE mlg_bot.guest_matches SET status='confirmed',confirmed_by=author WHERE code=$1",[row.code]);
   await audit(q,cup,match,match.author,'auto-confirm',score(match),score(match));
