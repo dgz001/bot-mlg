@@ -13,11 +13,12 @@ CONFIGURE NO SEU GRUPO, NÃO NESTE PRIVADO
 1. !novacopa — ativa o empréstimo e começa o preparo.
 2. !nome Nome do campeonato
 3. Escolha !modalidade liga (pontos corridos) ou !modalidade copa (mata-mata).
-4. !vagas N — liga: 2 a 16 jogadores; copa: 4, 8, 16 ou 32.
+4. !vagas N — liga: 2 a 16 jogadores; copa: 4, 8, 16 ou 32. As fases do mata-mata seguem a quantidade de vagas.
 5. !jogos 1 — jogo único; !jogos 2 — ida e volta.
-6. !equipes Time A | Time B | Time C | ... — pelo menos um time diferente por vaga. Os times serão sorteados.
-7. !revisar — confira nome, modalidade, vagas, jogos e times.
-8. !abrircopa — depois da revisão abre as inscrições. Cada jogador envia !entrar; ao lotar, o bot sorteia os confrontos.
+6. !equipes Time A | Time B | Time C | ... — ou um time por linha. Envie pelo menos um time diferente por vaga; os times serão sorteados.
+7. !imagemgrupo — se quiser usar a foto atual do seu grupo nos anúncios. !imagemtexto deixa os anúncios só em texto. As artes MLG são exclusivas da comunidade MLG.
+8. !revisar — confira nome, modalidade, vagas, jogos e times.
+9. !abrircopa — depois da revisão abre as inscrições. Cada jogador envia !entrar; ao lotar, o bot sorteia os confrontos.
 
 DURANTE O CAMPEONATO
 !copa — jogos e códigos; !meujogo — sua próxima partida.
