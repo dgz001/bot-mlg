@@ -64,6 +64,19 @@ async function connect(){
  const body=extractMessageContent(message.message);const text=body?.conversation??body?.extendedTextMessage?.text??'';const context=body?.extendedTextMessage?.contextInfo;
  const receivedAt=Number(message.messageTimestamp)*1000;
  const eventAt=Number.isSafeInteger(receivedAt)&&receivedAt>1577836800000&&receivedAt<Date.now()+60000?receivedAt:Date.now();
+ if(!auth.data.groups.includes(group)&&/^!novacopa\s*$/i.test(text.trim())&&cupApi&&message.key.participant){
+  try{
+   const metadata=await current.groupMetadata(group);
+   const aliases=await cupAliases(message.key.participant,current);
+   const verified=await Promise.all(metadata.participants.filter(p=>Boolean(p.admin)).map(p=>cupAliases(p.id,current).catch(():string[]=>[])));
+   if(!verified.some(a=>a.some(j=>aliases.includes(j))))return;
+   const result=await cupApi<{claimed?:boolean;error?:string}>({action:'loan-claim',group,aliases,name:message.pushName??'Organizador'});
+   if(result.error)return;
+   if(!result.claimed)return;
+   auth.data.groups.push(group);auth.data.loanGroups??=[];if(!auth.data.loanGroups.includes(group))auth.data.loanGroups.push(group);auth.data.groupModes??={};auth.data.groupModes[group]='minicamp';
+   auth.data.controlRooms??={};auth.data.controlRooms[group]={targetId:group};await auth.save();
+  }catch{log('LOAN_CLAIM_RETRY');await current.sendMessage(group,{text:'⚠️ Não consegui ativar o empréstimo agora. Tente !novacopa novamente em instantes.'});return;}
+ }
  if(cupApi&&text.trim().startsWith('!')&&message.key.participant&&auth.data.groups.includes(group)){
   const checked=await cupApi<{blocked:boolean}>({action:'block-check',aliases:await cupAliases(message.key.participant,current)});
   if(checked.blocked)return;
@@ -97,7 +110,7 @@ async function connect(){
  const seasonCommand=/^!(?:reiniciartemporada|reiniciar\s+temporada|confirmartemporada|confirmar\s+temporada|cancelartemporada|cancelar\s+temporada)(?:\s|$)/i.test(text.trim());
  const centralOnly=seasonCommand||/^!(?:painel|grupos|usar|central|pendencias|equipes|confirmartimes|adicionar|remover|vagas|revisar|concluir|descartar|adms|daradm|tiraradm|emprestimo|emprestar|devolverbot|inscritosadm|inscrever|retirar|trocar|confirmarelenco|cancelarelenco|bloquear|desbloquear|bloqueados|refazersorteio|confirmarsorteio|cancelarsorteio)(?:\s|$)/i.test(text.trim());
  const outsideCup=!inChannel(group,'minicamp')&&/^!(?:modelos|ativarmodelo|sorteio|novacopa|cancelarcopa|anularcopa|nome|categoria|times|abrircopa|forcarresultado|resolver|deletar|vistoria)(?:\s|$)/i.test(text.trim());
- const loanSetup=/^!(?:novacopa|nome|categoria|times|abrircopa|cancelarcopa|modelos)(?:\s|$)/i.test(text.trim());
+ const loanSetup=/^!(?:novacopa|nome|modalidade|jogos|times|abrircopa|cancelarcopa|modelos)(?:\s|$)/i.test(text.trim());
  if(auth.data.groups.includes(group)&&(mode==='controle'||centralOnly||outsideCup||loanSetup)){
   if(!text.trim().startsWith('!')||!cupApi||!message.key.participant)return;
   if(text.length>16000){await current.sendMessage(group,{text:'⚠️ Mensagem muito longa. Envie os times em mensagens menores com !adicionar.'});return;}
@@ -120,11 +133,11 @@ async function connect(){
    if(permission.allowed||permission.loanAllowed&&inChannel(group,'minicamp')){
     const loanMode=!permission.allowed;
     if(loanMode&&!enabled('minicamp'))response='⏸️ O bot está pausado. Aguarde um ADM geral da MLG.';
-    else if(loanMode){
+    else if(loanMode||permission.loanGroup&&/^(?:!(?:painel|central|pendencias|novacopa|nome|modalidade|jogos|equipes|adicionar|remover|times|vagas|revisar|abrircopa|concluir|descartar|cancelarcopa)(?:\s|$))/i.test(text.trim())){
      auth.data.controlRooms??={};const room=auth.data.controlRooms[group]??={};auth.data.controlRooms[group]=room;
      room.targetId=group;
      const target={id:group,name:(await current.groupMetadata(group)).subject};
-     const permitted=new Set(['competition-get','templates-list','cup-open','cup-cancel']);
+     const permitted=new Set(['guest-status','guest-open','guest-cancel']);
      const api=async(payload:Record<string,unknown>)=>{
       if(!permitted.has(String(payload.action))||payload.group!==group)return {error:'Operação reservada aos ADMs gerais da MLG.'};
       return cupApi(payload);
@@ -164,7 +177,8 @@ async function connect(){
       }
       return null;
      };
-     response=await adminControl(text,room,targets,api,()=>auth.save(),Date.now(),{controlGroup:group,aliases,messageId:id,resolveMember,resolveGroupAdmin},auth.data.controlRooms);
+     const sendInvitation=async(phone:string,guide:string)=>{await current.sendMessage(phone+'@s.whatsapp.net',{text:guide});};
+     response=await adminControl(text,room,targets,api,()=>auth.save(),Date.now(),{controlGroup:group,aliases,messageId:id,resolveMember,resolveGroupAdmin,sendInvitation},auth.data.controlRooms);
      if(response.startsWith('✅ TEMPORADA REINICIADA')){
       auth.data.cupInbox=[];auth.data.scoreReactions=[];
       for(const workspace of Object.values(auth.data.controlRooms)){delete workspace.draft;delete workspace.staged;delete workspace.draw;delete workspace.roster;delete workspace.seasonReset;}
@@ -180,6 +194,13 @@ async function connect(){
   return;
  }
  if(!enabled())return;
+ if(auth.data.loanGroups?.includes(group)&&inChannel(group,'minicamp')&&cupApi&&message.key.participant&&/^!(?:ajuda|comandos|entrar|sair|copa|tabela|classificacao|classificação|proximafase|meujogo|resultado|confirmar|cancelar|contestar|forcarresultado|campeoes|campeões|historico|histórico)(?:\s|$)/i.test(text.trim())){
+  const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
+  const aliases=await cupAliases(message.key.participant,current);
+  const result=await cupApi<{accepted?:boolean}>({action:'guest-event',group,aliases,messageId:id,text:text.trim(),name:message.pushName??'Participante'});
+  if(result.accepted){auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);await auth.save();void cupTick();}
+  return;
+ }
  const question=inChannel(group,'minicamp')&&enabled('minicamp')&&cupApi&&message.key.participant?cupQuestion(text):null;
  if(question){
   const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
@@ -322,7 +343,7 @@ async function cupTick(){
     const participants=requested.length?(await current.groupMetadata(m.group_id)).participants:[];
     const aliases=await Promise.all(participants.map(p=>cupAliases(p.id,current).catch(():string[]=>[])));
     const mentions=requested.filter(j=>aliases.some(groupMember=>groupMember.includes(j)));
-    const body=mentions.length?m.body+'\n\n📣 '+(m.body.startsWith('🎲 SORTEIO · ')?'@todos · ':'')+mentions.map(j=>'@'+j.split('@')[0]).join(' '):m.body;
+    const body=mentions.length?m.body+'\n\n📣 '+(m.body.startsWith('🎲 SORTEIO · ')||m.body.startsWith('🎲 CONFRONTOS · ')?'@todos · ':'')+mentions.map(j=>'@'+j.split('@')[0]).join(' '):m.body;
     const card=cupMediaFor(m.body);
     if(card){
      try{
