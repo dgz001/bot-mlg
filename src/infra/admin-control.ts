@@ -36,6 +36,12 @@ Preserva jogadores, nomes, contas, ADMs e modelos. Apaga Copas, partidas e estat
 !daradm telefone | canal — ADM somente deste canal (ex.: Mini Camp)
 !tiraradm telefone — retirar acesso neste canal
 
+🤝 EMPRÉSTIMO POR GRUPO
+Autorize o grupo convidado no painel e selecione-o com !usar número.
+!emprestimo — consultar responsável
+!emprestar telefone — conceder a um administrador do grupo
+!devolverbot — retirar o acesso após encerrar a Copa
+
 🏆 PREPARAR NOVA EDIÇÃO
 !novacopa — iniciar a configuração
 !nome / !categoria — definir identidade e tipo
@@ -86,8 +92,13 @@ Use !grupos e !usar para escolher o destino ao escrever de outro canal.
 📌 ADMs cadastrados podem usar esta central em qualquer grupo autorizado do bot. Use !grupos e !usar para escolher a Copa; mudanças ficam registradas.`;
 function requireSuccess<T>(value:any):T {if(value?.error)throw Error(value.error);return value as T;}
 
-export async function adminControl(text:string,room:ControlWorkspace,targets:ControlTarget[],api:Api,save:()=>Promise<void>,now=Date.now(),actor?:{controlGroup:string;aliases:string[];messageId?:string;resolveMember?:(group:string,phone:string)=>Promise<string[]|null>},workspaces?:Record<string,ControlWorkspace>):Promise<string>{
+export async function adminControl(text:string,room:ControlWorkspace,targets:ControlTarget[],api:Api,save:()=>Promise<void>,now=Date.now(),actor?:{controlGroup:string;aliases:string[];messageId?:string;resolveMember?:(group:string,phone:string)=>Promise<string[]|null>;resolveGroupAdmin?:(group:string,phone:string)=>Promise<string[]|null>},workspaces?:Record<string,ControlWorkspace>,loanMode=false):Promise<string>{
  const trimmed=text.trim();const [command='']=trimmed.split(/\s+/,1);const arg=trimmed.slice(command.length).trim();const cmd=command.toLocaleLowerCase('pt-BR');
+ if(loanMode){
+  const allowed=new Set(['!ajuda','!comandos','!painel','!central','!pendencias','!novacopa','!nome','!categoria','!equipes','!confirmartimes','!adicionar','!remover','!times','!vagas','!revisar','!concluir','!abrircopa','!descartar','!cancelarcopa','!modelos']);
+  if(!allowed.has(cmd))return '🔒 Este comando é reservado aos ADMs gerais da MLG. Use !painel para administrar apenas este grupo.';
+  if(['!ajuda','!comandos','!painel'].includes(cmd))return '🤝 ORGANIZADOR DO GRUPO\n!novacopa — preparar campeonato\n!nome Nome · !categoria clubes/seleções/misto\n!equipes Time A | Time B | ... · !vagas 4/8/16/32\n!revisar · !abrircopa — abrir inscrições\n!central · !pendencias · !modelos\n!cancelarcopa motivo — encerrar uma edição em andamento\nJogadores: !meujogo mostra o código; !resultado CÓDIGO MxV e !confirmar CÓDIGO MxV registram placar, sempre mandante primeiro. ADM: !forcarresultado CÓDIGO MxV motivo corrige no grupo. !campeoes mostra os campeões anteriores.';
+ }
  if(cmd==='!ajuda'||cmd==='!comandos'||cmd==='!painel')return menu;
  if(cmd==='!reiniciartemporada'||cmd==='!reiniciar'&&arg==='temporada'){
   if(!actor?.aliases?.length||!actor.messageId)return 'Envie o comando como ADM verificado em um grupo autorizado.';
@@ -119,6 +130,23 @@ export async function adminControl(text:string,room:ControlWorkspace,targets:Con
  const target=targets.find(g=>g.id===room.targetId);
  if(!target)return 'Escolha primeiro o destino: !grupos e !usar número. Apenas grupos de Copa autorizados aparecem.';
  const group=target.id;
+ if(['!emprestimo','!emprestar','!devolverbot'].includes(cmd)){
+  if(!actor?.aliases.length)return 'Só um ADM geral verificado pode administrar empréstimos.';
+  const request={action:'loan-manage',source:actor.controlGroup,group,aliases:actor.aliases};
+  if(cmd==='!emprestimo'){
+   const result=await api({...request,operation:'get'});
+   return result.error?'⚠️ '+result.error:result.loan?`🤝 ${target.name}: ${result.loan.name} · ${result.loan.active?'ativo':'encerrado'}.`:'🤝 Nenhum empréstimo neste grupo. Use !emprestar telefone.';
+  }
+  if(cmd==='!devolverbot'){
+   const result=await api({...request,operation:'revoke'});
+   return result.error?'⚠️ '+result.error:'✅ Empréstimo encerrado em '+target.name+'. Campeões e histórico resumido permanecem disponíveis.';
+  }
+  if(!/^\d{10,15}$/.test(arg))return 'Use !emprestar telefone com DDI e DDD. A pessoa deve administrar o grupo selecionado no WhatsApp.';
+  const targetAliases=await actor.resolveGroupAdmin?.(group,arg);
+  if(!targetAliases?.length)return '⚠️ A pessoa precisa estar neste grupo como administrador do WhatsApp. Confira o telefone com DDI e DDD.';
+  const result=await api({...request,operation:'grant',targetAliases});
+  return result.error?'⚠️ '+result.error:'✅ Bot emprestado para o administrador em '+target.name+'. Ele pode enviar !painel no próprio grupo para configurar a Copa. O acesso vale apenas neste grupo.';
+ }
  if(['!adms','!daradm','!tiraradm'].includes(cmd)){
   if(!actor?.aliases?.length)return 'Apenas um ADM geral verificado pode gerenciar acessos.';
   const request={action:'admin-access',source:actor.controlGroup,group,aliases:actor.aliases};

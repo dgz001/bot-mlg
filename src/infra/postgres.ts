@@ -240,7 +240,7 @@ export async function processEvent(database: Database, event: Event, env: Enviro
   return database.transaction(async q => {
     const groups = await q.query<{ id: string; authorized: boolean; competitionName:string; teamKind:"clube"|"seleção"|"misto"; formatSize:number|null }>('SELECT id,authorized,competition_name AS "competitionName",team_kind AS "teamKind",format_size AS "formatSize" FROM mlg_bot.groups WHERE id=$1 FOR UPDATE', [event.groupId]);
     if (!groups.rows[0]?.authorized) throw new Error('Grupo não autorizado.');
-    const season=await q.query<{startedAt:number|null}>("SELECT max(extract(epoch FROM at)*1000)::float8 AS \"startedAt\" FROM mlg_bot.control_audit WHERE action='season-reset'");
+    const season=await q.query<{startedAt:number|null}>("SELECT max(extract(epoch FROM at)*1000)::float8 AS \"startedAt\" FROM mlg_bot.control_audit WHERE action='season-reset' AND NOT EXISTS (SELECT 1 FROM mlg_bot.loan_groups WHERE group_id=$1)",[event.groupId]);
     if(season.rows[0]?.startedAt&&event.at<season.rows[0].startedAt)return {duplicate:true,notices:[]};
     await q.query('INSERT INTO mlg_bot.users(id,display_name) VALUES ($1,$2) ON CONFLICT(id) DO NOTHING', [event.userId,event.name.slice(0,60)]);
     const claimed = await q.query<{ message_id: string }>(`INSERT INTO mlg_bot.processed_messages(group_id,user_id,message_id,received_at)
@@ -256,7 +256,8 @@ export async function processEvent(database: Database, event: Event, env: Enviro
     const state = emptyState(); state.nextCode = Number(counter.rows[0].next);
     const admins = await q.query<{ id: string }>("SELECT DISTINCT a.user_id AS id FROM mlg_bot.admins a JOIN mlg_bot.groups g ON g.id=a.group_id WHERE g.authorized AND g.admins_configured AND (a.role IN ('owner','admin') OR a.role='channel' AND a.group_id=$1)",[event.groupId]);
     const clubs = await q.query<{ name: string }>('SELECT name FROM mlg_bot.club_pool WHERE group_id=$1 ORDER BY name', [event.groupId]);
-    state.groups[event.groupId] = { authorized: true, admins: admins.rows.map(r => r.id), clubs: clubs.rows.map(r => r.name), competitionName:groups.rows[0]!.competitionName,teamKind:groups.rows[0]!.teamKind,formatSize:groups.rows[0]!.formatSize };
+    const archive=await q.query<{total:number}>('SELECT count(*)::int AS total FROM mlg_bot.loan_champions WHERE group_id=$1',[event.groupId]);
+    state.groups[event.groupId] = { authorized: true, admins: admins.rows.map(r => r.id), clubs: clubs.rows.map(r => r.name), competitionName:groups.rows[0]!.competitionName,teamKind:groups.rows[0]!.teamKind,formatSize:groups.rows[0]!.formatSize,editionOffset:archive.rows[0]!.total };
     const drafts = await q.query<{ ownerId: string; expiresAt: number; name:string|null; teamKind:'clube'|'seleção'|'misto'|null; size:number|null; legs:1|2|null }>('SELECT owner_id AS "ownerId",expires_at::float8 AS "expiresAt",name,team_kind AS "teamKind",cup_size AS size,legs FROM mlg_bot.command_drafts WHERE group_id=$1', [event.groupId]);
     if (drafts.rows[0]) {const {name,teamKind,size,legs,...draft}=drafts.rows[0];state.drafts[event.groupId]={...draft,name:name??undefined,teamKind:teamKind??undefined,size:size??undefined,legs:legs??undefined};}
     const cups = await q.query<Omit<Cup,'participants'|'matches'>>(`SELECT id,group_id AS "groupId",created_by AS "createdBy",created_at::float8 AS "createdAt",

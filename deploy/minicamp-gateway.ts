@@ -46,15 +46,15 @@ async function processInbox(){
  }
 }
 async function seasonState(q){
- const r=await q.query(`SELECT
-  (SELECT count(*)::int FROM mlg_bot.cups) AS cups,
-  (SELECT count(*)::int FROM mlg_bot.cups WHERE status IN ('open','playing')) AS active,
-  (SELECT count(*)::int FROM mlg_bot.cup_participants) AS participants,
-  (SELECT count(*)::int FROM mlg_bot.matches) AS matches,
-  (SELECT count(*)::int FROM mlg_bot.match_results) AS results,
-  (SELECT count(*)::int FROM mlg_bot.match_results WHERE status='confirmed') AS confirmed,
-  (SELECT count(*)::int FROM mlg_bot.command_drafts) AS drafts,
-  (SELECT coalesce(max(id),0)::text FROM mlg_bot.audit_logs) AS last_audit,
+ const r=await q.query(`WITH ml_cups AS (SELECT id FROM mlg_bot.cups WHERE group_id NOT IN (SELECT group_id FROM mlg_bot.loan_groups)) SELECT
+  (SELECT count(*)::int FROM ml_cups) AS cups,
+  (SELECT count(*)::int FROM mlg_bot.cups c JOIN ml_cups x ON x.id=c.id WHERE c.status IN ('open','playing')) AS active,
+  (SELECT count(*)::int FROM mlg_bot.cup_participants p JOIN ml_cups x ON x.id=p.cup_id) AS participants,
+  (SELECT count(*)::int FROM mlg_bot.matches m JOIN ml_cups x ON x.id=m.cup_id) AS matches,
+  (SELECT count(*)::int FROM mlg_bot.match_results r JOIN mlg_bot.matches m ON m.code=r.match_code JOIN ml_cups x ON x.id=m.cup_id) AS results,
+  (SELECT count(*)::int FROM mlg_bot.match_results r JOIN mlg_bot.matches m ON m.code=r.match_code JOIN ml_cups x ON x.id=m.cup_id WHERE r.status='confirmed') AS confirmed,
+  (SELECT count(*)::int FROM mlg_bot.command_drafts WHERE group_id NOT IN (SELECT group_id FROM mlg_bot.loan_groups)) AS drafts,
+  (SELECT coalesce(max(id),0)::text FROM mlg_bot.audit_logs WHERE group_id NOT IN (SELECT group_id FROM mlg_bot.loan_groups)) AS last_audit,
   (SELECT coalesce(max(id),0)::text FROM mlg_bot.control_audit WHERE action='season-reset') AS last_reset`);
  const state=r.rows[0];return {...state,season:1+Number(await q.query("SELECT count(*)::int AS total FROM mlg_bot.control_audit WHERE action='season-reset'").then(x=>x.rows[0].total)),fingerprint:JSON.stringify(state)};
 }
@@ -64,6 +64,37 @@ async function verifiedSeasonActor(q,source,aliases){
   JOIN mlg_bot.groups source ON source.id=$2 WHERE a.user_id=$1 AND own.authorized AND own.admins_configured
   AND source.authorized AND a.role IN ('owner','admin') AND NOT EXISTS(SELECT 1 FROM mlg_bot.member_blocks b WHERE b.user_id=a.user_id) LIMIT 1`,[actor,source]);
  return permission.rows.length?actor:null;
+}
+async function archiveLoanCups(){
+ return db.transaction(async q=>{
+  const group=await q.query(`SELECT g.id FROM mlg_bot.groups g JOIN mlg_bot.loan_groups l ON l.group_id=g.id
+   WHERE EXISTS(SELECT 1 FROM mlg_bot.cups c WHERE c.group_id=g.id AND (c.status='cancelled' OR c.status='completed' AND c.completed_at<$1))
+   ORDER BY g.id FOR UPDATE OF g SKIP LOCKED LIMIT 1`,[Date.now()-600_000]);
+  if(!group.rows.length)return;
+  const id=group.rows[0].id;
+  // Wait until the champion announcement and all earlier messages have been
+  // delivered. The ledger is committed together with deleting the details.
+  const unsent=await q.query("SELECT 1 FROM mlg_bot.outbox WHERE group_id=$1 AND status<>'sent' LIMIT 1",[id]);
+  if(unsent.rows.length)return;
+  const cups=await q.query("SELECT id,status,champion,competition_name,completed_at FROM mlg_bot.cups WHERE group_id=$1 AND (status='cancelled' OR status='completed' AND completed_at<$2) ORDER BY created_at,id FOR UPDATE LIMIT 3",[id,Date.now()-600_000]);
+  for(const cup of cups.rows){
+   if(cup.status==='completed'){
+    const winner=await q.query('SELECT display_name FROM mlg_bot.cup_participants WHERE cup_id=$1 AND user_id=$2',[cup.id,cup.champion]);
+    if(!winner.rows.length)throw Error('Missing loan champion');
+    const number=await q.query('SELECT count(*)::int+1 AS edition FROM mlg_bot.loan_champions WHERE group_id=$1',[id]);
+    await q.query(`INSERT INTO mlg_bot.loan_champions(cup_id,group_id,champion_id,champion_name,competition_name,edition,completed_at)
+     VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(cup_id) DO NOTHING`,[cup.id,id,cup.champion,winner.rows[0].display_name,cup.competition_name,number.rows[0].edition,cup.completed_at]);
+   }
+   await q.query('DELETE FROM mlg_bot.audit_logs WHERE cup_id=$1',[cup.id]);
+   await q.query('DELETE FROM mlg_bot.cup_checkpoints WHERE cup_id=$1',[cup.id]);
+   await q.query('DELETE FROM mlg_bot.match_results WHERE match_code IN (SELECT code FROM mlg_bot.matches WHERE cup_id=$1)',[cup.id]);
+   await q.query('DELETE FROM mlg_bot.matches WHERE cup_id=$1',[cup.id]);
+   await q.query("UPDATE mlg_bot.cups SET status='cancelled',champion=NULL,completed_at=NULL WHERE id=$1 AND status='completed'",[cup.id]);
+   await q.query('DELETE FROM mlg_bot.cup_participants WHERE cup_id=$1',[cup.id]);
+   await q.query('DELETE FROM mlg_bot.cups WHERE id=$1',[cup.id]);
+   await q.query("INSERT INTO mlg_bot.control_audit(action,group_id) VALUES('loan-archived',$1)",[id]);
+  }
+ });
 }
 Deno.serve(async req=>{
  const header=req.headers.get('authorization')??'';
@@ -79,25 +110,25 @@ Deno.serve(async req=>{
   result=await db.transaction(async q=>{
    const actor=await verifiedSeasonActor(q,body.source,body.aliases);
    if(!actor)return {error:'Somente ADMs cadastrados em grupos autorizados podem reiniciar a temporada.'};
-   if(body.action==='season-reset')await q.query('SELECT id FROM mlg_bot.groups WHERE authorized ORDER BY id FOR UPDATE');
+   if(body.action==='season-reset')await q.query('SELECT id FROM mlg_bot.groups WHERE authorized AND id NOT IN (SELECT group_id FROM mlg_bot.loan_groups) ORDER BY id FOR UPDATE');
    const current=await seasonState(q);
    if(body.action==='season-preview')return current;
    if(current.active)return {error:'Há Copa em andamento. Encerre ou cancele as edições antes de reiniciar.'};
    if(current.fingerprint!==body.fingerprint)return {error:'Os dados da temporada mudaram depois da revisão.'};
    // Delete dependent rows in one transaction; profiles, identities, groups,
    // moderation and tournament templates remain available for the new season.
-   await q.query('DELETE FROM mlg_bot.outbox');
-   await q.query('DELETE FROM mlg_bot.inbox');
-   await q.query('DELETE FROM mlg_bot.processed_messages');
-   await q.query('DELETE FROM mlg_bot.command_rate');
-   await q.query('DELETE FROM mlg_bot.command_drafts');
-   await q.query('DELETE FROM mlg_bot.cup_checkpoints');
-   await q.query('DELETE FROM mlg_bot.audit_logs');
-   await q.query('DELETE FROM mlg_bot.match_results');
-   await q.query('DELETE FROM mlg_bot.matches');
-   await q.query("UPDATE mlg_bot.cups SET status='cancelled',champion=NULL,completed_at=NULL WHERE champion IS NOT NULL");
-   await q.query('DELETE FROM mlg_bot.cup_participants');
-   await q.query('DELETE FROM mlg_bot.cups');
+   await q.query('DELETE FROM mlg_bot.outbox WHERE group_id NOT IN (SELECT group_id FROM mlg_bot.loan_groups)');
+   await q.query('DELETE FROM mlg_bot.inbox WHERE group_id NOT IN (SELECT group_id FROM mlg_bot.loan_groups)');
+   await q.query('DELETE FROM mlg_bot.processed_messages WHERE group_id NOT IN (SELECT group_id FROM mlg_bot.loan_groups)');
+   await q.query('DELETE FROM mlg_bot.command_rate WHERE group_id NOT IN (SELECT group_id FROM mlg_bot.loan_groups)');
+   await q.query('DELETE FROM mlg_bot.command_drafts WHERE group_id NOT IN (SELECT group_id FROM mlg_bot.loan_groups)');
+   await q.query('DELETE FROM mlg_bot.cup_checkpoints WHERE group_id NOT IN (SELECT group_id FROM mlg_bot.loan_groups)');
+   await q.query('DELETE FROM mlg_bot.audit_logs WHERE group_id NOT IN (SELECT group_id FROM mlg_bot.loan_groups)');
+   await q.query('DELETE FROM mlg_bot.match_results WHERE match_code IN (SELECT m.code FROM mlg_bot.matches m JOIN mlg_bot.cups c ON c.id=m.cup_id WHERE c.group_id NOT IN (SELECT group_id FROM mlg_bot.loan_groups))');
+   await q.query('DELETE FROM mlg_bot.matches WHERE cup_id IN (SELECT id FROM mlg_bot.cups WHERE group_id NOT IN (SELECT group_id FROM mlg_bot.loan_groups))');
+   await q.query("UPDATE mlg_bot.cups SET status='cancelled',champion=NULL,completed_at=NULL WHERE champion IS NOT NULL AND group_id NOT IN (SELECT group_id FROM mlg_bot.loan_groups)");
+   await q.query('DELETE FROM mlg_bot.cup_participants WHERE cup_id IN (SELECT id FROM mlg_bot.cups WHERE group_id NOT IN (SELECT group_id FROM mlg_bot.loan_groups))');
+   await q.query('DELETE FROM mlg_bot.cups WHERE group_id NOT IN (SELECT group_id FROM mlg_bot.loan_groups)');
    await q.query("INSERT INTO mlg_bot.control_audit(action,group_id,user_id) VALUES('season-reset',$1,$2)",[body.source,actor]);
    return {season:current.season+1,cups:current.cups,matches:current.matches};
   });
@@ -119,7 +150,41 @@ Deno.serve(async req=>{
   result=await db.transaction(async q=>{
    const id=await identity(q,body.aliases);
    const allowed=await q.query("SELECT a.role,a.group_id FROM mlg_bot.admins a JOIN mlg_bot.groups g ON g.id=a.group_id WHERE a.user_id=$1 AND g.authorized AND g.admins_configured AND NOT EXISTS(SELECT 1 FROM mlg_bot.member_blocks b WHERE b.user_id=a.user_id)",[id]);
-   return {allowed:allowed.rows.some(a=>a.role==='owner'||a.role==='admin'),channelAllowed:allowed.rows.some(a=>a.group_id===body.group&&a.role==='channel')};
+   const loan=await q.query('SELECT 1 FROM mlg_bot.loan_groups WHERE group_id=$1 AND manager_id=$2 AND active',[body.group,id]);
+   return {allowed:allowed.rows.some(a=>a.role==='owner'||a.role==='admin'),channelAllowed:allowed.rows.some(a=>a.group_id===body.group&&a.role==='channel'),loanAllowed:loan.rows.length===1};
+  });
+ }
+ else if(body.action==='loan-manage'){
+  if(!groupId.test(body.source)||!groupId.test(body.group)||!validAliases(body.aliases)||!['get','grant','revoke'].includes(body.operation)||body.operation==='grant'&&!validAliases(body.targetAliases))throw Error('Invalid loan request');
+  result=await db.transaction(async q=>{
+   const actor=await verifiedSeasonActor(q,body.source,body.aliases);
+   if(!actor)return {error:'Somente ADMs gerais da MLG podem emprestar o bot.'};
+   const g=await q.query('SELECT id FROM mlg_bot.groups WHERE id=$1 AND authorized FOR UPDATE',[body.group]);
+   if(!g.rows.length)return {error:'Autorize primeiro o grupo convidado no painel e selecione-o com !usar.'};
+   const existing=await q.query(`SELECT l.manager_id,l.active,u.display_name AS name FROM mlg_bot.loan_groups l
+    JOIN mlg_bot.users u ON u.id=l.manager_id WHERE l.group_id=$1`,[body.group]);
+   if(body.operation==='get')return {loan:existing.rows[0]??null};
+   const live=await q.query("SELECT 1 FROM mlg_bot.cups WHERE group_id=$1 AND status IN ('open','playing') LIMIT 1",[body.group]);
+   if(live.rows.length)return {error:'Encerre ou cancele a Copa ativa neste grupo antes de alterar o empréstimo.'};
+   if(body.operation==='revoke'){
+    if(!existing.rows[0]?.active)return {error:'Não há empréstimo ativo neste grupo.'};
+    await q.query('UPDATE mlg_bot.loan_groups SET active=false,revoked_at=now() WHERE group_id=$1',[body.group]);
+    await q.query("DELETE FROM mlg_bot.admins WHERE group_id=$1 AND user_id=$2 AND role='channel'",[body.group,existing.rows[0].manager_id]);
+    await q.query("INSERT INTO mlg_bot.control_audit(action,group_id,user_id) VALUES('loan-revoked',$1,$2)",[body.group,actor]);
+    return {revoked:true};
+   }
+   const previous=await q.query('SELECT 1 FROM mlg_bot.cups WHERE group_id=$1 LIMIT 1',[body.group]);
+   if(previous.rows.length&&!existing.rows.length)return {error:'Este grupo já tem histórico da MLG. Use um canal novo para manter as comunidades separadas.'};
+   const manager=await identity(q,body.targetAliases);
+   const blocked=await q.query('SELECT 1 FROM mlg_bot.member_blocks WHERE user_id=$1',[manager]);
+   if(blocked.rows.length)return {error:'Esta pessoa está bloqueada no bot.'};
+   if(existing.rows[0]?.active&&existing.rows[0].manager_id!==manager)return {error:'Já há outro responsável. Encerre o empréstimo anterior primeiro.'};
+   await q.query(`INSERT INTO mlg_bot.loan_groups(group_id,manager_id,granted_by) VALUES($1,$2,$3)
+    ON CONFLICT(group_id) DO UPDATE SET manager_id=excluded.manager_id,granted_by=excluded.granted_by,active=true,granted_at=now(),revoked_at=NULL`,[body.group,manager,actor]);
+   await q.query("INSERT INTO mlg_bot.admins(group_id,user_id,role) VALUES($1,$2,'channel') ON CONFLICT(group_id,user_id) DO NOTHING",[body.group,manager]);
+   await q.query('UPDATE mlg_bot.groups SET admins_configured=true WHERE id=$1',[body.group]);
+   await q.query("INSERT INTO mlg_bot.control_audit(action,group_id,user_id) VALUES('loan-granted',$1,$2)",[body.group,actor]);
+   return {granted:true,name:existing.rows[0]?.name??'Responsável'};
   });
  }
  else if(body.action==='admin-access'){
@@ -273,7 +338,7 @@ Deno.serve(async req=>{
         row_number() OVER (PARTITION BY (status='cancelled') ORDER BY created_at,id) AS edition
       FROM mlg_bot.cups WHERE group_id=$1
     ) editions ORDER BY created_at DESC,id DESC LIMIT 15`,[body.group]);
-   const nextEdition=await q.query("SELECT count(*)::int+1 AS edition FROM mlg_bot.cups WHERE group_id=$1 AND status<>'cancelled'",[body.group]);
+   const nextEdition=await q.query("SELECT (SELECT count(*) FROM mlg_bot.cups WHERE group_id=$1 AND status<>'cancelled')::int+(SELECT count(*) FROM mlg_bot.loan_champions WHERE group_id=$1)::int+1 AS edition",[body.group]);
    const draft=await q.query('SELECT 1 FROM mlg_bot.command_drafts WHERE group_id=$1 AND expires_at>$2',[body.group,Date.now()]);
    return {templates:templates.rows,activeTemplateId:g.rows[0].active_template_id,activeCompetition:g.rows[0].competition_name,activeCup:cup.rows[0]??null,preparing:draft.rows.length>0,nextEdition:nextEdition.rows[0].edition,recentCups:history.rows};
   });
@@ -302,7 +367,7 @@ Deno.serve(async req=>{
     if(poolSize.rows[0].total<body.size)return {error:'O modelo ativo precisa ter pelo menos '+body.size+' times.'};
    }
    await q.query('INSERT INTO mlg_bot.users(id,display_name) VALUES($1,$2) ON CONFLICT DO NOTHING',[panelActor,'Painel MLG']);
-   const number=await q.query("SELECT count(*)::int+1 AS edition FROM mlg_bot.cups WHERE group_id=$1 AND status<>'cancelled'",[body.group]);
+   const number=await q.query("SELECT (SELECT count(*) FROM mlg_bot.cups WHERE group_id=$1 AND status<>'cancelled')::int+(SELECT count(*) FROM mlg_bot.loan_champions WHERE group_id=$1)::int+1 AS edition",[body.group]);
    const id=randomUUID(),at=Date.now();
    await q.query("INSERT INTO mlg_bot.cups(id,group_id,created_by,created_at,size,status,competition_name,team_kind) VALUES($1,$2,$3,$4,$5,'open',$6,$7)",[id,body.group,panelActor,at,body.size,g.rows[0].competition_name,g.rows[0].team_kind]);
    await checkpointCup(q,body.group,id,panelActor,'panel-'+randomUUID());
@@ -501,10 +566,27 @@ Deno.serve(async req=>{
    const allowed=await q.query('SELECT 1 FROM mlg_bot.groups WHERE id=$1 AND authorized',[e.group]);if(!allowed.rows.length)throw Error('Group not authorized');
    const id=await identity(q,e.aliases,e.name);
    await q.query('SELECT id FROM mlg_bot.groups WHERE id=$1 FOR UPDATE',[e.group]);
-   const season=await q.query("SELECT max(extract(epoch FROM at)*1000)::float8 AS started_at FROM mlg_bot.control_audit WHERE action='season-reset'");
+   const season=await q.query("SELECT max(extract(epoch FROM at)*1000)::float8 AS started_at FROM mlg_bot.control_audit WHERE action='season-reset' AND NOT EXISTS (SELECT 1 FROM mlg_bot.loan_groups WHERE group_id=$1)",[e.group]);
    if(season.rows[0].started_at&&typeof e.at==='number'&&e.at<season.rows[0].started_at)return {accepted:false,obsolete:true};
    let eventText=e.text;
    if(/^!(?:contasverificadas|carreiraid|registrarid|associarid|cadastrarid|editarid|excluirid|statsid|tituloid|confrontoids)(?:\s|$)/i.test(eventText))throw Error('Invalid internal command');
+   if(/^!(?:campeoes|campeões|historico|histórico)\s*$/i.test(eventText)){
+    const loan=await q.query('SELECT 1 FROM mlg_bot.loan_groups WHERE group_id=$1',[e.group]);
+    if(loan.rows.length){
+     const blocked=await q.query('SELECT 1 FROM mlg_bot.member_blocks WHERE user_id=$1',[id]);
+     if(blocked.rows.length)return {accepted:false,blocked:true};
+     const inserted=await q.query('INSERT INTO mlg_bot.processed_messages(group_id,user_id,message_id,received_at) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING message_id',[e.group,id,e.id,Date.now()]);
+     if(!inserted.rows.length)return {accepted:true,duplicate:true};
+     const saved=await q.query('SELECT edition,champion_name,competition_name FROM mlg_bot.loan_champions WHERE group_id=$1 ORDER BY edition DESC LIMIT 15',[e.group]);
+     const current=await q.query(`SELECT c.competition_name,p.display_name FROM mlg_bot.cups c JOIN mlg_bot.cup_participants p ON p.cup_id=c.id AND p.user_id=c.champion
+      WHERE c.group_id=$1 AND c.status='completed'`,[e.group]);
+     const lines=saved.rows.map(r=>'🏆 Edição '+r.edition+' · '+r.competition_name+': '+r.champion_name);
+     for(const row of current.rows)lines.unshift('🏆 Atual · '+row.competition_name+': '+row.display_name);
+     const notice='🏆 CAMPEÕES DESTE GRUPO\n'+(lines.join('\n')||'Ainda não há campeão registrado.')+'\n\nCada campeonato encerrado conserva o campeão; partidas antigas são arquivadas.';
+     await q.query('INSERT INTO mlg_bot.outbox(group_id,user_id,message_id,ordinal,body) VALUES($1,$2,$3,0,$4)',[e.group,id,e.id,notice]);
+     return {accepted:true};
+    }
+   }
    if(/^!sincronizarcontas\s*$/i.test(eventText)){
     const admin=await q.query('SELECT 1 FROM mlg_bot.admins a JOIN mlg_bot.groups g ON g.id=a.group_id WHERE a.group_id=$1 AND a.user_id=$2 AND g.admins_configured',[e.group,id]);
     if(admin.rows.length&&Array.isArray(e.targets)&&e.targets.length<=100&&e.targets.every(validAliases)){
@@ -544,6 +626,7 @@ Deno.serve(async req=>{
  else if(body.action==='poll'){
   await processInbox();
   await autoConfirmDue(db);
+  await archiveLoanCups();
   result=await db.transaction(async q=>{
    const rows=await q.query("SELECT id FROM mlg_bot.outbox WHERE (status='pending' AND available_at<=now()) OR (status='sending' AND lease_until<now()) ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 3");
    const messages=[];

@@ -42,6 +42,7 @@ async function setup(db: Pool) {
   await db.query(await readFile(new URL('../migrations/017_cup_setup.sql',import.meta.url),'utf8'));
   await db.query(await readFile(new URL('../migrations/018_season_reset_permissions.sql',import.meta.url),'utf8'));
   await db.query(await readFile(new URL('../migrations/019_admin_scopes.sql',import.meta.url),'utf8'));
+  await db.query(await readFile(new URL('../migrations/020_loan_groups.sql',import.meta.url),'utf8'));
   await db.query("INSERT INTO mlg_bot.users VALUES ('admin','Admin'); INSERT INTO mlg_bot.groups(id,authorized,admins_configured) VALUES ('g',true,true); INSERT INTO mlg_bot.admins VALUES ('g','admin','owner');");
   for (let i=0;i<16;i++) await db.query('INSERT INTO mlg_bot.club_pool VALUES ($1,$2)',['g',`Club ${i}`]);
 }

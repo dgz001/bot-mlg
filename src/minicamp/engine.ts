@@ -29,7 +29,7 @@ type Audit = {
   action: string; before: string; after: string; outcome: 'accepted';
 };
 export type State = {
-  groups: Record<string, { authorized: boolean; admins: string[]; clubs: string[]; competitionName?: string; teamKind?: 'clube'|'seleção'|'misto'; formatSize?: number|null }>;
+  groups: Record<string, { authorized: boolean; admins: string[]; clubs: string[]; competitionName?: string; teamKind?: 'clube'|'seleção'|'misto'; formatSize?: number|null; editionOffset?:number }>;
   profiles?: Record<string,Record<string,string>>;
   drafts: Record<string, { ownerId: string; expiresAt: number; name?:string; teamKind?:'clube'|'seleção'|'misto'; size?:number; legs?:1|2 }>;
   cups: Record<string, Cup>;
@@ -312,10 +312,10 @@ export function apply(input: State, event: Event, env: Environment = environment
   const archived=()=>editions().filter(c=>c.status==='cancelled');
   const cupLabel=(cup:Cup)=>cup.status==='cancelled'
     ?`Tentativa cancelada C${archived().findIndex(c=>c.id===cup.id)+1}`
-    :`Edição ${numbered().findIndex(c=>c.id===cup.id)+1}`;
+    :`Edição ${(group.editionOffset??0)+numbered().findIndex(c=>c.id===cup.id)+1}`;
   const cupStatus=(cup:Cup)=>({open:'inscrições abertas',playing:'em andamento',completed:'encerrada',cancelled:'anulada'} as const)[cup.status];
   const cupDate=(cup:Cup)=>new Date(cup.completedAt??cup.createdAt).toLocaleDateString('pt-BR',{timeZone:'UTC'});
-  const resolveCup=(value:string|undefined)=>/^\d+$/.test(value??'')?numbered()[Number(value)-1]
+  const resolveCup=(value:string|undefined)=>/^\d+$/.test(value??'')?numbered()[Number(value)-(group.editionOffset??0)-1]
     :/^c\d+$/i.test(value??'')?archived()[Number(value!.slice(1))-1]:groupCups.find(c=>c.id===value);
   const pageOf=(value:string|undefined,total:number,command:string)=>{
     const page=Number(value??1);requireThat(Number.isSafeInteger(page)&&page>=1&&page<=Math.max(1,Math.ceil(total/6)),`Página inválida. Use ${command} 1 até ${command} ${Math.max(1,Math.ceil(total/6))}.`);return page;
