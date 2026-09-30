@@ -3,5 +3,23 @@ import test from 'node:test';import assert from 'node:assert/strict';import {cre
 test('vault: sessão cifrada persiste após restart e rejeita chave errada',async()=>{
  let value:unknown=null;const key=randomBytes(32);let fail=false;let initialReads=0;
  const server=createServer(async(req,res)=>{if(req.headers.authorization!=='Bearer test'){res.writeHead(401).end();return;}if(req.method==='GET'&&initialReads++===0){res.writeHead(503).end();return;}if(fail){res.writeHead(503).end();return;}if(req.method==='PUT'){let body='';for await(const chunk of req)body+=chunk.toString();value=JSON.parse(body);}res.setHeader('Content-Type','application/json');res.end(JSON.stringify({value}));});await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const address=server.address();assert.ok(address&&typeof address==='object');const url='http://127.0.0.1:'+address.port;
- try{const first=await vaultAuth(url,'test',key);assert.equal(initialReads,2);first.data.controls={enabled:false,resenha:true,minicamp:false};first.data.groups.push('test@g.us');first.data.replyHistory={};const choices=['original A','original B','original C'];const previous=chooseReply('test@g.us',choices,first.data.replyHistory);await first.save();assert.ok(!JSON.stringify(value).includes('test@g.us'));const reloaded=await vaultAuth(url,'test',key);assert.deepEqual(reloaded.data.controls,first.data.controls);assert.deepEqual(reloaded.data.groups,['test@g.us']);assert.deepEqual(reloaded.data.replyHistory,first.data.replyHistory);assert.notEqual(chooseReply('test@g.us',choices,reloaded.data.replyHistory!),previous);assert.deepEqual(reloaded.state.creds.noiseKey,first.state.creds.noiseKey);await assert.rejects(()=>vaultAuth(url,'test',randomBytes(32)));fail=true;await assert.rejects(()=>first.save());}finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));}
+ try{const first=await vaultAuth(url,'test',key);assert.equal(initialReads,2);first.data.controls={enabled:false,resenha:true,minicamp:false};first.data.groups.push('test@g.us');first.data.replyHistory={};const choices=['original A','original B','original C'];const previous=chooseReply('test@g.us',choices,first.data.replyHistory);await first.save();assert.ok(!JSON.stringify(value).includes('test@g.us'));const reloaded=await vaultAuth(url,'test',key);assert.deepEqual(reloaded.data.controls,first.data.controls);assert.deepEqual(reloaded.data.groups,['test@g.us']);assert.deepEqual(reloaded.data.replyHistory,first.data.replyHistory);assert.notEqual(chooseReply('test@g.us',choices,reloaded.data.replyHistory!),previous);assert.deepEqual(reloaded.state.creds.noiseKey,first.state.creds.noiseKey);await assert.rejects(()=>vaultAuth(url,'test',randomBytes(32)));fail=true;first.data.groups.push('changed@g.us');await assert.rejects(()=>first.save());}finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));}
+});
+
+test('vault evita reenvio de estado idêntico, compartilha falha pendente e grava mudanças',async()=>{
+ let value:unknown=null,puts=0,shouldFail=false;
+ const server=createServer(async(req,res)=>{
+  if(req.method==='PUT'){puts++;let body='';for await(const chunk of req)body+=chunk.toString();await new Promise(r=>setTimeout(r,30));if(shouldFail){res.writeHead(503).end();return;}value=JSON.parse(body);}
+  res.setHeader('Content-Type','application/json');res.end(JSON.stringify({value}));
+ });await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const address=server.address();assert.ok(address&&typeof address==='object');const url='http://127.0.0.1:'+address.port,key=randomBytes(32);
+ try{
+  const auth=await vaultAuth(url,'test',key);
+  await Promise.all([auth.save(),auth.save(),auth.save()]);assert.equal(puts,1);
+  await auth.save();assert.equal(puts,1);
+  auth.data.groups.push('new@g.us');await Promise.all([auth.save(),auth.save()]);assert.equal(puts,2);
+  const reloaded=await vaultAuth(url,'test',key);await reloaded.save();assert.equal(puts,2);
+  shouldFail=true;auth.data.controls={enabled:false,resenha:false,minicamp:false};
+  const results=await Promise.allSettled([auth.save(),auth.save()]);assert.ok(results.every(r=>r.status==='rejected'));assert.equal(puts,3);
+  await assert.rejects(auth.save());assert.equal(puts,3);
+ }finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));}
 });
