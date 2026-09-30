@@ -73,6 +73,17 @@ test('configuração convidada aceita termos esportivos e exige revisar de novo 
  assert.match(await send('!revisar'),/Mata-mata · ida e volta/);
  assert.match(await send('!abrircopa'),/inscrições abertas/);assert.equal(opened,2);
 });
+test('organizador escolhe a foto do próprio grupo ou texto sem alterar a Copa',async()=>{
+ const room:ControlWorkspace={targetId:'convidado@g.us'};let saves=0;
+ const send=(text:string)=>adminControl(text,room,[],async()=>({cup:null}),async()=>{saves++;},Date.now(),undefined,undefined,true);
+ assert.match(await send('!imagemgrupo'),/foto atual deste grupo/);
+ assert.equal(room.guestImage,'group');
+ await send('!novacopa');
+ assert.equal(room.guestImage,'group');
+ assert.match(await send('!imagemtexto'),/sem imagens da MLG/);
+ assert.equal(room.guestImage,'text');assert.equal(saves,3);
+ assert.match(await send('!painel'),/um time por linha/);
+});
 test('troca de temporada exige revisão, mesmo ADM e código válido dentro do prazo',async()=>{
  const room:ControlWorkspace={},actor={controlGroup:'adm@g.us',aliases:['5511999999999@s.whatsapp.net'],messageId:'wa-1'};
  const calls:Record<string,unknown>[]=[];let reset=0,saves=0;
