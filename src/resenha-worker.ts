@@ -30,7 +30,7 @@ delete process.env.MINICAMP_TOKEN;
 const cupClubs=[...minicampClubs];
 const configuredCups=new Set<string>();
 let cupBusy=false,lastCupTick=Date.now(),lastCupSuccessAt=0,cupHealthy=!cupApi,cupTimer:ReturnType<typeof setInterval>|undefined;
-const controlPath='/tmp/mlg-bot-control.sock';
+const controlPath=process.env.MLG_CONTROL_SOCKET??(process.env.TMPDIR?process.env.TMPDIR+'/mlg-bot-control.sock':'/tmp/mlg-bot-control.sock');
 const portal=privateControl({secret:process.env.CONTROL_PASSWORD,origin:process.env.CONTROL_ORIGIN,socketPath:controlPath,resenha:true});
 for(const name of ['AUTH_ENCRYPTION_KEY','CONTROL_PASSWORD','SESSION_VAULT_TOKEN','DATABASE_URL','APP_DATABASE_PASSWORD'])delete process.env[name];
 const log=(event:string)=>console.log(JSON.stringify({event,at:new Date().toISOString()}));
