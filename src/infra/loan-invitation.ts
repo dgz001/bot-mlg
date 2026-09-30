@@ -34,7 +34,9 @@ Organizador: !forcarresultado CÓDIGO MxV motivo — corrigir com motivo de pelo
 AJUSTES E AJUDA
 !painel — guia do organizador; !central — situação do campeonato.
 Antes de abrir: altere a configuração e use !revisar novamente.
-!adicionar Time A | Time B — acrescentar; !remover Nome do time — retirar; !times — conferir a lista.
+!adicionar Time A | Time B — acrescentar; !corrigirclubes Nome antigo | Nome correto — corrigir; !remover Nome do time — retirar; !times [página] — conferir a lista por partes.
+Não há limite fixo de clubes: envie a lista em partes se for longa. Altere antes de !abrircopa e depois envie !revisar novamente.
+!daradm telefone — liberar um administrador do WhatsApp como auxiliar somente neste grupo; !tiraradm telefone — revogar; !adms — conferir. Só o organizador principal altera auxiliares.
 !descartar — apagar só o preparo.
 !cancelarcopa motivo — cancelar a edição ativa; campeões anteriores ficam no histórico.
 Liga: vitória vale 3 pontos, empate 1. Mata-mata de ida e volta soma os gols. Empate na decisão gera desempate. O bot anuncia o campeão ao encerrar.
