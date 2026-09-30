@@ -6,6 +6,8 @@ import { Pool } from 'pg';
 import { processEvent, autoConfirmDue, pgDatabase, checkpointCup, canonicalCheckpoint, cupDraw, cupRoster, cupRerollTeam, type Database } from '../src/infra/postgres.ts';
 import { authStore } from '../src/whatsapp/auth-store.ts';
 import { randomBytes } from 'node:crypto';
+// @ts-ignore The Edge bundle uses runtime JavaScript without declaration files.
+import {guestOpen,guestEvent,guestAutoConfirm,guestArchive} from '../deploy/guest-competition.ts';
 
 const migration = await readFile(new URL('../migrations/001_initial.sql',import.meta.url),'utf8');
 const integration = { skip: !process.env.MLG_TEST_DATABASE_URL };
@@ -43,9 +45,63 @@ async function setup(db: Pool) {
   await db.query(await readFile(new URL('../migrations/018_season_reset_permissions.sql',import.meta.url),'utf8'));
   await db.query(await readFile(new URL('../migrations/019_admin_scopes.sql',import.meta.url),'utf8'));
   await db.query(await readFile(new URL('../migrations/020_loan_groups.sql',import.meta.url),'utf8'));
+  await db.query(await readFile(new URL('../migrations/021_loan_invitations.sql',import.meta.url),'utf8'));
+  await db.query(await readFile(new URL('../migrations/022_guest_competitions.sql',import.meta.url),'utf8'));
   await db.query("INSERT INTO mlg_bot.users VALUES ('admin','Admin'); INSERT INTO mlg_bot.groups(id,authorized,admins_configured) VALUES ('g',true,true); INSERT INTO mlg_bot.admins VALUES ('g','admin','owner');");
   for (let i=0;i<16;i++) await db.query('INSERT INTO mlg_bot.club_pool VALUES ($1,$2)',['g',`Club ${i}`]);
 }
+
+test('grupo emprestado disputa liga de ida e volta, confirma e arquiva só o campeão',integration,async()=>{
+ const f=await fixture();try{
+  await setup(f.pool);
+  const group='123@g.us';
+  await f.pool.query("INSERT INTO mlg_bot.groups(id,authorized,admins_configured) VALUES($1,true,true)",[group]);
+  await f.pool.query("INSERT INTO mlg_bot.loan_groups(group_id,manager_id,granted_by) VALUES($1,'admin','admin')",[group]);
+  const db=pgDatabase(f.pool),teams=['Bahia','Santos','Palmeiras'];
+  assert.equal((await guestOpen(db,{group,name:'Liga do Amério',mode:'liga',legs:2,size:3,teams})).opened,true);
+  let serial=0;
+  const identity=async(q:any,aliases:string[],name:string)=>{
+   const id=aliases[0]!.split('@')[0];await q.query('INSERT INTO mlg_bot.users(id,display_name) VALUES($1,$2) ON CONFLICT DO NOTHING',[id,name]);return id;
+  };
+  const send=(user:string,text:string,id='guest-'+ ++serial)=>guestEvent(db,{group,aliases:[user+'@s.whatsapp.net'],messageId:id,name:user,text},identity);
+  for(const user of ['u0','u1','u2'])await send(user,'!entrar');
+  const matches=(await f.pool.query<{code:number;home:string;away:string;status:string}>('SELECT code,home,away,status FROM mlg_bot.guest_matches ORDER BY round,position')).rows;
+  assert.equal(matches.length,6);assert.equal(new Set(matches.map(m=>m.code)).size,6);
+  for(const m of matches){
+   const result=m.home==='u0'?'2x0':m.away==='u0'?'0x2':'1x1';
+   await send(m.home,`!resultado ${m.code} ${result}`);
+   await send(m.away,`!confirmar ${m.code} ${result}`);
+  }
+  assert.deepEqual((await f.pool.query('SELECT status,champion_id FROM mlg_bot.guest_competitions')).rows[0],{status:'completed',champion_id:'u0'});
+  assert.equal((await f.pool.query('SELECT count(*)::int AS total FROM mlg_bot.guest_result_audit')).rows[0].total,12);
+  await f.pool.query("UPDATE mlg_bot.guest_competitions SET completed_at=$1",[Date.now()-700000]);
+  await f.pool.query("UPDATE mlg_bot.outbox SET status='sent'");
+  assert.equal((await guestArchive(db)).archived,true);
+  assert.equal((await f.pool.query('SELECT champion_name FROM mlg_bot.loan_champions')).rows[0].champion_name,'u0');
+  assert.equal((await f.pool.query('SELECT count(*)::int AS total FROM mlg_bot.guest_matches')).rows[0].total,0);
+ }finally{await f.close();}
+});
+
+test('mata-mata emprestado soma dois jogos e abre desempate agregado',integration,async()=>{
+ const f=await fixture();try{
+  await setup(f.pool);const group='124@g.us';
+  await f.pool.query("INSERT INTO mlg_bot.groups(id,authorized,admins_configured) VALUES($1,true,true)",[group]);
+  await f.pool.query("INSERT INTO mlg_bot.loan_groups(group_id,manager_id,granted_by) VALUES($1,'admin','admin')",[group]);
+  const db=pgDatabase(f.pool),identity=async(q:any,aliases:string[],name:string)=>{const id=aliases[0]!.split('@')[0];await q.query('INSERT INTO mlg_bot.users VALUES($1,$2) ON CONFLICT DO NOTHING',[id,name]);return id;};
+  let n=0;const send=(user:string,text:string,id='cup-'+ ++n)=>guestEvent(db,{group,aliases:[user+'@s.whatsapp.net'],messageId:id,name:user,text},identity);
+  await guestOpen(db,{group,name:'Copa do Amério',mode:'copa',legs:2,size:4,teams:['Bahia','Santos','Palmeiras','Flamengo']});
+  for(const user of ['u0','u1','u2','u3'])await send(user,'!entrar');
+  const first=(await f.pool.query<{code:number;home:string;away:string;leg:number}>('SELECT code,home,away,leg FROM mlg_bot.guest_matches ORDER BY round,position,leg')).rows;
+  assert.equal(first.length,4);
+  for(const m of first){const result=m.leg===1?'2x0':'0x1';await send(m.home,`!resultado ${m.code} ${result}`);await send(m.away,`!confirmar ${m.code} ${result}`);}
+  const final=(await f.pool.query<{code:number;home:string;away:string;leg:number}>('SELECT code,home,away,leg FROM mlg_bot.guest_matches WHERE round=1 ORDER BY leg')).rows;
+  assert.equal(final.length,2);
+  for(const m of final){await send(m.home,`!resultado ${m.code} 1x1`);await send(m.away,`!confirmar ${m.code} 1x1`);}
+  const decider=(await f.pool.query<{code:number;home:string;away:string;leg:number}>('SELECT code,home,away,leg FROM mlg_bot.guest_matches WHERE round=1 AND leg=3')).rows[0]!;
+  assert.equal(decider.leg,3);await send(decider.home,`!resultado ${decider.code} 5x4`);await send(decider.away,`!confirmar ${decider.code} 5x4`);
+  assert.deepEqual((await f.pool.query('SELECT status,champion_id FROM mlg_bot.guest_competitions')).rows[0],{status:'completed',champion_id:decider.home});
+ }finally{await f.close();}
+});
 
 test('configuração nomeada persiste entre comandos e novo grupo não mistura campeões',integration,async()=>{
  const f=await fixture();try{
