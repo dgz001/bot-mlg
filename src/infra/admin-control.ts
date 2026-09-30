@@ -1,6 +1,6 @@
 import {loanCommand,loanGuide,loanPhone} from './loan-invitation.ts';
 export type ControlDraft={name:string;teamKind:'clube'|'seleção'|'misto';teams:string[];size:number|null;teamsApproved?:boolean;reviewed?:string;reviewedAt?:number};
-export type ControlWorkspace={targetId?:string;guestImage?:'group'|'text';guestInvitationAt?:number;guestDraft?:{name:string;mode:'liga'|'copa';legs:1|2;size:number|null;teams:string[];reviewed?:string;ready?:boolean};draft?:ControlDraft;staged?:{name:string;teamKind:ControlDraft['teamKind'];teams:string[];size:number};draw?:{group:string;cupId:string;fingerprint:string;mode:'equipes'|'chave'|'completo';reason:string;expiresAt:number};roster?:{group:string;fingerprint:string;change:'incluir'|'retirar'|'trocar';position?:number;targetAliases?:string[];targetName?:string;reason:string;expiresAt:number};seasonReset?:{code:string;fingerprint:string;actorAliases:string[];expiresAt:number}};
+export type ControlWorkspace={targetId?:string;guestImage?:'group'|'text';guestInvitationAt?:number;guestDraft?:{name:string;mode:'liga'|'copa'|'misto';legs:1|2;size:number|null;qualifiers?:number|null;teams:string[];reviewed?:string;ready?:boolean};draft?:ControlDraft;staged?:{name:string;teamKind:ControlDraft['teamKind'];teams:string[];size:number};draw?:{group:string;cupId:string;fingerprint:string;mode:'equipes'|'chave'|'completo';reason:string;expiresAt:number};roster?:{group:string;fingerprint:string;change:'incluir'|'retirar'|'trocar';position?:number;targetAliases?:string[];targetName?:string;reason:string;expiresAt:number};seasonReset?:{code:string;fingerprint:string;actorAliases:string[];expiresAt:number}};
 export type ControlTarget={id:string;name:string};
 type Api=(body:Record<string,unknown>)=>Promise<any>;
 const label=(kind:ControlDraft['teamKind'])=>kind==='seleção'?'seleções':kind==='misto'?'clubes e seleções':'clubes';
@@ -98,12 +98,16 @@ function requireSuccess<T>(value:any):T {if(value?.error)throw Error(value.error
 
 export function guestPrepared(room:ControlWorkspace){
  const d=room.guestDraft;
- return d?.ready&&d.size&&d.teams.length>=d.size&&validGuestTeams(d.teams)&&d.reviewed===JSON.stringify([d.name,d.mode,d.legs,d.size,d.teams])?{name:d.name,mode:d.mode,legs:d.legs,size:d.size,teams:[...d.teams]}:null;
+ return d?.ready&&d.size&&d.teams.length>=d.size&&validGuestTeams(d.teams)&&guestQualifiersValid(d)&&d.reviewed===guestFingerprint(d)?{name:d.name,mode:d.mode,legs:d.legs,size:d.size,teams:[...d.teams],...(d.mode==='misto'?{qualifiers:d.qualifiers}:{})}:null;
 }
+type GuestDraft=NonNullable<ControlWorkspace['guestDraft']>;
+const guestQualifiersValid=(d:GuestDraft)=>d.mode!=='misto'||Boolean(d.size&&[4,8,16].includes(d.qualifiers??0)&&(d.qualifiers??0)<d.size);
+const guestFingerprint=(d:GuestDraft)=>JSON.stringify([d.name,d.mode,d.legs,d.size,d.mode==='misto'?d.qualifiers:null,d.teams]);
+const guestMode=(mode:GuestDraft['mode'])=>mode==='liga'?'Pontos corridos':mode==='copa'?'Mata-mata':'Pontos corridos → mata-mata';
 async function guestControl(text:string,room:ControlWorkspace,group:string,api:Api,save:()=>Promise<void>,actor?:{aliases:string[];resolveGroupAdmin?:(group:string,phone:string)=>Promise<string[]|null>},privateMode=false):Promise<string>{
  const [command='']=text.trim().split(/\s+/,1),cmd=command.toLocaleLowerCase('pt-BR'),arg=text.trim().slice(command.length).trim();
- if(['!ajuda','!comandos','!painel'].includes(cmd))return '🤝 GUIA DO ORGANIZADOR'+(privateMode?' · PRIVADO':'')+'\n!novacopa — iniciar o preparo\n!nome Nome do campeonato\n!modalidade liga (pontos corridos) ou !modalidade copa (mata-mata)\n!vagas N — liga: 2 a 16; copa: 4, 8, 16 ou 32 (fases automáticas)\n!jogos 1 (jogo único) ou !jogos 2 (ida e volta)\n!equipes Time A | Time B | ... — ou um time por linha, para sorteio\n!adicionar Time — acrescentar; !corrigirclubes Antigo | Novo — corrigir; !remover Time — excluir\n!times [página] — conferir a lista por partes\n!imagemgrupo — usar a foto do grupo nos anúncios; !imagemtexto — só texto\n'+(privateMode?'!revisar · !confirmar — salvar o preparo; depois !novacopa no grupo escolhido.':'!daradm telefone — auxiliar ADM deste grupo; !tiraradm telefone — revogar; !adms — listar\n!revisar · !abrircopa — abrir inscrições\n!central · !cancelarcopa motivo')+'\nJogadores: !entrar, !meujogo, !copa, !tabela, !resultado CÓDIGO MxV, !confirmar CÓDIGO MxV. O mandante vem primeiro. ADM: !forcarresultado CÓDIGO MxV motivo. !campeoes mostra o histórico.';
- const only=new Set(['!novacopa','!nome','!modalidade','!vagas','!formato','!jogos','!equipes','!adicionar','!remover','!corrigirclubes','!times','!revisar','!abrircopa','!concluir','!central','!pendencias','!cancelarcopa','!descartar','!imagemgrupo','!imagemtexto','!daradm','!tiraradm','!adms']);
+ if(['!ajuda','!comandos','!painel'].includes(cmd))return '🤝 GUIA DO ORGANIZADOR'+(privateMode?' · PRIVADO':'')+'\n!novacopa — iniciar o preparo\n!nome Nome do campeonato\n!modalidade liga, copa ou misto (liga → mata-mata)\n!vagas N — liga/misto: 2 a 32; copa: 4, 8, 16 ou 32\n!classificados 8 — no modo misto, quantos avançam (4, 8 ou 16; menos que as vagas)\n!jogos 1 (jogo único) ou !jogos 2 (ida e volta)\n!equipes Time A | Time B | ... — ou um time por linha, para sorteio\n!adicionar Time — acrescentar; !corrigirclubes Antigo | Novo — corrigir; !remover Time — excluir\n!times [página] — conferir a lista por partes\n!imagemgrupo — usar a foto do grupo nos anúncios; !imagemtexto — só texto\n'+(privateMode?'!revisar · !confirmar — salvar o preparo; depois !novacopa no grupo escolhido.':'!daradm telefone — auxiliar ADM deste grupo; !tiraradm telefone — revogar; !adms — listar\n!revisar · !abrircopa — abrir inscrições\n!central · !cancelarcopa motivo')+'\nJogadores: !entrar, !meujogo, !copa, !tabela, !resultado CÓDIGO MxV, !confirmar CÓDIGO MxV. O mandante vem primeiro. ADM: !forcarresultado CÓDIGO MxV motivo. !campeoes mostra o histórico.';
+ const only=new Set(['!novacopa','!nome','!modalidade','!classificados','!vagas','!formato','!jogos','!equipes','!adicionar','!remover','!corrigirclubes','!times','!revisar','!abrircopa','!concluir','!central','!pendencias','!cancelarcopa','!descartar','!imagemgrupo','!imagemtexto','!daradm','!tiraradm','!adms']);
  if(privateMode)only.add('!confirmar');
  if(!only.has(cmd))return '🔒 Este comando é reservado aos ADMs gerais da MLG. Use !painel para administrar somente este grupo.';
  if(privateMode&&['!daradm','!tiraradm','!adms','!cancelarcopa','!abrircopa','!concluir'].includes(cmd))return 'Configure participantes e campeonato no grupo. No privado, use !revisar e !confirmar para salvar o preparo.';
@@ -126,7 +130,7 @@ async function guestControl(text:string,room:ControlWorkspace,group:string,api:A
  if(cmd==='!central'||cmd==='!pendencias'){
   if(privateMode)return room.guestDraft?'📝 PREPARO NO PRIVADO · '+room.guestDraft.name+(guestPrepared(room)?' · confirmado. Envie !novacopa no grupo escolhido.':' · use !revisar e !confirmar.'):'Nenhum preparo salvo. Comece com !novacopa.';
   const status=await api({action:'guest-status',group});if(status.error)return '⚠️ '+status.error;
-  const cup=status.cup;return '🤝 CAMPEONATO DESTE GRUPO\n'+(cup?`${cup.name} · ${cup.mode==='liga'?'pontos corridos':'mata-mata'} · ${cup.legs===2?'ida e volta':'jogo único'} · ${cup.size} vagas · ${cup.status}`:'Nenhum campeonato aberto.')+(room.guestDraft?'\n📝 Preparação: '+room.guestDraft.name:'')+'\n!painel mostra o guia.';
+  const cup=status.cup;return '🤝 CAMPEONATO DESTE GRUPO\n'+(cup?`${cup.name} · ${guestMode(cup.mode)}${cup.mode==='misto'?' · '+cup.qualifiers+' classificados':''} · ${cup.legs===2?'ida e volta':'jogo único'} · ${cup.size} vagas · ${cup.status}`:'Nenhum campeonato aberto.')+(room.guestDraft?'\n📝 Preparação: '+room.guestDraft.name:'')+'\n!painel mostra o guia.';
  }
  if(cmd==='!cancelarcopa'){
   if(arg.length<8||arg.length>160)return 'Use !cancelarcopa motivo com 8 a 160 caracteres.';
@@ -140,17 +144,20 @@ async function guestControl(text:string,room:ControlWorkspace,group:string,api:A
   if(status.cup)return 'Já há campeonato aberto: '+status.cup.name+'. Use !central.';
   if(room.guestDraft)return 'Preparação em andamento: '+room.guestDraft.name+'. Use !revisar ou !descartar.';
   room.guestDraft={name:'Campeonato convidado',mode:'copa',legs:1,size:null,teams:[]};await save();
-  return '🏆 NOVO CAMPEONATO\n1. !nome Nome\n2. !modalidade liga ou !modalidade copa\n3. !vagas N (define as fases do mata-mata)\n4. !jogos 1 ou !jogos 2\n5. !equipes Time A | Time B | ... ou um time por linha\n6. !imagemgrupo se quiser usar a foto do grupo; por padrão, só texto\n7. !revisar e !abrircopa. Nada foi aberto ainda.';
+  return '🏆 NOVO CAMPEONATO\n1. !nome Nome\n2. !modalidade liga, copa ou misto\n3. !vagas N e, no misto, !classificados 8\n4. !jogos 1 ou !jogos 2\n5. !equipes Time A | Time B | ... ou um time por linha\n6. !imagemgrupo se quiser usar a foto do grupo; por padrão, só texto\n7. !revisar e !abrircopa. Nada foi aberto ainda.';
  }
  const d=room.guestDraft;if(!d)return 'Comece com !novacopa neste grupo.';
  if(cmd==='!nome'){
   if(arg.length<3||arg.length>60||/[\r\n\x00-\x1f\x7f*_~`]/.test(arg))return 'Use !nome Nome do campeonato (3 a 60 caracteres).';d.name=arg;
  }else if(cmd==='!modalidade'){
-  const mode=({'pontos corridos':'liga','mata-mata':'copa','mata mata':'copa'} as Record<string,string>)[arg.toLowerCase()]??arg.toLowerCase();
-  if(!['liga','copa'].includes(mode))return 'Use !modalidade liga para pontos corridos ou !modalidade copa para mata-mata.';
-  d.mode=mode as 'liga'|'copa';if(d.size&&(d.mode==='liga'?d.size>16||d.size<2:![4,8,16,32].includes(d.size)))d.size=null;
+  const mode=({'pontos corridos':'liga','mata-mata':'copa','mata mata':'copa','pontos corridos e mata-mata':'misto','liga e mata-mata':'misto','liga + mata-mata':'misto'} as Record<string,string>)[arg.toLowerCase()]??arg.toLowerCase();
+  if(!['liga','copa','misto'].includes(mode))return 'Use !modalidade liga, !modalidade copa ou !modalidade misto (liga e depois mata-mata).';
+  d.mode=mode as 'liga'|'copa'|'misto';d.qualifiers=d.mode==='misto'?d.qualifiers??8:null;if(d.size&&(d.mode==='copa'?![4,8,16,32].includes(d.size):d.size>32||d.size<2))d.size=null;
  }else if(cmd==='!vagas'||cmd==='!formato'){
-  const size=Number(arg);if(!Number.isSafeInteger(size)||d.mode==='liga'&&(size<2||size>16)||d.mode==='copa'&&![4,8,16,32].includes(size))return d.mode==='liga'?'Escolha !vagas de 2 a 16 para pontos corridos.':'Escolha !vagas 4, 8, 16 ou 32 para mata-mata.';d.size=size;
+  const size=Number(arg);if(!Number.isSafeInteger(size)||d.mode!=='copa'&&(size<2||size>32)||d.mode==='copa'&&![4,8,16,32].includes(size))return d.mode==='copa'?'Escolha !vagas 4, 8, 16 ou 32 para mata-mata.':'Escolha !vagas de 2 a 32. No misto, vagas devem ser mais que os classificados.';d.size=size;
+ }else if(cmd==='!classificados'){
+  const count=Number(arg);if(d.mode!=='misto')return 'Use !modalidade misto antes de escolher classificados.';
+  if(![4,8,16].includes(count)||d.size&&count>=d.size)return 'Use !classificados 4, 8 ou 16, sempre menos que !vagas.';d.qualifiers=count;
  }else if(cmd==='!jogos'){
   const legs=({'ida':'1','jogo único':'1','jogo unico':'1','ida e volta':'2'} as Record<string,string>)[arg.toLowerCase()]??arg;
   if(legs!=='1'&&legs!=='2')return 'Use !jogos 1 para jogo único ou !jogos 2 para ida e volta.';d.legs=Number(legs) as 1|2;
@@ -171,17 +178,18 @@ async function guestControl(text:string,room:ControlWorkspace,group:string,api:A
  }
  else if(cmd==='!revisar'){
   if(!d.size||d.teams.length<d.size||!validGuestTeams(d.teams))return 'Defina !vagas e envie pelo menos tantos times quanto vagas com !equipes.';
-  d.reviewed=JSON.stringify([d.name,d.mode,d.legs,d.size,d.teams]);await save();
-  return `🔎 CONFIRA\n🏆 ${d.name}\n📍 ${d.mode==='liga'?'Pontos corridos':'Mata-mata'} · ${d.legs===2?'ida e volta':'jogo único'}\n👥 ${d.size} vagas · ${d.teams.length} times\n⚽ ${d.teams.slice(0,20).join(' · ')}${d.teams.length>20?' … (veja todas em !times)':''}\n\n${privateMode?'Envie !confirmar para salvar. Depois, no grupo escolhido, envie !novacopa para abrir inscrições.':'Envie !abrircopa para abrir as inscrições.'} Para mudar, envie o comando de configuração e !revisar novamente.`;
+  if(!guestQualifiersValid(d))return 'No modo misto, escolha !classificados 4, 8 ou 16, menor que !vagas.';
+  d.reviewed=guestFingerprint(d);await save();
+  return `🔎 CONFIRA\n🏆 ${d.name}\n📍 ${guestMode(d.mode)}${d.mode==='misto'?' · '+d.qualifiers+' avançam':''} · ${d.legs===2?'ida e volta':'jogo único'}\n👥 ${d.size} vagas · ${d.teams.length} times\n⚽ ${d.teams.slice(0,20).join(' · ')}${d.teams.length>20?' … (veja todas em !times)':''}\n\n${privateMode?'Envie !confirmar para salvar. Depois, no grupo escolhido, envie !novacopa para abrir inscrições.':'Envie !abrircopa para abrir as inscrições.'} Para mudar, envie o comando de configuração e !revisar novamente.`;
  }else if(cmd==='!confirmar'&&privateMode){
-  if(!d.reviewed||d.reviewed!==JSON.stringify([d.name,d.mode,d.legs,d.size,d.teams]))return 'Revise as configurações com !revisar antes de confirmar.';
+  if(!d.reviewed||d.reviewed!==guestFingerprint(d)||!guestQualifiersValid(d))return 'Revise as configurações com !revisar antes de confirmar.';
   d.ready=true;await save();return `✅ ${d.name} salva no seu privado. Adicione o bot ao grupo do campeonato, seja ADM desse grupo e envie !novacopa lá. A competição abrirá inscrições com ${d.size} vagas.`;
  }else if(cmd==='!abrircopa'||cmd==='!concluir'){
-  if(!d.reviewed||d.reviewed!==JSON.stringify([d.name,d.mode,d.legs,d.size,d.teams]))return 'Revise a configuração com !revisar antes de abrir.';
-  const opened=await api({action:'guest-open',group,name:d.name,mode:d.mode,legs:d.legs,size:d.size,teams:d.teams});
+  if(!d.reviewed||d.reviewed!==guestFingerprint(d)||!guestQualifiersValid(d))return 'Revise a configuração com !revisar antes de abrir.';
+  const opened=await api({action:'guest-open',group,name:d.name,mode:d.mode,legs:d.legs,size:d.size,teams:d.teams,...(d.mode==='misto'?{qualifiers:d.qualifiers}:{})});
   if(opened.error)return '⚠️ '+opened.error;
   delete room.guestDraft;await save();
-  return `🏆 ${d.name} · inscrições abertas para ${d.size} jogadores! Formato: ${d.mode==='liga'?'pontos corridos':'mata-mata'}, ${d.legs===2?'ida e volta':'jogo único'}. Jogadores: !entrar. Ao fechar as vagas, o bot cria os jogos com código.`;
+  return `🏆 ${d.name} · inscrições abertas para ${d.size} jogadores! Formato: ${guestMode(d.mode)}${d.mode==='misto'?' · '+d.qualifiers+' avançam':''}, ${d.legs===2?'ida e volta':'jogo único'}. Jogadores: !entrar. Ao fechar as vagas, o bot cria os jogos com código.`;
  }
  delete d.reviewed;delete d.ready;await save();return '✅ Atualizado. Use !revisar para conferir as escolhas antes de '+(privateMode?'confirmar.':'abrir.');
 }
