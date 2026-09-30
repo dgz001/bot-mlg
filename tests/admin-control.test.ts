@@ -18,6 +18,9 @@ test('convite aceita acentos e telefone formatado e não anuncia envio sem remet
  assert.deepEqual(sent,['5511888888888',loanGuide]);
  assert.match(loanGuide,/!modalidade liga.*!modalidade copa/);
  assert.match(loanGuide,/!jogos 1.*!jogos 2/);
+ assert.match(loanGuide,/Adicione este bot ao grupo.*administrador do grupo/s);
+ assert.match(loanGuide,/envie !novacopa.*grupo, não responda/s);
+ assert.match(loanGuide,/!forcarresultado CÓDIGO MxV motivo/);
  assert.match(loanGuide,/não há atendimento humano/);
  assert.match(loanGuide,/não processa respostas aqui/);
  const failed=await send('!emprestar 5511888888888',{...actor,sendInvitation:async()=>{throw Error('offline');}} as typeof actor);

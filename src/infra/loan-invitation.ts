@@ -7,28 +7,33 @@ export function loanCommand(text:string):string {
  return text.replace(/^!(emprestar|empréstar|emprestimo|empréstimo)(?=\s|$)/i,command=>command.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase());
 }
 export const loanGuide=`🤝 GUIA DO ORGANIZADOR · BOT MLG
-Seu número foi liberado para organizar campeonatos no seu grupo. Peça que adicionem o bot e confira se você é administrador do grupo.
+Seu número foi liberado para organizar campeonatos no seu grupo.
+
+PRIMEIRO, PREPARE O GRUPO
+1. Adicione este bot ao grupo do campeonato no WhatsApp e me dê acesso como administrador do grupo para acompanhar e enviar os avisos.
+2. Você também precisa ser administrador desse grupo com o mesmo número que recebeu este convite.
+3. No grupo em que quer disputar a Copa, envie !novacopa. Eu reconheço seu convite, ativo o empréstimo nesse grupo e mostro o preparo. Faça isso no grupo, não responda a esta mensagem privada.
+4. Depois da configuração, envie !abrircopa. Os jogadores usam !entrar. Quando as vagas se completarem, eu anuncio os confrontos, marco os inscritos e explico os resultados.
 
 CONFIGURE NO SEU GRUPO, NÃO NESTE PRIVADO
-1. !novacopa — ativa o empréstimo e começa o preparo.
-2. !nome Nome do campeonato
-3. Escolha !modalidade liga (pontos corridos) ou !modalidade copa (mata-mata).
-4. !vagas N — liga: 2 a 16 jogadores; copa: 4, 8, 16 ou 32. As fases do mata-mata seguem a quantidade de vagas.
-5. !jogos 1 — jogo único; !jogos 2 — ida e volta.
-6. !equipes Time A | Time B | Time C | ... — ou um time por linha. Envie pelo menos um time diferente por vaga; os times serão sorteados.
-7. !imagemgrupo — se quiser usar a foto atual do seu grupo nos anúncios. !imagemtexto deixa os anúncios só em texto. As artes MLG são exclusivas da comunidade MLG.
-8. !revisar — confira nome, modalidade, vagas, jogos e times.
-9. !abrircopa — depois da revisão abre as inscrições. Cada jogador envia !entrar; ao lotar, o bot sorteia os confrontos.
+!nome Nome do campeonato
+Escolha !modalidade liga (pontos corridos) ou !modalidade copa (mata-mata).
+!vagas N — liga: 2 a 16 jogadores; copa: 4, 8, 16 ou 32. As fases do mata-mata seguem a quantidade de vagas.
+!jogos 1 — jogo único; !jogos 2 — ida e volta.
+!equipes Time A | Time B | Time C | ... — ou um time por linha. Envie pelo menos um time diferente por vaga; os times serão sorteados.
+!imagemgrupo — se quiser usar a foto atual do seu grupo nos anúncios. !imagemtexto deixa os anúncios só em texto. As artes MLG são exclusivas da comunidade MLG.
+!revisar — confira nome, modalidade, vagas, jogos e times.
+!abrircopa — depois da revisão abre as inscrições.
 
 DURANTE O CAMPEONATO
 !copa — jogos e códigos; !meujogo — sua próxima partida.
 !jogo CÓDIGO — consultar uma partida.
 !tabela — classificação de pontos corridos; !proximafase — próximos jogos.
-!resultado CÓDIGO MxV — gols do mandante primeiro, visitante depois. Compartilhe o print no grupo; o bot não lê o print.
+!resultado CÓDIGO MxV — use o número # da partida exibido em !copa ou !meujogo; M é o gol do mandante, V é o gol do visitante. Compartilhe o print no grupo; o bot não lê o print.
 O adversário confirma: !confirmar CÓDIGO MxV. Sem contestação, confirma automaticamente após cinco minutos.
 !contestar CÓDIGO — adversário discorda; suspende a confirmação automática.
 !cancelar CÓDIGO — quem enviou pode retirar um placar ainda pendente e reenviar.
-Organizador: !forcarresultado CÓDIGO MxV motivo — corrigir com motivo de pelo menos oito caracteres. Jogos posteriores com placar podem impedir a correção.
+Organizador: !forcarresultado CÓDIGO MxV motivo — corrigir o jogo pelo mesmo código, com motivo de pelo menos oito caracteres. Jogos posteriores com placar podem impedir a correção.
 !campeoes ou !historico — campeões deste grupo.
 
 AJUSTES E AJUDA
