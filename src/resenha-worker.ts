@@ -1,4 +1,3 @@
-import {financeClient,financialText,financeDisabled} from './finance/client.ts';
 import {loanCommand} from './infra/loan-invitation.ts';
 import {minicampClubs} from './minicamp/clubs.ts';
 import {moduleEnabled,parseControls} from './infra/bot-controls.ts';
@@ -28,11 +27,6 @@ const key=Buffer.from(master,/^[a-f0-9]{64}$/i.test(master)?'hex':'base64');
 if(key.length!==32)throw new Error('Invalid session key');
 const cupApi=process.env.MINICAMP_URL&&process.env.MINICAMP_TOKEN?minicampClient(process.env.MINICAMP_URL,process.env.MINICAMP_TOKEN):undefined;
 delete process.env.MINICAMP_TOKEN;
-if(process.env.FINANCE_ENABLED==='true'&&(!process.env.FINANCE_URL||!process.env.FINANCE_TOKEN))throw Error('Financial release configuration missing');
-const financeApi=process.env.FINANCE_ENABLED==='true'&&process.env.FINANCE_URL&&process.env.FINANCE_TOKEN?financeClient(process.env.FINANCE_URL,process.env.FINANCE_TOKEN):undefined;
-delete process.env.FINANCE_TOKEN;
-let financeHealthy=!financeApi,lastFinanceTick=Date.now();
-let financeBusy=false,financeTimer:ReturnType<typeof setInterval>|undefined;
 const cupClubs=[...minicampClubs];
 const configuredCups=new Set<string>();
 let cupBusy=false,lastCupTick=Date.now(),lastCupSuccessAt=0,cupHealthy=!cupApi,cupTimer:ReturnType<typeof setInterval>|undefined;
@@ -71,27 +65,6 @@ async function connect(){
  const body=extractMessageContent(message.message);const text=loanCommand((body?.conversation??body?.extendedTextMessage?.text??'').trim());const context=body?.extendedTextMessage?.contextInfo;
  const receivedAt=Number(message.messageTimestamp)*1000;
  const eventAt=Number.isSafeInteger(receivedAt)&&receivedAt>1577836800000&&receivedAt<Date.now()+60000?receivedAt:Date.now();
- // Financial commands are namespaced and disabled unless explicitly released.
- if(financialText(text)){
-  if(!auth.data.groups.includes(group)||!message.key.participant)return;
-  if(!financeApi){if(socket===current&&!stopping)await current.sendMessage(group,{text:financeDisabled});return;}
-  if(!enabled()){if(socket===current&&!stopping)await current.sendMessage(group,{text:'⏸️ Bot pausado. Nenhuma operação financeira foi registrada.'});return;}
-  const aliases=await cupAliases(message.key.participant,current);
-  const mentioned=context?.mentionedJid??[];let targetAliases:string[]|undefined;
-  if(mentioned.length){
-   if(mentioned.length!==1){await current.sendMessage(group,{text:'Marque uma única conta para esta operação financeira.'});return;}
-   const members=await Promise.all((await current.groupMetadata(group)).participants.map(p=>cupAliases(p.id,current)));
-   const target=await cupAliases(mentioned[0]!,current);
-   if(!members.some(m=>m.some(j=>target.includes(j)))){await current.sendMessage(group,{text:'A pessoa marcada precisa estar neste grupo.'});return;}
-   targetAliases=target;
-  }
-  auth.data.financeInbox??=[];
-  if(!auth.data.financeInbox.some(e=>e.group===group&&e.id===id&&e.aliases.some(a=>aliases.includes(a)))){
-   if(auth.data.financeInbox.length>=100){await current.sendMessage(group,{text:'A fila financeira está cheia. Este comando não foi registrado; tente novamente em instantes.'});return;}
-   auth.data.financeInbox.push({group,aliases,targetAliases,id,name:message.pushName??'Participante',text});await auth.save();
-  }
-  void financeTick();return;
- }
  if(!auth.data.groups.includes(group)&&/^!novacopa\s*$/i.test(text.trim())&&cupApi&&message.key.participant){
   try{
    const metadata=await current.groupMetadata(group);
@@ -124,7 +97,7 @@ async function connect(){
    let response='🔒 Só os ADMs selecionados para este grupo no painel podem controlar o bot.';
    let restartRequested=false;
    if(permission.allowed){
-    if(power.next){const previous=auth.data.controls;auth.data.controlspower.next;try{await auth.save();}catch{auth.data.controls=previous;throw Error('Settings persistence failed');}log('BOT_CONTROLS_UPDATED_BY_WA');}
+    if(power.next){const previous=auth.data.controls;auth.data.controls=power.next;try{await auth.save();}catch{auth.data.controls=previous;throw Error('Settings persistence failed');}log('BOT_CONTROLS_UPDATED_BY_WA');}
     response=power.restart&&!process.connected?'⚠️ O supervisor de reinício não está disponível. Use o botão Reiniciar no painel.':power.text;
     restartRequested=power.restart===true&&Boolean(process.connected);
    }
@@ -161,7 +134,7 @@ async function connect(){
    if(permission.allowed||permission.loanAllowed&&inChannel(group,'minicamp')){
     const loanMode=!permission.allowed;
     if(loanMode&&!enabled('minicamp'))response='⏸️ O bot está pausado. Aguarde um ADM geral da MLG.';
-    else if(loanMode||(permission.loanGroup||auth.data.loanGroups?.includes(group))&&/^(?:!(?:painel|central|pendencias|novacpa|nome|modalidade|formato|jogos|equipes|adicionar|remover|times|vagas|revisar|abrircopa|concluir|descartar|cancelarcopa)(?:\s|$))/i.test(text.trim())){
+    else if(loanMode||(permission.loanGroup||auth.data.loanGroups?.includes(group))&&/^(?:!(?:painel|central|pendencias|novacopa|nome|modalidade|formato|jogos|equipes|adicionar|remover|times|vagas|revisar|abrircopa|concluir|descartar|cancelarcopa)(?:\s|$))/i.test(text.trim())){
      auth.data.controlRooms??={};const room=auth.data.controlRooms[group]??={};auth.data.controlRooms[group]=room;
      room.targetId=group;
      const target={id:group,name:(await current.groupMetadata(group)).subject};
@@ -251,7 +224,7 @@ async function connect(){
    try{const health=await cupApi<{database:boolean}>({action:'health'});answer=health.database===true?'🗄️ SUPABASE\n✅ Conexão com o banco verificada agora.':'🗄️ SUPABASE\n⚠️ O banco não confirmou a verificação.';}
    catch{answer='🗄️ SUPABASE\n⚠️ Não foi possível verificar a conexão agora. Tente novamente em instantes.';}
   }
-  if(socket===current&&!stopping&&enabled('minicamp')&&inChannel(group,'minicamp'))await current.sessage(group,{text:answer});return;
+  if(socket===current&&!stopping&&enabled('minicamp')&&inChannel(group,'minicamp'))await current.sendMessage(group,{text:answer});return;
  }
  if(/^!(?:modelos|ativarmodelo)(?:\s|$)/i.test(text)&&inChannel(group,'minicamp')){
   if(!enabled('minicamp')||!cupApi||!message.key.participant)return;
@@ -294,7 +267,7 @@ async function connect(){
    if(socket===current&&!stopping&&enabled('minicamp'))await current.sendMessage(group,{text:answer});return;
   }
   auth.data.cupInbox??=[];
-  if(!auth.data.cupInbox.some(e=>e.group===group&&e.id==id&&e.aliases.some(a=>aliases.includes(a)))){
+  if(!auth.data.cupInbox.some(e=>e.group===group&&e.id===id&&e.aliases.some(a=>aliases.includes(a)))){
    if(auth.data.cupInbox.length>=100){
     log('MINICAMP_QUEUE_FULL');
     if(socket===current&&enabled('minicamp'))try{await current.sendMessage(group,{text:'⚠️ O Minicamp está com muitas solicitações aguardando. Este comando não foi registrado; tente novamente em instantes.'});}catch{log('MINICAMP_QUEUE_NOTICE_FAILED');}
@@ -338,7 +311,7 @@ async function connect(){
    const entry=context.entries[0];if(entry)archive='\n\n📚 Do arquivo da resenha ('+entry.message_date+'):\n“'+entry.body+'”\n🍿 Lembrança do chat; não é resultado oficial.';
   }catch{log('HISTORY_LOOKUP_RETRY');return;}
  }
- cst response=request==='__LIST_COACHES__'?'🎮 TÉCNICOS DA MASTER LIGA\n'+loadRoster(process.env.MLG_ROSTER_JSON).map(c=>c.name+' — '+c.club).join('\n')+'\nUse nomes completos ou clubes nos palpites.':banterReply(group,request)+archive;
+ const response=request==='__LIST_COACHES__'?'🎮 TÉCNICOS DA MASTER LIGA\n'+loadRoster(process.env.MLG_ROSTER_JSON).map(c=>c.name+' — '+c.club).join('\n')+'\nUse nomes completos ou clubes nos palpites.':banterReply(group,request)+archive;
  await auth.save();
  if(socket===current&&!stopping&&inChannel(group,'resenha')&&enabled('resenha')){await current.sendMessage(group,{text:response});log('RESENHA_SENT');}
  }).catch(()=>fail('MESSAGE_PROCESSING_FAILED'));}
@@ -350,7 +323,7 @@ async function cupAliases(jid:string,current:ReturnType<typeof makeWASocket>):Pr
  return [...new Set([n,...(other?[jidNormalizedUser(other)]:[])])];
 }
 async function configureCup(group:string,current:ReturnType<typeof makeWASocket>){
- if(configuredCups.has(roup))return;
+ if(configuredCups.has(group))return;
  const metadata=await current.groupMetadata(group);
  const admins=await Promise.all(metadata.participants.filter(p=>p.admin==='admin'||p.admin==='superadmin').map(p=>cupAliases(p.id,current)));
  if(!admins.length||cupClubs.length<16)throw Error('Minicamp setup unavailable');
@@ -379,7 +352,7 @@ async function cupTick(){
     const card=cupMediaFor(m.body);
     if(card){
      try{
-      const path=card==='sorteio'?'../assets/mlg-sorteio.jpg':card==='campeao'?'.ssets/mlg-campeao.jpg':card==='classificacao'?'../assets/mlg-classificacao.jpg':card==='proxima-copa'?'../assets/mlg-proxima-copa.jpg':'../assets/mlg-partida.jpg';
+      const path=card==='sorteio'?'../assets/mlg-sorteio.jpg':card==='campeao'?'../assets/mlg-campeao.jpg':card==='classificacao'?'../assets/mlg-classificacao.jpg':card==='proxima-copa'?'../assets/mlg-proxima-copa.jpg':'../assets/mlg-partida.jpg';
       await current.sendMessage(m.group_id,{image:await readFile(new URL(path,import.meta.url)),caption:body,mentions},{messageId:m.wa_message_id});sent=true;
      }catch{log('MINICAMP_IMAGE_FALLBACK');}
     }
@@ -403,30 +376,6 @@ async function cupTick(){
   // Drain persisted requests promptly after recovery without overlapping workers.
   if(!stopping&&cupHealthy&&auth.data.cupInbox?.some(e=>inChannel(e.group,'minicamp')))setTimeout(()=>{void cupTick();},250);
  }
-}
-async function financeTick(){
- if(!financeApi||!enabled()||financeBusy||stopping||phase!=='CONNECTED'||!socket)return;financeBusy=true;
- const current=socket;
- try{
-  for(const event of (auth.data.financeInbox??[]).filter(e=>auth.data.groups.includes(e.group)).slice(0,5)){
-   await financeApi({action:'event',event});auth.data.financeInbox=auth.data.financeInbox!.filter(e=>e!==event);await auth.save();
-  }
-  const batch=await financeApi<{messages:{id:string;group_id:string;recipient:string|null;body:string;mentions:string[];lease:string}[]}>({action:'poll'});
-  for(const item of batch.messages){
-   let sent=false;
-   if(socket===current&&!stopping&&auth.data.groups.includes(item.group_id))try{
-    const members=await Promise.all((await current.groupMetadata(item.group_id)).participants.map(p=>cupAliases(p.id,current)));
-    const recipient=item.recipient??item.group_id;
-    if(recipient.endsWith('@g.us')&&!auth.data.groups.includes(recipient))throw Error('Financial destination unauthorized');
-    if(!recipient.endsWith('@g.us')&&!members.some(m=>m.includes(recipient)))throw Error('Financial recipient left the group');
-    const mentions=item.mentions.filter(j=>members.some(m=>m.includes(j)));
-    const text=item.body+(mentions.length?'\n📣 '+entions.map(j=>'@'+j.split('@')[0]).join(' '):'');
-    const delivered=await current.sendMessage(recipient,{text,mentions},{messageId:item.id.replaceAll('-','').toUpperCase()});sent=Boolean(delivered?.key.id);
-   }catch{log('FINANCE_SEND_RETRY');}
-   await financeApi({action:'ack',id:item.id,lease:item.lease,sent});
-  }
-  financeHealthy=true;lastFinanceTick=Date.now();
- }catch{financeHealthy=false;log('FINANCE_RETRY');}finally{financeBusy=false;}
 }
 const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>client.destroy());client.on('data',chunk=>{buffer+=chunk.toString();if(buffer.length>8192){client.destroy();return;}if(!buffer.includes('\n'))return;client.pause();void(async()=>{
  const req=JSON.parse(buffer.trim());if(req.action==='status')return {controls:auth.data.controls??{enabled:true,resenha:true,minicamp:true},queued:auth.data.cupInbox?.length??0,phase,authorizedGroups:auth.data.groups.length,minicamp:cupApi?(cupHealthy?'READY':'RETRYING'):'DISABLED',minicampLastSuccessAt:lastCupSuccessAt||null,checkedAt:Date.now()};
@@ -509,15 +458,14 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  if(!validGroupMode(req.mode))throw Error('Invalid group mode');auth.data.groupModes??={};auth.data.groupModes[req.group]=req.mode;await auth.save();log('GROUP_AUTHORIZED');return {authorized:true,mode:req.mode};
  }throw new Error('Unknown operation');
  })().then(r=>client.end(JSON.stringify(r)+'\n')).catch(()=>client.end(JSON.stringify({error:'Operação recusada. Confira conexão, número e seleção.'})+'\n'));});});
-const health=httpServer((req,res)=>{if(req.url==='/livez'||req.url==='/readyz'){const ok=!stopping&&(req.url==='/livez'||(phase==='CONNECTED'&&(!financeApi||!enabled()||(financeHealthy&&Date.now()-lastFinanceTick<120000))&&(!enabled('minicamp')||!cupApi||(cupHealthy&&Date.now()-lastCupTick<120000))));res.writeHead(ok?200:503,{'Cache-Control':'no-store'}).end(ok?'OK':'UNAVAILABLE');return;}void portal(req,res).catch(()=>{if(!res.headersSent)res.writeHead(500);res.end();});});
-function safeError(error:unknown){const raw=error instanceof Error?`${error.name}: ${error.message}`:String(error);return raw.replaceAll(process.env.SESSION_VAULT_TOKEN??'','[vault-token]').replaceAll(process.env.AUTH_ENCRYPTION_KEY??'','[encryption-key]').slice(0,240);}
-function fail(event:string,error?:unknown){log(error?event+':'+safeError(error):event);void shutdown(1);}
-async function shutdown(code:number){if(stopping)return;stopping=true;if(cupTimer)clearInterval(cupTimer);if(financeTimer)clearInterval(financeTimer);if(timer)clearTimeout(timer);if(stable)clearTimeout(stable);const deadline=setTimeout(()=>process.exit(code),12000);deadline.unref();controls.close();health.close();socket?.end(undefined);await queue;while(cupBusy||financeBusy)await new Promise(r=>setTimeout(r,50));await auth?.flush();key.fill(0);process.exit(code);}
-process.on('SIGTERM',()=>{void shutdown(0);});process.on('SIGINT',()=>{void shutdown(0);});process.on('uncaughtException',error=>fail('UNCAUGHT_ERROR',error));process.on('unhandledRejection',error=>fail('UNHANDLED_REJECTION',error));
-async function main(){auth=await vaultAuth(endpoint!,token!,key);if(financeApi)financeTimer=setInterval(()=>{void financeTick();},15000);auth.data.replyHistory??={};auth.data.cupInbox??=[];if(cupApi){try{await cupApi({action:'health'});cupHealthy=true;}catch{cupHealthy=false;log('MINICAMP_RETRY');}cupTimer=setInterval(()=>{void cupTick();},15000);}banterReply=createBanterReply(auth.data.replyHistory);await auth.save();await unlink(controlPath).catch(()=>undefined);controls.listen(controlPath,()=>{void chmod(controlPath,0o600).catch(()=>fail('CONTROL_PERMISSIONS_FAILED'));});if(!process.send)health.listen(Number(process.env.PORT??3000),'0.0.0.0');if(auth.state.creds.registered)await connect();else {phase='NEEDS_PAIRING';log(phase);}}
+const health=httpServer((req,res)=>{if(req.url==='/livez'||req.url==='/readyz'){const ok=!stopping&&(req.url==='/livez'||(phase==='CONNECTED'&&(!enabled('minicamp')||!cupApi||(cupHealthy&&Date.now()-lastCupTick<120000))));res.writeHead(ok?200:503,{'Cache-Control':'no-store'}).end(ok?'OK':'UNAVAILABLE');return;}void portal(req,res).catch(()=>{if(!res.headersSent)res.writeHead(500);res.end();});});
+function fail(event:string){log(event);void shutdown(1);}
+async function shutdown(code:number){if(stopping)return;stopping=true;if(cupTimer)clearInterval(cupTimer);if(timer)clearTimeout(timer);if(stable)clearTimeout(stable);const deadline=setTimeout(()=>process.exit(code),12000);deadline.unref();controls.close();health.close();socket?.end(undefined);await queue;while(cupBusy)await new Promise(r=>setTimeout(r,50));await auth?.flush();key.fill(0);process.exit(code);}
+process.on('SIGTERM',()=>{void shutdown(0);});process.on('SIGINT',()=>{void shutdown(0);});process.on('uncaughtException',()=>fail('UNCAUGHT_ERROR'));process.on('unhandledRejection',()=>fail('UNHANDLED_REJECTION'));
+async function main(){auth=await vaultAuth(endpoint!,token!,key);auth.data.replyHistory??={};auth.data.cupInbox??=[];if(cupApi){try{await cupApi({action:'health'});cupHealthy=true;}catch{cupHealthy=false;log('MINICAMP_RETRY');}cupTimer=setInterval(()=>{void cupTick();},15000);}banterReply=createBanterReply(auth.data.replyHistory);await auth.save();await unlink(controlPath).catch(()=>undefined);controls.listen(controlPath,()=>{void chmod(controlPath,0o600).catch(()=>fail('CONTROL_PERMISSIONS_FAILED'));});if(!process.send)health.listen(Number(process.env.PORT??3000),'0.0.0.0');if(auth.state.creds.registered)await connect();else {phase='NEEDS_PAIRING';log(phase);}}
 // Parent owns HTTP while this process owns the WhatsApp session and queues.
 if(process.send){
- const pulse=setInterval(()=>{if(process.connected)process.send?.({type:'health',phase,ready:!stopping&&phase==='CONNECTED'&&(!financeApi||!enabled()||(financeHealthy&&Date.now()-lastFinanceTick<120000))&&(!enabled('minicamp')||!cupApi||(cupHealthy&&Date.now()-lastCupTick<120000))});},2000);
+ const pulse=setInterval(()=>{if(process.connected)process.send?.({type:'health',phase,ready:!stopping&&phase==='CONNECTED'&&(!enabled('minicamp')||!cupApi||(cupHealthy&&Date.now()-lastCupTick<120000))});},2000);
  pulse.unref();process.on('disconnect',()=>{void shutdown(0);});
 }
-void main().catch(error=>fail('SESSION_STORAGE_UNAVAILABLE',error));
+void main().catch(()=>fail('SESSION_STORAGE_UNAVAILABLE'));
