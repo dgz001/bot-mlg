@@ -38,7 +38,7 @@ const configuredCups=new Set<string>();
 let cupBusy=false,lastCupTick=Date.now(),lastCupSuccessAt=0,cupHealthy=!cupApi,cupTimer:ReturnType<typeof setInterval>|undefined;
 const controlPath='/tmp/mlg-bot-control.sock';
 const portal=privateControl({secret:process.env.CONTROL_PASSWORD,origin:process.env.CONTROL_ORIGIN,socketPath:controlPath,resenha:true});
-for(const name of ['AUTH_ENCRYPTION_KEY','CONTROL_PASSWORD','SESSION_VAULT_TOKEN','DATABASE_URL','APP_DATABASEPASSWORD'])delete process.env[name];
+for(const name of ['AUTH_ENCRYPTION_KEY','CONTROL_PASSWORD','SESSION_VAULT_TOKEN','DATABASE_URL','APP_DATABASE_PASSWORD'])delete process.env[name];
 const log=(event:string)=>console.log(JSON.stringify({event,at:new Date().toISOString()}));
 let phase='STARTING',stopping=false,attempt=0,timer:ReturnType<typeof setTimeout>|undefined,stable:ReturnType<typeof setTimeout>|undefined;
 let auth:Awaited<ReturnType<typeof vaultAuth>>,socket:ReturnType<typeof makeWASocket>|undefined;
@@ -74,7 +74,7 @@ async function connect(){
  // Financial commands are namespaced and disabled unless explicitly released.
  if(financialText(text)){
   if(!auth.data.groups.includes(group)||!message.key.participant)return;
-  if(!financeApi){if(socket===current&&!stopping)await current.sendMessage(group,{text:financeDisabled};return;}
+  if(!financeApi){if(socket===current&&!stopping)await current.sendMessage(group,{text:financeDisabled});return;}
   if(!enabled()){if(socket===current&&!stopping)await current.sendMessage(group,{text:'⏸️ Bot pausado. Nenhuma operação financeira foi registrada.'});return;}
   const aliases=await cupAliases(message.key.participant,current);
   const mentioned=context?.mentionedJid??[];let targetAliases:string[]|undefined;
@@ -112,7 +112,7 @@ async function connect(){
  const self=[current.user?.id,current.user?.lid].filter(Boolean).map(v=>jidNormalizedUser(v!));
  const mention=context?.mentionedJid?.some(j=>self.includes(jidNormalizedUser(j)));
  const reply=context?.participant&&self.includes(jidNormalizedUser(context.participant));
- // Power commands must remain reachablein every authorized group while responses are paused.
+ // Power commands must remain reachable in every authorized group while responses are paused.
  const power=whatsappControls(text,auth.data.controls);
  if(power&&auth.data.groups.includes(group)&&groupMode(auth.data.groupModes,group)!=='controle'&&cupApi&&message.key.participant){
   const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
@@ -124,7 +124,7 @@ async function connect(){
    let response='🔒 Só os ADMs selecionados para este grupo no painel podem controlar o bot.';
    let restartRequested=false;
    if(permission.allowed){
-    if(power.next){const previous=auth.data.controls;auth.data.controls=power.next;try{await auth.save();}catch{auth.data.controls=previous;throw Error('Settings persistence failed');}log('BOT_CONTROLS_UPDATED_BY_WA');}
+    if(power.next){const previous=auth.data.controls;auth.data.controlspower.next;try{await auth.save();}catch{auth.data.controls=previous;throw Error('Settings persistence failed');}log('BOT_CONTROLS_UPDATED_BY_WA');}
     response=power.restart&&!process.connected?'⚠️ O supervisor de reinício não está disponível. Use o botão Reiniciar no painel.':power.text;
     restartRequested=power.restart===true&&Boolean(process.connected);
    }
@@ -140,7 +140,8 @@ async function connect(){
  const outsideCup=!inChannel(group,'minicamp')&&/^!(?:modelos|ativarmodelo|sorteio|novacopa|cancelarcopa|anularcopa|nome|categoria|times|abrircopa|forcarresultado|resolver|deletar|vistoria)(?:\s|$)/i.test(text.trim());
  const loanSetup=/^!(?:novacopa|nome|modalidade|formato|jogos|times|abrircopa|cancelarcopa|modelos)(?:\s|$)/i.test(text.trim());
  if(auth.data.groups.includes(group)&&(mode==='controle'||centralOnly||outsideCup||loanSetup)){
-  if(!text.trim().startsWith('!')||!cupApi||!message.key.participant)return;  if(text.length>16000){await current.sendMessage(group,{text:'⚠️ Mensagem muito longa. Envie os times em mensagens menores com !adicionar.'});return;}
+  if(!text.trim().startsWith('!')||!cupApi||!message.key.participant)return;
+  if(text.length>16000){await current.sendMessage(group,{text:'⚠️ Mensagem muito longa. Envie os times em mensagens menores com !adicionar.'});return;}
   const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
   try{
    const aliases=await cupAliases(message.key.participant,current);
@@ -160,7 +161,7 @@ async function connect(){
    if(permission.allowed||permission.loanAllowed&&inChannel(group,'minicamp')){
     const loanMode=!permission.allowed;
     if(loanMode&&!enabled('minicamp'))response='⏸️ O bot está pausado. Aguarde um ADM geral da MLG.';
-    else if(loanMode||(permission.loanGroup||auth.data.loanGroups?.includes(group))&&/^(?:!(?:painel|central|pendencias|novacopa|nome|modalidade|formato|jogos|equipes|adicionar|remover|times|vagas|revisar|abrircopa|concluir|descartar|cancelarcopa)(?:\s|$))/i.test(text.trim())){
+    else if(loanMode||(permission.loanGroup||auth.data.loanGroups?.includes(group))&&/^(?:!(?:painel|central|pendencias|novacpa|nome|modalidade|formato|jogos|equipes|adicionar|remover|times|vagas|revisar|abrircopa|concluir|descartar|cancelarcopa)(?:\s|$))/i.test(text.trim())){
      auth.data.controlRooms??={};const room=auth.data.controlRooms[group]??={};auth.data.controlRooms[group]=room;
      room.targetId=group;
      const target={id:group,name:(await current.groupMetadata(group)).subject};
@@ -173,7 +174,7 @@ async function connect(){
     }else{
     const power=whatsappControls(text,auth.data.controls);
     if(power){
-     if(power.next){const previous=auth.data.controls;auth.data.controls=power.nexttry{await auth.save();}catch{auth.data.controls=previous;throw Error('Settings persistence failed');}log('BOT_CONTROLS_UPDATED_BY_WA');}
+     if(power.next){const previous=auth.data.controls;auth.data.controls=power.next;try{await auth.save();}catch{auth.data.controls=previous;throw Error('Settings persistence failed');}log('BOT_CONTROLS_UPDATED_BY_WA');}
      response=power.restart&&!process.connected?'⚠️ O supervisor de reinício não está disponível. Use o botão Reiniciar no painel.':power.text;
      restartRequested=power.restart===true&&Boolean(process.connected);
     }else if(!enabled('minicamp')&&!seasonCommand)response='⏸️ Copa ou bot pausado. Use !acordarbot para liberar os comandos da central.';
@@ -212,7 +213,7 @@ async function connect(){
      response=await adminControl(text,room,targets,api,()=>auth.save(),Date.now(),{controlGroup:group,aliases,messageId:id,resolveMember,resolveGroupAdmin,sendInvitation},auth.data.controlRooms);
      if(response.startsWith('✅ TEMPORADA REINICIADA')){
       auth.data.cupInbox=[];auth.data.scoreReactions=[];
-      for(const workspace of Object.vales(auth.data.controlRooms)){delete workspace.draft;delete workspace.staged;delete workspace.draw;delete workspace.roster;delete workspace.seasonReset;}
+      for(const workspace of Object.values(auth.data.controlRooms)){delete workspace.draft;delete workspace.staged;delete workspace.draw;delete workspace.roster;delete workspace.seasonReset;}
       configuredCups.clear();
      }
     }
@@ -250,7 +251,7 @@ async function connect(){
    try{const health=await cupApi<{database:boolean}>({action:'health'});answer=health.database===true?'🗄️ SUPABASE\n✅ Conexão com o banco verificada agora.':'🗄️ SUPABASE\n⚠️ O banco não confirmou a verificação.';}
    catch{answer='🗄️ SUPABASE\n⚠️ Não foi possível verificar a conexão agora. Tente novamente em instantes.';}
   }
-  if(socket===current&&!stopping&&enabled('minicamp')&&inChannel(group,'minicamp'))await current.sendessage(group,{text:answer});return;
+  if(socket===current&&!stopping&&enabled('minicamp')&&inChannel(group,'minicamp'))await current.sessage(group,{text:answer});return;
  }
  if(/^!(?:modelos|ativarmodelo)(?:\s|$)/i.test(text)&&inChannel(group,'minicamp')){
   if(!enabled('minicamp')||!cupApi||!message.key.participant)return;
@@ -337,7 +338,7 @@ async function connect(){
    const entry=context.entries[0];if(entry)archive='\n\n📚 Do arquivo da resenha ('+entry.message_date+'):\n“'+entry.body+'”\n🍿 Lembrança do chat; não é resultado oficial.';
   }catch{log('HISTORY_LOOKUP_RETRY');return;}
  }
- cost response=request==='__LIST_COACHES__'?'🎮 TÉCNICOS DA MASTER LIGA\n'+loadRoster(process.env.MLG_ROSTER_JSON).map(c=>c.name+' — '+c.club).join('\n')+'\nUse nomes completos ou clubes nos palpites.':banterReply(group,request)+archive;
+ cst response=request==='__LIST_COACHES__'?'🎮 TÉCNICOS DA MASTER LIGA\n'+loadRoster(process.env.MLG_ROSTER_JSON).map(c=>c.name+' — '+c.club).join('\n')+'\nUse nomes completos ou clubes nos palpites.':banterReply(group,request)+archive;
  await auth.save();
  if(socket===current&&!stopping&&inChannel(group,'resenha')&&enabled('resenha')){await current.sendMessage(group,{text:response});log('RESENHA_SENT');}
  }).catch(()=>fail('MESSAGE_PROCESSING_FAILED'));}
@@ -349,7 +350,7 @@ async function cupAliases(jid:string,current:ReturnType<typeof makeWASocket>):Pr
  return [...new Set([n,...(other?[jidNormalizedUser(other)]:[])])];
 }
 async function configureCup(group:string,current:ReturnType<typeof makeWASocket>){
- if(configuredCups.has(group))return;
+ if(configuredCups.has(roup))return;
  const metadata=await current.groupMetadata(group);
  const admins=await Promise.all(metadata.participants.filter(p=>p.admin==='admin'||p.admin==='superadmin').map(p=>cupAliases(p.id,current)));
  if(!admins.length||cupClubs.length<16)throw Error('Minicamp setup unavailable');
@@ -378,7 +379,7 @@ async function cupTick(){
     const card=cupMediaFor(m.body);
     if(card){
      try{
-      const path=card==='sorteio'?'../assets/mlg-sorteio.jpg':card==='campeao'?'../ssets/mlg-campeao.jpg':card==='classificacao'?'../assets/mlg-classificacao.jpg':card==='proxima-copa'?'../assets/mlg-proxima-copa.jpg':'../assets/mlg-partida.jpg';
+      const path=card==='sorteio'?'../assets/mlg-sorteio.jpg':card==='campeao'?'.ssets/mlg-campeao.jpg':card==='classificacao'?'../assets/mlg-classificacao.jpg':card==='proxima-copa'?'../assets/mlg-proxima-copa.jpg':'../assets/mlg-partida.jpg';
       await current.sendMessage(m.group_id,{image:await readFile(new URL(path,import.meta.url)),caption:body,mentions},{messageId:m.wa_message_id});sent=true;
      }catch{log('MINICAMP_IMAGE_FALLBACK');}
     }
@@ -453,7 +454,7 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  if(typeof req.group!=='string'||!auth.data.groups.includes(req.group))throw Error('Invalid group');
  auth.data.groups=auth.data.groups.filter(g=>g!==req.group);
  if(auth.data.groupModes)delete auth.data.groupModes[req.group];
- if(auth.data.controlRooms)delete auth.data.controlRoms[req.group];
+ if(auth.data.controlRooms)delete auth.data.controlRooms[req.group];
  auth.data.cupInbox=auth.data.cupInbox?.filter(e=>e.group!==req.group);
  await auth.save();log('GROUP_REVOKED');return {revoked:true};
  }
@@ -486,7 +487,7 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  if(timer)clearTimeout(timer);
  // A failed code request sets creds.me before registration. Clear only that
  // incomplete login marker on an explicit retry, never a registered session.
- if(!socket){delete auth.state.crds.me;delete auth.state.creds.pairingCode;await auth.save();await connect();}
+ if(!socket){delete auth.state.creds.me;delete auth.state.creds.pairingCode;await auth.save();await connect();}
  const pairingSocket=socket!;log('PAIRING_REQUEST_STARTED');
  try{const code=await requestReadyPairing(pairingSocket,req.phone,pairingReady.has(pairingSocket),()=>socket===pairingSocket&&!stopping);log('PAIRING_CODE_READY');return {code};}
  catch{log('PAIRING_REQUEST_FAILED');return {error:'Não foi possível preparar a conexão com o WhatsApp. Aguarde 60 segundos e tente novamente.',phase};}
@@ -510,7 +511,7 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  })().then(r=>client.end(JSON.stringify(r)+'\n')).catch(()=>client.end(JSON.stringify({error:'Operação recusada. Confira conexão, número e seleção.'})+'\n'));});});
 const health=httpServer((req,res)=>{if(req.url==='/livez'||req.url==='/readyz'){const ok=!stopping&&(req.url==='/livez'||(phase==='CONNECTED'&&(!financeApi||!enabled()||(financeHealthy&&Date.now()-lastFinanceTick<120000))&&(!enabled('minicamp')||!cupApi||(cupHealthy&&Date.now()-lastCupTick<120000))));res.writeHead(ok?200:503,{'Cache-Control':'no-store'}).end(ok?'OK':'UNAVAILABLE');return;}void portal(req,res).catch(()=>{if(!res.headersSent)res.writeHead(500);res.end();});});
 function safeError(error:unknown){const raw=error instanceof Error?`${error.name}: ${error.message}`:String(error);return raw.replaceAll(process.env.SESSION_VAULT_TOKEN??'','[vault-token]').replaceAll(process.env.AUTH_ENCRYPTION_KEY??'','[encryption-key]').slice(0,240);}
-function fail(event:string,error?:unknown){log(erro?event+':'+safeError(error):event);void shutdown(1);}
+function fail(event:string,error?:unknown){log(error?event+':'+safeError(error):event);void shutdown(1);}
 async function shutdown(code:number){if(stopping)return;stopping=true;if(cupTimer)clearInterval(cupTimer);if(financeTimer)clearInterval(financeTimer);if(timer)clearTimeout(timer);if(stable)clearTimeout(stable);const deadline=setTimeout(()=>process.exit(code),12000);deadline.unref();controls.close();health.close();socket?.end(undefined);await queue;while(cupBusy||financeBusy)await new Promise(r=>setTimeout(r,50));await auth?.flush();key.fill(0);process.exit(code);}
 process.on('SIGTERM',()=>{void shutdown(0);});process.on('SIGINT',()=>{void shutdown(0);});process.on('uncaughtException',error=>fail('UNCAUGHT_ERROR',error));process.on('unhandledRejection',error=>fail('UNHANDLED_REJECTION',error));
 async function main(){auth=await vaultAuth(endpoint!,token!,key);if(financeApi)financeTimer=setInterval(()=>{void financeTick();},15000);auth.data.replyHistory??={};auth.data.cupInbox??=[];if(cupApi){try{await cupApi({action:'health'});cupHealthy=true;}catch{cupHealthy=false;log('MINICAMP_RETRY');}cupTimer=setInterval(()=>{void cupTick();},15000);}banterReply=createBanterReply(auth.data.replyHistory);await auth.save();await unlink(controlPath).catch(()=>undefined);controls.listen(controlPath,()=>{void chmod(controlPath,0o600).catch(()=>fail('CONTROL_PERMISSIONS_FAILED'));});if(!process.send)health.listen(Number(process.env.PORT??3000),'0.0.0.0');if(auth.state.creds.registered)await connect();else {phase='NEEDS_PAIRING';log(phase);}}
