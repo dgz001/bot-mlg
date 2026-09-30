@@ -18,8 +18,8 @@ PRIMEIRO, PREPARE O GRUPO
 
 CONFIGURE AQUI NO PRIVADO (OU DIRETAMENTE NO GRUPO)
 !nome Nome do campeonato
-Escolha !modalidade liga (pontos corridos) ou !modalidade copa (mata-mata).
-!vagas N — liga: 2 a 16 jogadores; copa: 4, 8, 16 ou 32. As fases do mata-mata seguem a quantidade de vagas.
+Escolha !modalidade liga (pontos corridos), !modalidade copa (mata-mata) ou !modalidade misto (liga e depois mata-mata).
+!vagas N — liga ou misto: 2 a 32 jogadores; copa: 4, 8, 16 ou 32. No misto, use !classificados 8 para avançar os oito primeiros (também aceita 4 ou 16, sempre menos que as vagas).
 !jogos 1 — jogo único; !jogos 2 — ida e volta.
 !equipes Time A | Time B | Time C | ... — ou um time por linha. Envie pelo menos um time diferente por vaga; os times serão sorteados.
 !imagemgrupo — se quiser usar a foto atual do seu grupo nos anúncios. !imagemtexto deixa os anúncios só em texto. As artes MLG são exclusivas da comunidade MLG.
@@ -45,7 +45,7 @@ Não há limite fixo de clubes: envie a lista em partes se for longa. Altere ant
 !daradm telefone — liberar um administrador do WhatsApp como auxiliar somente neste grupo; !tiraradm telefone — revogar; !adms — conferir. Só o organizador principal altera auxiliares.
 !descartar — apagar só o preparo.
 !cancelarcopa motivo — cancelar a edição ativa; campeões anteriores ficam no histórico.
-Liga: vitória vale 3 pontos, empate 1. Mata-mata de ida e volta soma os gols. Empate na decisão gera desempate. O bot anuncia o campeão ao encerrar.
+Liga: vitória vale 3 pontos, empate 1. No misto, após todos os jogos da liga, os melhores avançam conforme !classificados; desempate na tabela: pontos, saldo de gols, gols marcados, vitórias e nome. O mata-mata começa com 1º × último classificado, 2º × penúltimo e assim por diante. Ida e volta soma os gols; empate na decisão gera desempate. O bot anuncia o campeão ao encerrar.
 
 Seu acesso vale somente para o grupo emprestado. A administração geral da MLG libera ou encerra o empréstimo.
 Este privado aceita somente os comandos de configuração indicados. Ninguém acompanha este chat como atendimento humano; para ajuda fora desses comandos, procure os ADMs da MLG pelos canais habituais.`;
