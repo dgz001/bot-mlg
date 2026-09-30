@@ -37,6 +37,7 @@ test('acesso de recuperação expira, pode trocar senha uma vez e não reaparece
  process.env.PANEL_RECOVERY_UNTIL=String(Date.now()+600000);
  try{
   const first=panelCredentials('https://vault.example/session','vault-token',old);
+  assert.equal(await first.verify('Bearer '+recovery),true);
   await first.rotate('Bearer '+old,next);
   assert.equal(await first.verify('Bearer '+recovery),true);
   await first.rotate('Bearer '+recovery,replacement);
