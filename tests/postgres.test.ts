@@ -66,6 +66,28 @@ async function guestGateway(pool:Pool) {
  };
 }
 
+test('auxiliar convidado só administra o próprio grupo e perde acesso ao devolver',integration,async()=>{
+ const f=await fixture();try{
+  await setup(f.pool);
+  const call=await guestGateway(f.pool),group='200@g.us',other='201@g.us',manager='5511888888888@s.whatsapp.net',helper='5511777777777@s.whatsapp.net';
+  await f.pool.query("INSERT INTO mlg_bot.groups(id,authorized,admins_configured) VALUES ($1,true,true),($2,true,true)",[group,other]);
+  await f.pool.query("INSERT INTO mlg_bot.users(id,display_name) VALUES ('manager','Manager'); INSERT INTO mlg_bot.wa_identities(jid,user_id) VALUES ('5511888888888@s.whatsapp.net','manager');");
+  await f.pool.query("INSERT INTO mlg_bot.loan_groups(group_id,manager_id,granted_by) VALUES($1,'manager','admin')",[group]);
+  const grant={action:'guest-admin',group,aliases:[manager],operation:'grant',targetAliases:[helper]};
+  assert.equal((await call({...grant,aliases:[helper]})).updated,undefined);
+  assert.equal((await call(grant)).updated,true);
+  assert.equal((await call({action:'control-check',group,aliases:[helper]})).loanAllowed,true);
+  assert.equal((await call({action:'control-check',group:other,aliases:[helper]})).loanAllowed,false);
+  assert.equal((await call({action:'control-check',group,aliases:[helper]})).allowed,false);
+  assert.equal((await call({action:'guest-admin',group,aliases:[helper],operation:'grant',targetAliases:['5511666666666@s.whatsapp.net']})).updated,undefined);
+  assert.equal((await call({action:'guest-admin',group,aliases:[manager],operation:'revoke',targetAliases:[helper]})).updated,true);
+  assert.equal((await call({action:'control-check',group,aliases:[helper]})).loanAllowed,false);
+  assert.equal((await call(grant)).updated,true);
+  await f.pool.query('UPDATE mlg_bot.loan_groups SET active=false WHERE group_id=$1',[group]);
+  assert.equal((await call({action:'control-check',group,aliases:[helper]})).loanAllowed,false);
+ }finally{await f.close();}
+});
+
 for(const mode of ['liga','copa'] as const)for(const legs of [1,2] as const){
  test(`gateway: convite, ativação, ${mode}, ${legs} jogo(s), campeão e isolamento`,integration,async()=>{
   const f=await fixture();try{

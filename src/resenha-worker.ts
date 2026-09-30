@@ -6,7 +6,7 @@ import {adminControl,type ControlTarget} from './infra/admin-control.ts';
 import {whatsappControls} from './infra/whatsapp-controls.ts';
 import {minicampClient,minicampCommand,pendingCupBatch,type PendingCupEvent} from './minicamp/client.ts';
 import {cupQuestion} from './minicamp/question.ts';
-import {cupMediaFor} from './minicamp/media.ts';
+import {cupMediaFor,guestAnnouncementImage} from './minicamp/media.ts';
 import {orderMessages} from './minicamp/message-order.ts';
 import {loadRoster} from './resenha/matchup.ts';
 import makeWASocket,{DisconnectReason,jidNormalizedUser,extractMessageContent} from '@whiskeysockets/baileys';
@@ -109,9 +109,9 @@ async function connect(){
  }
  const mode=groupMode(auth.data.groupModes,group);
  const seasonCommand=/^!(?:reiniciartemporada|reiniciar\s+temporada|confirmartemporada|confirmar\s+temporada|cancelartemporada|cancelar\s+temporada)(?:\s|$)/i.test(text.trim());
- const centralOnly=seasonCommand||/^!(?:painel|grupos|usar|central|pendencias|equipes|confirmartimes|adicionar|remover|vagas|revisar|concluir|descartar|adms|daradm|tiraradm|emprestimo|emprestar|devolverbot|inscritosadm|inscrever|retirar|trocar|confirmarelenco|cancelarelenco|bloquear|desbloquear|bloqueados|refazersorteio|confirmarsorteio|cancelarsorteio)(?:\s|$)/i.test(text.trim());
+ const centralOnly=seasonCommand||/^!(?:painel|grupos|usar|central|pendencias|equipes|confirmartimes|adicionar|remover|corrigirclubes|vagas|revisar|concluir|descartar|adms|daradm|tiraradm|emprestimo|emprestar|devolverbot|inscritosadm|inscrever|retirar|trocar|confirmarelenco|cancelarelenco|bloquear|desbloquear|bloqueados|refazersorteio|confirmarsorteio|cancelarsorteio)(?:\s|$)/i.test(text.trim());
  const outsideCup=!inChannel(group,'minicamp')&&/^!(?:modelos|ativarmodelo|sorteio|novacopa|cancelarcopa|anularcopa|nome|categoria|times|abrircopa|forcarresultado|resolver|deletar|vistoria)(?:\s|$)/i.test(text.trim());
- const loanSetup=/^!(?:novacopa|nome|modalidade|formato|jogos|times|abrircopa|cancelarcopa|modelos)(?:\s|$)/i.test(text.trim());
+ const loanSetup=/^!(?:novacopa|nome|modalidade|formato|jogos|times|abrircopa|cancelarcopa|modelos|imagemgrupo|imagemtexto|corrigirclubes|daradm|tiraradm|adms)(?:\s|$)/i.test(text.trim());
  if(auth.data.groups.includes(group)&&(mode==='controle'||centralOnly||outsideCup||loanSetup)){
   if(!text.trim().startsWith('!')||!cupApi||!message.key.participant)return;
   if(text.length>16000){await current.sendMessage(group,{text:'⚠️ Mensagem muito longa. Envie os times em mensagens menores com !adicionar.'});return;}
@@ -125,7 +125,7 @@ async function connect(){
     auth.data.cupInbox!.push({group,aliases,id,name:message.pushName??'Participante',text:text.trim(),at:eventAt});
     auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);await auth.save();void cupTick();return;
    }
-   if(!permission.allowed&&permission.channelAllowed&&inChannel(group,'minicamp')&&!centralOnly&&!loanSetup&&auth.data.cupInbox!.length<100){
+   if(!permission.allowed&&permission.channelAllowed&&inChannel(group,'minicamp')&&!permission.loanGroup&&!centralOnly&&!loanSetup&&auth.data.cupInbox!.length<100){
     auth.data.cupInbox!.push({group,aliases,id,name:message.pushName??'Participante',text:text.trim(),at:eventAt});
     auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);await auth.save();void cupTick();return;
    }
@@ -134,16 +134,25 @@ async function connect(){
    if(permission.allowed||permission.loanAllowed&&inChannel(group,'minicamp')){
     const loanMode=!permission.allowed;
     if(loanMode&&!enabled('minicamp'))response='⏸️ O bot está pausado. Aguarde um ADM geral da MLG.';
-    else if(loanMode||(permission.loanGroup||auth.data.loanGroups?.includes(group))&&/^(?:!(?:painel|central|pendencias|novacopa|nome|modalidade|formato|jogos|equipes|adicionar|remover|times|vagas|revisar|abrircopa|concluir|descartar|cancelarcopa)(?:\s|$))/i.test(text.trim())){
+    else if(loanMode||(permission.loanGroup||auth.data.loanGroups?.includes(group))&&/^(?:!(?:painel|central|pendencias|novacopa|nome|modalidade|formato|jogos|equipes|adicionar|remover|corrigirclubes|times|vagas|revisar|abrircopa|concluir|descartar|cancelarcopa|imagemgrupo|imagemtexto|daradm|tiraradm|adms)(?:\s|$))/i.test(text.trim())){
      auth.data.controlRooms??={};const room=auth.data.controlRooms[group]??={};auth.data.controlRooms[group]=room;
      room.targetId=group;
      const target={id:group,name:(await current.groupMetadata(group)).subject};
-     const permitted=new Set(['guest-status','guest-open','guest-cancel']);
+     const permitted=new Set(['guest-status','guest-open','guest-cancel','guest-admin']);
      const api=async(payload:Record<string,unknown>)=>{
       if(!permitted.has(String(payload.action))||payload.group!==group)return {error:'Operação reservada aos ADMs gerais da MLG.'};
       return cupApi(payload);
      };
-     response=await adminControl(text,room,[target],api,()=>auth.save(),Date.now(),{controlGroup:group,aliases,messageId:id},auth.data.controlRooms,true);
+     const resolveGroupAdmin=async(targetGroup:string,phone:string)=>{
+      const metadata=await current.groupMetadata(targetGroup),jid=phone+'@s.whatsapp.net';
+      for(const participant of metadata.participants){
+       if(!participant.admin)continue;
+       const memberAliases=await cupAliases(participant.id,current).catch(():string[]=>[]);
+       if(memberAliases.includes(jid))return memberAliases;
+      }
+      return null;
+     };
+     response=await adminControl(text,room,[target],api,()=>auth.save(),Date.now(),{controlGroup:group,aliases,messageId:id,resolveGroupAdmin},auth.data.controlRooms,true);
     }else{
     const power=whatsappControls(text,auth.data.controls);
     if(power){
@@ -349,8 +358,17 @@ async function cupTick(){
     const aliases=await Promise.all(participants.map(p=>cupAliases(p.id,current).catch(():string[]=>[])));
     const mentions=requested.filter(j=>aliases.some(groupMember=>groupMember.includes(j)));
     const body=mentions.length?m.body+'\n\n📣 '+(m.body.startsWith('🎲 SORTEIO · ')||m.body.startsWith('🎲 CONFRONTOS · ')?'@todos · ':'')+mentions.map(j=>'@'+j.split('@')[0]).join(' '):m.body;
-    const card=cupMediaFor(m.body);
-    if(card){
+    const loaned=auth.data.loanGroups?.includes(m.group_id)===true;
+    const groupPicture=guestAnnouncementImage(m.body,loaned,auth.data.controlRooms?.[m.group_id]?.guestImage);
+    const card=loaned?null:cupMediaFor(m.body);
+    if(groupPicture){
+     try{
+      const url=await current.profilePictureUrl(m.group_id,'image');
+      if(!url)throw Error('Group picture unavailable');
+      await current.sendMessage(m.group_id,{image:{url},caption:body,mentions},{messageId:m.wa_message_id});sent=true;
+     }catch{log('GUEST_IMAGE_FALLBACK');}
+    }
+    if(!sent&&card){
      try{
       const path=card==='sorteio'?'../assets/mlg-sorteio.jpg':card==='campeao'?'../assets/mlg-campeao.jpg':card==='classificacao'?'../assets/mlg-classificacao.jpg':card==='proxima-copa'?'../assets/mlg-proxima-copa.jpg':'../assets/mlg-partida.jpg';
       await current.sendMessage(m.group_id,{image:await readFile(new URL(path,import.meta.url)),caption:body,mentions},{messageId:m.wa_message_id});sent=true;

@@ -8,3 +8,11 @@ export function cupMediaFor(text:string):'sorteio'|'campeao'|'partida'|'classifi
  if(text.startsWith('📣 PRÓXIMA COPA · '))return 'proxima-copa';
  return null;
 }
+
+// Invited communities never inherit the MLG artwork. Their group picture is
+// optional and only used for tournament announcements, not every reply.
+export function guestAnnouncementImage(text:string,loaned:boolean,preference:'group'|'text'|undefined):boolean{
+ return loaned&&preference==='group'&&(
+  text.startsWith('🎲 CONFRONTOS · ')||text.startsWith('🏆 CAMPEÃO · ')||text.startsWith('🏆 CAMPEÃO DO ')
+ );
+}

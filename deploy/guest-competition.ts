@@ -110,14 +110,15 @@ async function progress(q,cup,players,group){
 
 export async function guestOpen(db,request){
  const {group,name,mode,legs,size,teams}=request;
- if(!/^[0-9-]+@g\.us$/.test(group)||typeof name!=='string'||name.length<3||name.length>60||!['liga','copa'].includes(mode)||![1,2].includes(legs)||!Number.isInteger(size)||size<2||size>16&&!(mode==='copa'&&size===32)||mode==='copa'&&![4,8,16,32].includes(size)||!Array.isArray(teams)||teams.length<size||teams.length>200||new Set(teams.map(t=>t.toLocaleLowerCase('pt-BR'))).size!==teams.length||teams.some(t=>typeof t!=='string'||t.length<2||t.length>60||/[\r\n\x00-\x1f\x7f*_~`]/.test(t)))throw Error('Invalid guest competition');
+ if(!/^[0-9-]+@g\.us$/.test(group)||typeof name!=='string'||name.length<3||name.length>60||!['liga','copa'].includes(mode)||![1,2].includes(legs)||!Number.isInteger(size)||size<2||size>16&&!(mode==='copa'&&size===32)||mode==='copa'&&![4,8,16,32].includes(size)||!Array.isArray(teams)||teams.length<size||JSON.stringify(teams).length>=100000||new Set(teams.map(t=>typeof t==='string'?t.trim().toLocaleLowerCase('pt-BR'):t)).size!==teams.length||teams.some(t=>typeof t!=='string'||t.length<2||t.length>60||/[\r\n\x00-\x1f\x7f*_~`]/.test(t)))throw Error('Invalid guest competition');
  return db.transaction(async q=>{
   const owner=(await q.query('SELECT manager_id FROM mlg_bot.loan_groups WHERE group_id=$1 AND active',[group])).rows[0];
   if(!owner)return {error:'Empréstimo não está ativo neste grupo.'};
   await q.query('SELECT id FROM mlg_bot.groups WHERE id=$1 AND authorized FOR UPDATE',[group]);
   if((await q.query("SELECT 1 FROM mlg_bot.guest_competitions WHERE group_id=$1 AND status IN ('open','playing')",[group])).rows.length||(await q.query("SELECT 1 FROM mlg_bot.cups WHERE group_id=$1 AND status IN ('open','playing')",[group])).rows.length)return {error:'Há um campeonato em andamento neste grupo.'};
   const id=randomUUID();await q.query("INSERT INTO mlg_bot.guest_competitions(id,group_id,name,mode,legs,size,status,created_at) VALUES($1,$2,$3,$4,$5,$6,'open',$7)",[id,group,name.trim(),mode,legs,size,Date.now()]);
-  await q.query('DELETE FROM mlg_bot.club_pool WHERE group_id=$1',[group]);for(const team of teams)await q.query('INSERT INTO mlg_bot.club_pool(group_id,name) VALUES($1,$2)',[group,team]);
+  await q.query('DELETE FROM mlg_bot.club_pool WHERE group_id=$1',[group]);
+  await q.query('INSERT INTO mlg_bot.club_pool(group_id,name) SELECT $1,unnest($2::text[])',[group,teams]);
   await q.query('UPDATE mlg_bot.groups SET competition_name=$2 WHERE id=$1',[group,name.trim()]);
   await q.query("INSERT INTO mlg_bot.control_audit(action,group_id,user_id) VALUES('guest-open',$1,$2)",[group,owner.manager_id]);
   return {opened:true,id};
@@ -142,7 +143,7 @@ export async function guestEvent(db,request,identity){
   const cup=(await q.query("SELECT * FROM mlg_bot.guest_competitions WHERE group_id=$1 AND status IN ('open','playing','completed') ORDER BY created_at DESC LIMIT 1 FOR UPDATE",[group])).rows[0];
   const players=cup?(await q.query('SELECT * FROM mlg_bot.guest_players WHERE cup_id=$1 ORDER BY position',[cup.id])).rows:[];
   const matches=cup?(await q.query('SELECT * FROM mlg_bot.guest_matches WHERE cup_id=$1 ORDER BY round,position,leg',[cup.id])).rows:[];
-  const people=names(players),admin=user===loan.manager_id||(await q.query("SELECT 1 FROM mlg_bot.admins WHERE user_id=$1 AND role IN ('owner','admin') LIMIT 1",[user])).rows.length>0;
+  const people=names(players),admin=user===loan.manager_id||(await q.query("SELECT 1 FROM mlg_bot.admins WHERE user_id=$1 AND (role IN ('owner','admin') OR role='channel' AND group_id=$2) LIMIT 1",[user,group])).rows.length>0;
   const [command,...args]=text.trim().split(/\s+/),cmd=command.toLocaleLowerCase('pt-BR');
   const n=Number(args[0]),selected=matches.find(m=>String(m.code)===String(n));
   let reply='Comando não reconhecido. Use !ajuda.';

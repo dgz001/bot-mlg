@@ -13,11 +13,12 @@ CONFIGURE NO SEU GRUPO, NÃO NESTE PRIVADO
 1. !novacopa — ativa o empréstimo e começa o preparo.
 2. !nome Nome do campeonato
 3. Escolha !modalidade liga (pontos corridos) ou !modalidade copa (mata-mata).
-4. !vagas N — liga: 2 a 16 jogadores; copa: 4, 8, 16 ou 32.
+4. !vagas N — liga: 2 a 16 jogadores; copa: 4, 8, 16 ou 32. As fases do mata-mata seguem a quantidade de vagas.
 5. !jogos 1 — jogo único; !jogos 2 — ida e volta.
-6. !equipes Time A | Time B | Time C | ... — pelo menos um time diferente por vaga. Os times serão sorteados.
-7. !revisar — confira nome, modalidade, vagas, jogos e times.
-8. !abrircopa — depois da revisão abre as inscrições. Cada jogador envia !entrar; ao lotar, o bot sorteia os confrontos.
+6. !equipes Time A | Time B | Time C | ... — ou um time por linha. Envie pelo menos um time diferente por vaga; os times serão sorteados.
+7. !imagemgrupo — se quiser usar a foto atual do seu grupo nos anúncios. !imagemtexto deixa os anúncios só em texto. As artes MLG são exclusivas da comunidade MLG.
+8. !revisar — confira nome, modalidade, vagas, jogos e times.
+9. !abrircopa — depois da revisão abre as inscrições. Cada jogador envia !entrar; ao lotar, o bot sorteia os confrontos.
 
 DURANTE O CAMPEONATO
 !copa — jogos e códigos; !meujogo — sua próxima partida.
@@ -33,7 +34,9 @@ Organizador: !forcarresultado CÓDIGO MxV motivo — corrigir com motivo de pelo
 AJUSTES E AJUDA
 !painel — guia do organizador; !central — situação do campeonato.
 Antes de abrir: altere a configuração e use !revisar novamente.
-!adicionar Time A | Time B — acrescentar; !remover Nome do time — retirar; !times — conferir a lista.
+!adicionar Time A | Time B — acrescentar; !corrigirclubes Nome antigo | Nome correto — corrigir; !remover Nome do time — retirar; !times [página] — conferir a lista por partes.
+Não há limite fixo de clubes: envie a lista em partes se for longa. Altere antes de !abrircopa e depois envie !revisar novamente.
+!daradm telefone — liberar um administrador do WhatsApp como auxiliar somente neste grupo; !tiraradm telefone — revogar; !adms — conferir. Só o organizador principal altera auxiliares.
 !descartar — apagar só o preparo.
 !cancelarcopa motivo — cancelar a edição ativa; campeões anteriores ficam no histórico.
 Liga: vitória vale 3 pontos, empate 1. Mata-mata de ida e volta soma os gols. Empate na decisão gera desempate. O bot anuncia o campeão ao encerrar.
