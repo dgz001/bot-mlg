@@ -31,7 +31,7 @@ async function setup(db: Pool) {
   await db.query(migration);
   await db.query(await readFile(new URL('../migrations/002_worker.sql',import.meta.url),'utf8'));
   // Supabase built-in roles exist in production; recreate only NOLOGIN roles in this disposable server.
-  await db.query("DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service_role NOLOGIN; END IF; END $$");
+  await db.query("DO $$ BEGIN PERFORM pg_advisory_xact_lock(71012999); IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service_role NOLOGIN; END IF; END $$");
   await db.query(await readFile(new URL('../migrations/003_minicamp_gateway.sql',import.meta.url),'utf8'));
   await db.query(await readFile(new URL('../migrations/004_controls_history.sql',import.meta.url),'utf8'));
   await db.query(await readFile(new URL('../migrations/006_withdrawal_permission.sql',import.meta.url),'utf8'));

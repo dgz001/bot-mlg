@@ -16,6 +16,8 @@ services:
         value: production
       - key: BOT_MODE
         value: resenha
+      - key: FINANCE_ENABLED
+        value: "false"
       - key: SESSION_VAULT_URL
         sync: false
       - key: SESSION_VAULT_TOKEN

@@ -9,6 +9,7 @@ COPY scripts ./scripts
 COPY deploy ./deploy
 COPY assets ./assets
 COPY migrations ./migrations
+COPY supabase/migrations ./supabase/migrations
 COPY tests ./tests
 # Disposable database exists only in the build stage. No production secret is
 # passed here. Debian Bookworm's PostgreSQL 15 verifies the portable SQL subset.
