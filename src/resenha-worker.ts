@@ -211,6 +211,13 @@ async function connect(){
       const members=await Promise.all(metadata.participants.map(p=>cupAliases(p.id,current).catch(():string[]=>[])));
       return members.find(m=>m.includes(jid))??null;
      };
+     const resolveMemberAnywhere=async(phone:string)=>{
+      for(const target of targets){
+       const found=await resolveMember(target.id,phone).catch(()=>null);
+       if(found)return found;
+      }
+      return null;
+     };
      const resolveGroupAdmin=async(targetGroup:string,phone:string)=>{
       const metadata=await current.groupMetadata(targetGroup),jid=phone+'@s.whatsapp.net';
       for(const participant of metadata.participants){
@@ -225,7 +232,7 @@ async function connect(){
       const sent=await current.sendMessage(phone+'@s.whatsapp.net',{text:guide});
       if(!sent?.key.id)throw Error('WhatsApp did not accept guide');
      };
-     response=await adminControl(text,room,targets,api,()=>auth.save(),Date.now(),{controlGroup:group,aliases,messageId:id,resolveMember,resolveGroupAdmin,sendInvitation},auth.data.controlRooms);
+     response=await adminControl(text,room,targets,api,()=>auth.save(),Date.now(),{controlGroup:group,aliases,messageId:id,resolveMember,resolveMemberAnywhere,resolveGroupAdmin,sendInvitation},auth.data.controlRooms);
      if(response.startsWith('✅ TEMPORADA REINICIADA')){
       auth.data.cupInbox=[];auth.data.scoreReactions=[];
       for(const workspace of Object.values(auth.data.controlRooms)){delete workspace.draft;delete workspace.staged;delete workspace.draw;delete workspace.roster;delete workspace.seasonReset;}

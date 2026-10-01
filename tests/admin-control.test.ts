@@ -5,6 +5,7 @@ import {loanCommand,loanGuide,loanPhone} from '../src/infra/loan-invitation.ts';
 test('convite aceita acentos e telefone formatado e não anuncia envio sem remetente',async()=>{
  assert.equal(loanCommand('!empréstimo +55 (11) 88888-8888'),'!emprestimo +55 (11) 88888-8888');
  assert.equal(loanCommand('!empréstar 5511888888888'),'!emprestar 5511888888888');
+ assert.equal(loanCommand('!dar ADM 5511888888888'),'!daradm 5511888888888');
  assert.equal(loanPhone('+55 (11) 88888-8888'),'5511888888888');
  assert.equal(loanPhone('5511888888888 errado'),null);
  const calls:Record<string,unknown>[]=[],sent:string[]=[];
@@ -194,6 +195,8 @@ test('bloqueio exige ADM, conta verificada, motivo e permite reversão auditáve
  assert.match(await send('!bloquear 5511999999999 | curto'),/8 a 160/);
  assert.match(await send('!bloquear 5511999999999 | Quebra das regras'),/bloqueada/);
  assert.equal(calls.at(-1)?.operation,'block');assert.equal(calls.at(-1)?.group,'central@g.us');
+ assert.match(await adminControl('!bloquear 5511999999999',{},[],api,async()=>{},Date.now(),{...actor,resolveMemberAnywhere:async()=>['5511999999999@s.whatsapp.net']}),/bloqueada/);
+ assert.equal(calls.at(-1)?.reason,'Bloqueio administrativo pelo WhatsApp');
  assert.match(await send('!desbloquear 5511999999999 | Reintegração aprovada'),/desbloqueada/);
  assert.equal(calls.at(-1)?.operation,'unblock');
  assert.match(await send('!bloqueados'),/Nenhuma conta bloqueada/);
@@ -279,9 +282,15 @@ test('ADM geral concede acesso restrito por canal via WhatsApp e pode retirar',a
  assert.match(await send('!daradm 5599999999999 | canal'),/somente este canal/);
  assert.equal(calls.at(-1)?.role,'channel');
  assert.equal(calls.at(-1)?.group,'mini@g.us');
+ assert.match(await send('!daradm +55 (99) 99999-9999'),/somente este canal/);
+ assert.equal(calls.at(-1)?.role,'channel');
+ assert.match(await adminControl('!daradm 5599999999999 | geral',{},[{id:'mini@g.us',name:'Mini Camp'}],api,async()=>{},1000,{...actor,resolveMemberAnywhere:async()=>['5599999999999@s.whatsapp.net']}),/ADM geral/);
+ assert.equal(calls.at(-1)?.role,'admin');
+ assert.match(await adminControl('!dar ADM 5599999999999 | geral',{},[{id:'mini@g.us',name:'Mini Camp'},{id:'copa@g.us',name:'Copa'}],api,async()=>{},1000,{...actor,resolveMemberAnywhere:async()=>['5599999999999@s.whatsapp.net']}),/ADM geral/);
+ assert.equal(calls.at(-1)?.group,'central@g.us');
  assert.match(await send('!tiraradm 5599999999999'),/Acesso removido/);
  assert.equal(calls.at(-1)?.operation,'revoke');
- assert.match(await send('!daradm 5511888888888 | geral'),/precisa estar no canal/);
+ assert.match(await send('!daradm 5511888888888 | geral'),/algum grupo autorizado/);
 });
 
 test('central não anula edição enquanto banco usa a numeração antiga',async()=>{
