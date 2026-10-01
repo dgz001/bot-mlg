@@ -397,8 +397,6 @@ Deno.serve(async req=>{
    if(body.operation==='block'){
     const adm=await q.query('SELECT 1 FROM mlg_bot.admins WHERE user_id=$1 LIMIT 1',[targetId]);
     if(adm.rows.length)return {error:'Retire primeiro a permissão de ADM dessa conta no painel.'};
-    const active=await q.query("SELECT 1 FROM mlg_bot.cup_participants p JOIN mlg_bot.cups c ON c.id=p.cup_id WHERE p.user_id=$1 AND c.status IN ('open','playing') LIMIT 1",[targetId]);
-    if(active.rows.length)return {error:'Membro em Copa ativa: faça a substituição ou termine a Copa antes de bloquear.'};
     const inserted=await q.query('INSERT INTO mlg_bot.member_blocks(user_id,blocked_by,reason) VALUES($1,$2,$3) ON CONFLICT DO NOTHING RETURNING user_id',[targetId,actor,body.reason.trim()]);
     if(!inserted.rows.length)return {error:'Esta conta já está bloqueada.'};
    }else{

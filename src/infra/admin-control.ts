@@ -35,7 +35,8 @@ Preserva jogadores, nomes, contas, ADMs e modelos. Apaga Copas, partidas e estat
 🔐 PERMISSÕES POR CANAL
 !adms — ver responsáveis pelo canal escolhido
 !daradm telefone | geral — ADM de todos os canais autorizados
-!daradm telefone | canal — ADM somente deste canal (ex.: Mini Camp)
+!daradm telefone — ADM somente do canal escolhido (ex.: Mini Camp)
+!daradm telefone | canal — forma explícita para este canal
 !tiraradm telefone — retirar acesso neste canal
 
 🤝 EMPRÉSTIMO POR GRUPO
@@ -65,10 +66,10 @@ No canal escolhido: !novacopa — abrir inscrições da Copa preparada
 !confirmarelenco / !cancelarelenco — decidir mudança
 
 🚫 MODERAÇÃO
-!bloquear telefone | motivo — impede comandos e novas inscrições
+!bloquear telefone [| motivo] — impede comandos e novas inscrições
 !desbloquear telefone | motivo — restaura o acesso
 !bloqueados — lista contas bloqueadas
-Membro em Copa ativa deve ser substituído antes do bloqueio.
+Se o membro tiver partida pendente, um ADM deverá resolver ou substituir o jogador.
 
 🪪 NOMES NO GRUPO DA COPA
 !cadastrar @pessoa — guardar o nome da conta marcada
@@ -87,7 +88,7 @@ No grupo da Copa: !copa, !chave A/B e !sorteio Samuel ou !sorteio @pessoa [| mot
 Correções do sorteio exigem ausência de placares.
 
 🛡️ ENCERRAR E CORRIGIR
-!cancelarcopa motivo — cancelar e liberar o número da edição
+!cancelarcopa [motivo] ou !cancelar copa — cancelar a edição aberta e liberar o número
 !anularcopa edição motivo — anular edição encerrada; use o número do !historico
 !vistoria • !resolver CÓDIGO MxV motivo • !forcarresultado CÓDIGO MxV motivo
 M e V são os gols em números (mandante primeiro, visitante depois), sem espaços.
@@ -194,8 +195,8 @@ async function guestControl(text:string,room:ControlWorkspace,group:string,api:A
  delete d.reviewed;delete d.ready;await save();return '✅ Atualizado. Use !revisar para conferir as escolhas antes de '+(privateMode?'confirmar.':'abrir.');
 }
 
-export async function adminControl(text:string,room:ControlWorkspace,targets:ControlTarget[],api:Api,save:()=>Promise<void>,now=Date.now(),actor?:{controlGroup:string;aliases:string[];messageId?:string;resolveMember?:(group:string,phone:string)=>Promise<string[]|null>;resolveGroupAdmin?:(group:string,phone:string)=>Promise<string[]|null>;sendInvitation?:(phone:string,guide:string)=>Promise<void>},workspaces?:Record<string,ControlWorkspace>,loanMode=false,privateMode=false):Promise<string>{
- const trimmed=loanCommand(text.trim());const [command='']=trimmed.split(/\s+/,1);const arg=trimmed.slice(command.length).trim();const cmd=command.toLocaleLowerCase('pt-BR');
+export async function adminControl(text:string,room:ControlWorkspace,targets:ControlTarget[],api:Api,save:()=>Promise<void>,now=Date.now(),actor?:{controlGroup:string;aliases:string[];messageId?:string;resolveMember?:(group:string,phone:string)=>Promise<string[]|null>;resolveMemberAnywhere?:(phone:string)=>Promise<string[]|null>;resolveGroupAdmin?:(group:string,phone:string)=>Promise<string[]|null>;sendInvitation?:(phone:string,guide:string)=>Promise<void>},workspaces?:Record<string,ControlWorkspace>,loanMode=false,privateMode=false):Promise<string>{
+ const trimmed=loanCommand(text.trim()).replace(/^!cancelar\s+copa(?=\s|$)/i,'!cancelarcopa');const [command='']=trimmed.split(/\s+/,1);const arg=trimmed.slice(command.length).trim();const cmd=command.toLocaleLowerCase('pt-BR');
  if(loanMode)return guestControl(text,room,room.targetId!,api,save,actor,privateMode);
  if(cmd==='!ajuda'||cmd==='!comandos'||cmd==='!painel')return menu;
  if(cmd==='!reiniciartemporada'||cmd==='!reiniciar'&&arg==='temporada'){
@@ -244,7 +245,22 @@ export async function adminControl(text:string,room:ControlWorkspace,targets:Con
   const n=Number(arg);if(!Number.isSafeInteger(n)||n<1||n>targets.length)return 'Use !grupos e depois !usar número da lista.';
   const choice=targets[n-1]!;room.targetId=choice.id;delete room.draft;delete room.draw;delete room.roster;await save();return '✅ Destino: '+choice.name+'\nUse !novacopa para preparar a edição. Nenhuma inscrição foi aberta.';
  }
- const target=targets.find(g=>g.id===room.targetId);
+ if(['!bloquear','!desbloquear','!bloqueados'].includes(cmd)){
+  if(!actor?.aliases?.length)return 'Não foi possível validar o ADM desta central.';
+  const request={action:'member-block',group:actor.controlGroup,aliases:actor.aliases};
+  if(cmd==='!bloqueados'){
+   const result=await api({...request,operation:'list'});
+   return result.error?'⚠️ '+result.error:'🚫 CONTAS BLOQUEADAS\n'+(result.members?.map((m:{display_name:string;reason:string},i:number)=>`${i+1}. ${m.display_name} · ${m.reason}`).join('\n')||'Nenhuma conta bloqueada.');
+  }
+  const [rawPhone,...rawReason]=arg.split('|');const phone=loanPhone(rawPhone?.trim()??'');
+  const reason=rawReason.length?rawReason.join('|').trim():cmd==='!bloquear'?'Bloqueio administrativo pelo WhatsApp':'Desbloqueio administrativo pelo WhatsApp';
+  if(!phone||reason.length<8||reason.length>160||/[\r\n\x00-\x1f\x7f\u202a-\u202e*_~`]/.test(reason))return `Use ${cmd} telefone com DDI e DDD | motivo (8 a 160 caracteres). O motivo é opcional.`;
+  const aliases=cmd==='!bloquear'?await actor.resolveMemberAnywhere?.(phone)??await actor.resolveMember?.(room.targetId??actor.controlGroup,phone)??await actor.resolveMember?.(actor.controlGroup,phone)??null:[phone+'@s.whatsapp.net'];
+  if(!aliases)return 'Conta não localizada nos grupos autorizados. Confira DDI, DDD e a lista de participantes.';
+  const result=await api({...request,operation:cmd==='!bloquear'?'block':'unblock',targetAliases:aliases,reason});
+  return result.error?'⚠️ '+result.error:cmd==='!bloquear'?'🚫 Conta bloqueada. A ação ficou registrada.':'✅ Conta desbloqueada. A ação ficou registrada.';
+ }
+ const target=targets.find(g=>g.id===room.targetId)??(targets.length===1?targets[0]:undefined)??(cmd==='!daradm'&&/\|\s*geral$/i.test(arg)&&actor?{id:actor.controlGroup,name:'central dos ADMs'}:undefined);
  if(!target)return 'Escolha primeiro o destino: !grupos e !usar número. Apenas grupos de Copa autorizados aparecem.';
  const group=target.id;
  if(cmd==='!devolverbot'){
@@ -261,12 +277,13 @@ export async function adminControl(text:string,room:ControlWorkspace,targets:Con
    if(result.error)return '⚠️ '+result.error;
    return '🔐 ADMs · '+target.name+'\n'+(result.admins.map((a:{name:string;role:string;jid?:string})=>`${a.name}${a.jid?' · '+a.jid.split('@')[0]:''} · ${a.role==='channel'?'somente este canal':'geral'}`).join('\n')||'Nenhum ADM cadastrado.')+'\n\n!daradm telefone | geral ou canal · !tiraradm telefone';
   }
-  const match=cmd==='!daradm'?arg.match(/^(\d{10,15})\s*\|\s*(geral|canal)$/i):arg.match(/^(\d{10,15})$/);
-  if(!match)return cmd==='!daradm'?'Use !daradm telefone | geral ou !daradm telefone | canal.':'Use !tiraradm telefone.';
-  const phone=match[1]!;
-  const aliases=cmd==='!daradm'?await actor.resolveMember?.(group,phone):[phone+'@s.whatsapp.net'];
-  if(!aliases?.length)return '⚠️ Para conceder acesso, a pessoa precisa estar no canal escolhido.';
-  const result=await api({...request,operation:cmd==='!daradm'?'grant':'revoke',targetAliases:aliases,...(cmd==='!daradm'?{role:match[2]!.toLowerCase()==='geral'?'admin':'channel'}:{})});
+  const match=cmd==='!daradm'?arg.match(/^(.+?)(?:\s*\|\s*(geral|canal))?$/i):[arg];
+  const phone=loanPhone(cmd==='!daradm'?match?.[1]?.trim()??'':arg);
+  if(!phone)return cmd==='!daradm'?'Use !daradm telefone (somente o canal) ou !daradm telefone | geral.':'Use !tiraradm telefone.';
+  const role=match?.[2]?.toLowerCase()==='geral'?'admin':'channel';
+  const aliases=cmd==='!daradm'?role==='admin'?await actor.resolveMemberAnywhere?.(phone)??await actor.resolveMember?.(group,phone)??await actor.resolveMember?.(actor.controlGroup,phone):await actor.resolveMember?.(group,phone):[phone+'@s.whatsapp.net'];
+  if(!aliases?.length)return '⚠️ Para conceder acesso, a pessoa precisa estar '+(role==='admin'?'em algum grupo autorizado.':'no canal escolhido.');
+  const result=await api({...request,operation:cmd==='!daradm'?'grant':'revoke',targetAliases:aliases,...(cmd==='!daradm'?{role}:{})});
   return result.error?'⚠️ '+result.error:cmd==='!daradm'?'✅ Acesso salvo em '+target.name+': '+(result.role==='channel'?'somente este canal':'ADM geral')+'.':'✅ Acesso removido de '+target.name+'.';
  }
  if(['!forcarresultado','!resolver','!deletar','!vistoria'].includes(cmd)){
@@ -276,21 +293,6 @@ export async function adminControl(text:string,room:ControlWorkspace,targets:Con
   if(cmd==='!vistoria'&&arg)return 'Use !vistoria sem argumentos.';
   const result=await api({action:'admin-cup-command',source:actor.controlGroup,group,aliases:actor.aliases,messageId:actor.messageId,text:trimmed});
   return result.error?'⚠️ '+result.error:result.duplicate?'✅ Comando já registrado; consulte a Copa no grupo escolhido.':`✅ Comando registrado em ${target.name}. A resposta detalhada será enviada ao grupo da Copa. Use !central para acompanhar.`;
- }
- if(['!bloquear','!desbloquear','!bloqueados'].includes(cmd)){
-  if(!actor)return 'Não foi possível validar o ADM desta central.';
-  const request={action:'member-block',group:actor.controlGroup,aliases:actor.aliases};
-  if(cmd==='!bloqueados'){
-   const result=await api({...request,operation:'list'});
-   if(result.error)return '⚠️ '+result.error;
-   return '🚫 CONTAS BLOQUEADAS\n'+(result.members?.map((m:{display_name:string;reason:string},i:number)=>`${i+1}. ${m.display_name} · ${m.reason}`).join('\n')||'Nenhuma conta bloqueada.');
-  }
-  const parsed=arg.match(/^(\d{10,15})\s*\|\s*(.{8,160})$/s);
-  if(!parsed||/[\r\n\x00-\x1f\x7f\u202a-\u202e*_~`]/.test(parsed[2]!))return `Use ${cmd} telefone com DDI e DDD | motivo (8 a 160 caracteres).`;
-  const aliases=cmd==='!bloquear'?await actor.resolveMember?.(group,parsed[1]!)??null:[parsed[1]+'@s.whatsapp.net'];
-  if(!aliases)return 'Conta não localizada no grupo selecionado. Confira DDI, DDD e a lista de participantes.';
-  const result=await api({...request,operation:cmd==='!bloquear'?'block':'unblock',targetAliases:aliases,reason:parsed[2]!.trim()});
-  return result.error?'⚠️ '+result.error:cmd==='!bloquear'?'🚫 Conta bloqueada. A ação ficou registrada.':'✅ Conta desbloqueada. A ação ficou registrada.';
  }
  if(cmd==='!cancelarelenco'){delete room.roster;await save();return '🗑️ Mudança de participantes descartada. A Copa permanece como estava.';}
  if(['!inscritosadm','!inscrever','!retirar','!trocar','!confirmarelenco'].includes(cmd)){
@@ -382,8 +384,9 @@ export async function adminControl(text:string,room:ControlWorkspace,targets:Con
   return '🏆 PREPARAÇÃO INICIADA\n📍 '+target.name+'\n'+room.draft.name+'\n\n⚽ Quais times entram no sorteio desta Copa? Envie !equipes Time A | Time B | Time C | Time D (pode mandar até 200 em uma mensagem, separados por | ou linhas).\nPara usar os '+room.draft.teams.length+' times do modelo atual, envie !confirmartimes; use !times para conferir a lista. Depois defina !vagas 4/8/16/32 e envie !revisar. Nenhuma inscrição foi aberta.';
  }
  if(cmd==='!cancelarcopa'){
-  if(arg.length<8)return 'Informe um motivo: !cancelarcopa motivo com ao menos 8 caracteres.';
-  const result=requireSuccess<any>(await api({action:'cup-cancel',group,reason:arg}));
+  const reason=arg||'Cancelamento administrativo pelo WhatsApp';
+  if(reason.length<8||reason.length>160)return 'Informe um motivo: !cancelarcopa motivo com 8 a 160 caracteres.';
+  const result=requireSuccess<any>(await api({action:'cup-cancel',group,reason}));
   return result.draft?'🚫 Escolha de formato iniciada no grupo da Copa cancelada. Nenhuma partida foi apagada.':result.cancelled?'🚫 '+(result.edition?'Edição '+result.edition:'Copa')+' cancelada em '+target.name+'. O número fica livre para a próxima Copa; histórico e recuperação preservados. O aviso será enviado ao grupo.':'⚠️ Não foi possível cancelar a Copa.';
  }
  if(cmd==='!anularcopa'){

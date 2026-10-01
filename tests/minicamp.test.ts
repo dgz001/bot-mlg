@@ -358,6 +358,17 @@ test('cancelar devolve o número da edição sem perder o registro auditável',(
  assert.equal(h.state.cups[second.id]!.status,'open');
 });
 
+test('outro ADM pode cancelar a Copa aberta no Mini Camp e liberar a edição',()=>{
+ const h=harness();h.send('admin','!novacopa');h.send('admin','1');
+ const cup=Object.values(h.state.cups)[0]!;
+ assert.throws(()=>h.send('u0','!cancelar copa'),/ADM/);
+ assert.match(h.send('admin2','!cancelar copa').notices[0]!,/cancelada pelo ADM/);
+ assert.equal(h.state.cups[cup.id]!.status,'cancelled');
+ assert.equal(h.state.audit.at(-1)?.actor,'admin2');
+ h.send('admin','!novacopa');
+ assert.match(h.send('admin','1').notices[0]!,/Edição 1/);
+});
+
 test('cancelar a segunda Copa conserva a primeira e reutiliza somente a segunda edição',()=>{
  const h=harness();h.send('admin','!novacopa');h.send('admin','1');
  const first=Object.values(h.state.cups)[0]!;

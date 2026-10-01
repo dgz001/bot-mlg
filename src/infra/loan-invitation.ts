@@ -4,7 +4,8 @@ export function loanPhone(value:string):string|null {
  return /^\d{10,15}$/.test(phone)?phone:null;
 }
 export function loanCommand(text:string):string {
- return text.replace(/^!(emprestar|empréstar|emprestimo|empréstimo)(?=\s|$)/i,command=>command.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase());
+ return text.replace(/^!(emprestar|empréstar|emprestimo|empréstimo)(?=\s|$)/i,command=>command.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase())
+  .replace(/^!(dar|tirar)\s+adm(?=\s|$)/i,(_,verb:string)=>'!'+verb.toLowerCase()+'adm');
 }
 export const loanGuide=`🤝 GUIA DO ORGANIZADOR · BOT MLG
 Seu número foi liberado para organizar campeonatos no seu grupo.

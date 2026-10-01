@@ -644,6 +644,12 @@ test('gateway real: menção, bloqueio de comandos internos e sincronização se
   assert.equal((await f.pool.query('SELECT status FROM mlg_bot.cups WHERE id=$1',[editionId])).rows[0].status,'cancelled');
   assert.equal((await call('templates-list')).nextEdition,1);
   assert.equal((await call('cup-open',{size:4,proposal:{name:'Copa Administração MLG',teamKind:'seleção',teams:['Brasil','França','Portugal','Argentina']}})).edition,1);
+  const liveCup=(await f.pool.query("SELECT id FROM mlg_bot.cups WHERE group_id='100@g.us' AND status='open' ORDER BY created_at DESC LIMIT 1")).rows[0].id;
+  await f.pool.query("INSERT INTO mlg_bot.cup_participants(cup_id,user_id,display_name,position) VALUES($1,'winner','Vencedor',0)",[liveCup]);
+  await f.pool.query("INSERT INTO mlg_bot.wa_identities(jid,user_id) VALUES('400@s.whatsapp.net','winner') ON CONFLICT DO NOTHING");
+  assert.equal((await call('member-block',{group:'100@g.us',aliases:['100@s.whatsapp.net'],operation:'block',targetAliases:['400@s.whatsapp.net'],reason:'Intervenção administrativa de teste'})).updated,true);
+  assert.equal((await call('block-check',{aliases:['400@s.whatsapp.net']})).blocked,true);
+  assert.equal((await call('member-block',{group:'100@g.us',aliases:['100@s.whatsapp.net'],operation:'unblock',targetAliases:['400@s.whatsapp.net'],reason:'Reintegração após correção de teste'})).updated,true);
   const updated=await f.pool.query<{competition_name:string;team_kind:string;teams:string}>("SELECT g.competition_name,g.team_kind,(SELECT string_agg(name,', ' ORDER BY name) FROM mlg_bot.club_pool WHERE group_id=g.id) AS teams FROM mlg_bot.groups g WHERE g.id='100@g.us'");
   assert.equal(updated.rows[0]!.competition_name,'Copa Administração MLG');
   assert.equal(updated.rows[0]!.team_kind,'seleção');
