@@ -20,6 +20,7 @@ import {createBanterReply} from './resenha/reply.ts';
 import {vaultAuth} from './whatsapp/vault-auth.ts';
 import {privateControl} from './infra/private-control.ts';
 import {reconnect} from './infra/security.ts';
+import {progressMessage} from './whatsapp/progress-message.ts';
 process.umask(0o077);
 const endpoint=process.env.SESSION_VAULT_URL,token=process.env.SESSION_VAULT_TOKEN,master=process.env.AUTH_ENCRYPTION_KEY;
 if(!endpoint||!token||!master||!process.env.CONTROL_PASSWORD||!process.env.CONTROL_ORIGIN)throw new Error('Resenha configuration missing');
@@ -67,16 +68,18 @@ async function connect(){
   if(!cupApi||!/^!(?:novacopa|nome|modalidade|formato|vagas|classificados|jogos|equipes|adicionar|remover|corrigirclubes|times|revisar|confirmar|descartar|central|pendencias|painel|ajuda|comandos|imagemgrupo|imagemtexto)(?:\s|$)/i.test(text))return;
   const dedup=JSON.stringify([group,id]);if(auth.data.seen.includes(dedup))return;
   if(text.length>16000){await current.sendMessage(group,{text:'⚠️ Lista muito longa. Envie em partes com !adicionar.'});return;}
+  let finish:ReturnType<typeof progressMessage>|undefined;
   try{
   const aliases=await cupAliases(group,current);
   const check=await cupApi<{allowed:boolean;manager?:string;grantedAt?:number}>({action:'loan-private-check',aliases});
   if(!check.allowed||!check.manager||!Number.isFinite(check.grantedAt))return;
+  finish=progressMessage(current,group,()=>socket===current&&!stopping);
   auth.data.controlRooms??={};const key='loan-private:'+check.manager,room=auth.data.controlRooms[key]??={};auth.data.controlRooms[key]=room;room.targetId='private';
   if(room.guestInvitationAt!==check.grantedAt){delete room.guestDraft;delete room.guestImage;room.guestInvitationAt=check.grantedAt;await auth.save();}
   const response=await adminControl(text,room,[],async()=>({error:'Operação indisponível no privado.'}),()=>auth.save(),Date.now(),{controlGroup:group,aliases,messageId:id},auth.data.controlRooms,true,true);
   auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);await auth.save();
-  if(socket===current&&!stopping)await current.sendMessage(group,{text:response});
-  }catch{log('LOAN_PRIVATE_RETRY');if(socket===current&&!stopping)await current.sendMessage(group,{text:'⚠️ Não consegui salvar agora. Tente o comando novamente em instantes.'}).catch(()=>{});}
+  await finish(response);
+  }catch{log('LOAN_PRIVATE_RETRY');if(finish)await finish('⚠️ Não consegui salvar agora. Tente o comando novamente em instantes.').catch(()=>{});}
   return;
  }
  if(!group.endsWith('@g.us'))return;
@@ -133,6 +136,7 @@ async function connect(){
   if(!text.trim().startsWith('!')||!cupApi||!message.key.participant)return;
   if(text.length>16000){await current.sendMessage(group,{text:'⚠️ Mensagem muito longa. Envie os times em mensagens menores com !adicionar.'});return;}
   const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
+  let finish:ReturnType<typeof progressMessage>|undefined;
   try{
    const aliases=await cupAliases(message.key.participant,current);
    const members=(await current.groupMetadata(group)).participants;
@@ -146,6 +150,7 @@ async function connect(){
     auth.data.cupInbox!.push({group,aliases,id,name:message.pushName??'Participante',text:text.trim(),at:eventAt});
     auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);await auth.save();void cupTick();return;
    }
+   finish=progressMessage(current,group,()=>socket===current&&!stopping);
    let response='🔒 Só as contas cadastradas como ADMs no painel podem usar comandos administrativos.';
    let restartRequested=false;
    if(permission.allowed||permission.loanAllowed&&inChannel(group,'minicamp')){
@@ -230,9 +235,9 @@ async function connect(){
     }
    }
    auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);await auth.save();
-   if(socket===current&&!stopping)await current.sendMessage(group,{text:response});
+   await finish(response);
    if(restartRequested&&socket===current&&!stopping&&process.connected)process.send?.({type:'restart-request'});
-  }catch{log('ADMIN_CONTROL_RETRY');if(socket===current&&!stopping)await current.sendMessage(group,{text:'⚠️ A central não confirmou este comando no banco. Use !central para conferir a situação antes de repetir.'});}
+  }catch{log('ADMIN_CONTROL_RETRY');if(finish)await finish('⚠️ A central não confirmou este comando no banco. Use !central para conferir a situação antes de repetir.').catch(()=>{});else if(socket===current&&!stopping)await current.sendMessage(group,{text:'⚠️ A central não confirmou este comando no banco. Use !central para conferir a situação antes de repetir.'}).catch(()=>{});}
   return;
  }
  if(!enabled())return;
