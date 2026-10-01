@@ -6,6 +6,7 @@ test('convite aceita acentos e telefone formatado e não anuncia envio sem remet
  assert.equal(loanCommand('!empréstimo +55 (11) 88888-8888'),'!emprestimo +55 (11) 88888-8888');
  assert.equal(loanCommand('!empréstar 5511888888888'),'!emprestar 5511888888888');
  assert.equal(loanCommand('!dar ADM 5511888888888'),'!daradm 5511888888888');
+ for(const [input,expected] of [['!campeões','!campeoes'],['!histórico 2','!historico 2'],['!próximafase','!proximafase'],['!forçarresultado 42 1x0','!forcarresultado 42 1x0']] as const)assert.equal(loanCommand(input),expected);
  assert.equal(loanPhone('+55 (11) 88888-8888'),'5511888888888');
  assert.equal(loanPhone('5511888888888 errado'),null);
  const calls:Record<string,unknown>[]=[],sent:string[]=[];
@@ -28,6 +29,16 @@ test('convite aceita acentos e telefone formatado e não anuncia envio sem remet
  const failed=await send('!emprestar 5511888888888',{...actor,sendInvitation:async()=>{throw Error('offline');}} as typeof actor);
  assert.match(failed,/repita !emprestar 5511888888888/);
  assert.doesNotMatch(failed,/guia foi enviado/);
+});
+test('organizador pode cancelar a edição sem motivo, sem confundir com partida',async()=>{
+ const group='convidado@g.us',room:ControlWorkspace={targetId:group},calls:Record<string,unknown>[]=[];
+ const send=(command:string)=>adminControl(command,room,[],async payload=>{calls.push(payload);return {cancelled:true};},async()=>{},Date.now(),undefined,undefined,true);
+ assert.match(await send('!cancelar copa'),/Campeonato cancelado/);
+ assert.deepEqual(calls[0],{action:'guest-cancel',group,reason:'Cancelamento administrativo pelo WhatsApp'});
+ assert.match(await send('!cancelarcopa Problema no sorteio'),/Campeonato cancelado/);
+ assert.deepEqual(calls[1],{action:'guest-cancel',group,reason:'Problema no sorteio'});
+ assert.match(await send('!cancelar 42'),/reservado/);
+ assert.equal(calls.length,2);
 });
 test('empréstimo exige administrador do grupo e gestão convidada fica restrita ao próprio canal',async()=>{
  const group='convidado@g.us',room:ControlWorkspace={},calls:Record<string,unknown>[]=[],messages:string[]=[];

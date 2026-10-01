@@ -106,6 +106,7 @@ const guestQualifiersValid=(d:GuestDraft)=>d.mode!=='misto'||Boolean(d.size&&[4,
 const guestFingerprint=(d:GuestDraft)=>JSON.stringify([d.name,d.mode,d.legs,d.size,d.mode==='misto'?d.qualifiers:null,d.teams]);
 const guestMode=(mode:GuestDraft['mode'])=>mode==='liga'?'Pontos corridos':mode==='copa'?'Mata-mata':'Pontos corridos → mata-mata';
 async function guestControl(text:string,room:ControlWorkspace,group:string,api:Api,save:()=>Promise<void>,actor?:{aliases:string[];resolveGroupAdmin?:(group:string,phone:string)=>Promise<string[]|null>},privateMode=false):Promise<string>{
+ text=text.trim().replace(/^!cancelar\s+copa(?=\s|$)/i,'!cancelarcopa');
  const [command='']=text.trim().split(/\s+/,1),cmd=command.toLocaleLowerCase('pt-BR'),arg=text.trim().slice(command.length).trim();
  if(['!ajuda','!comandos','!painel'].includes(cmd))return '🤝 GUIA DO ORGANIZADOR'+(privateMode?' · PRIVADO':'')+'\n!novacopa — iniciar o preparo\n!nome Nome do campeonato\n!modalidade liga, copa ou misto (liga → mata-mata)\n!vagas N — liga/misto: 2 a 32; copa: 4, 8, 16 ou 32\n!classificados 8 — no modo misto, quantos avançam (4, 8 ou 16; menos que as vagas)\n!jogos 1 (jogo único) ou !jogos 2 (ida e volta)\n!equipes Time A | Time B | ... — ou um time por linha, para sorteio\n!adicionar Time — acrescentar; !corrigirclubes Antigo | Novo — corrigir; !remover Time — excluir\n!times [página] — conferir a lista por partes\n!imagemgrupo — usar a foto do grupo nos anúncios; !imagemtexto — só texto\n'+(privateMode?'!revisar · !confirmar — salvar o preparo; depois !novacopa no grupo escolhido.':'!daradm telefone — auxiliar ADM deste grupo; !tiraradm telefone — revogar; !adms — listar\n!revisar · !abrircopa — abrir inscrições\n!central · !cancelarcopa motivo')+'\nJogadores: !entrar, !meujogo, !copa, !tabela, !resultado CÓDIGO MxV, !confirmar CÓDIGO MxV. O mandante vem primeiro. ADM: !forcarresultado CÓDIGO MxV motivo. !campeoes mostra o histórico.';
  const only=new Set(['!novacopa','!nome','!modalidade','!classificados','!vagas','!formato','!jogos','!equipes','!adicionar','!remover','!corrigirclubes','!times','!revisar','!abrircopa','!concluir','!central','!pendencias','!cancelarcopa','!descartar','!imagemgrupo','!imagemtexto','!daradm','!tiraradm','!adms']);
@@ -134,8 +135,8 @@ async function guestControl(text:string,room:ControlWorkspace,group:string,api:A
   const cup=status.cup;return '🤝 CAMPEONATO DESTE GRUPO\n'+(cup?`${cup.name} · ${guestMode(cup.mode)}${cup.mode==='misto'?' · '+cup.qualifiers+' classificados':''} · ${cup.legs===2?'ida e volta':'jogo único'} · ${cup.size} vagas · ${cup.status}`:'Nenhum campeonato aberto.')+(room.guestDraft?'\n📝 Preparação: '+room.guestDraft.name:'')+'\n!painel mostra o guia.';
  }
  if(cmd==='!cancelarcopa'){
-  if(arg.length<8||arg.length>160)return 'Use !cancelarcopa motivo com 8 a 160 caracteres.';
-  const r=await api({action:'guest-cancel',group,reason:arg});return r.error?'⚠️ '+r.error:'🚫 Campeonato cancelado. O grupo poderá abrir outra edição; o campeão de edições anteriores permanece em !campeoes.';
+  if(arg.length>160||arg.length>0&&arg.length<8)return 'Use !cancelarcopa [motivo com 8 a 160 caracteres].';
+  const r=await api({action:'guest-cancel',group,reason:arg||'Cancelamento administrativo pelo WhatsApp'});return r.error?'⚠️ '+r.error:'🚫 Campeonato cancelado. O grupo poderá abrir outra edição; o campeão de edições anteriores permanece em !campeoes.';
  }
  if(cmd==='!descartar'){delete room.guestDraft;await save();return '✅ Preparo descartado. Nenhum campeonato foi aberto.';}
  if(cmd==='!novacopa'){
