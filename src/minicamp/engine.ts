@@ -297,7 +297,7 @@ export function apply(input: State, event: Event, env: Environment = environment
   const teamKind=group.teamKind??'clube';
   const teamPlural=teamKind==='seleção'?'seleções':teamKind==='misto'?'times':'clubes';
   const teamSingular=teamKind==='seleção'?'seleção':teamKind==='misto'?'time':'clube';
-  const normalized = event.text.trim().replace(/^!pr[oó]xima\s+fase$/i,'!proximafase').replace(/^!forçar\s+resultado/i,'!forcarresultado').replace(/^!forcar\s+resultado/i,'!forcarresultado').replace(/^!deletar\s+t[ií]tulo/i,'!deletartitulo').replace(/^!cancelar\s+copa$/i,'!cancelarcopa').replace(/(\d)\s*[xX×]\s*(\d)/g,'$1x$2').replace(/^!formato\s+(4|8|16|32)$/i, (whole, n) => s.drafts[event.groupId]?.name?whole:(({ '4':'1','8':'2','16':'3','32':'4' } as Record<string,string>)[n]!));
+  const normalized = event.text.trim().replace(/^!(campeões|histórico|próximafase|forçarresultado)(?=\s|$)/i,command=>command.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase()).replace(/^!pr[oó]xima\s+fase$/i,'!proximafase').replace(/^!forçar\s+resultado/i,'!forcarresultado').replace(/^!forcar\s+resultado/i,'!forcarresultado').replace(/^!deletar\s+t[ií]tulo/i,'!deletartitulo').replace(/^!cancelar\s+copa$/i,'!cancelarcopa').replace(/(\d)\s*[xX×]\s*(\d)/g,'$1x$2').replace(/^!formato\s+(4|8|16|32)$/i, (whole, n) => s.drafts[event.groupId]?.name?whole:(({ '4':'1','8':'2','16':'3','32':'4' } as Record<string,string>)[n]!));
   const parts = normalized.split(/\s+/);
   const cmd = parts[0]!.toLowerCase();
   const automatic=event.userId===AUTO_CONFIRM_ACTOR&&/^auto-confirm-\d+-\d+$/.test(event.id);

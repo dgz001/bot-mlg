@@ -131,7 +131,7 @@ async function connect(){
  const seasonCommand=/^!(?:reiniciartemporada|reiniciar\s+temporada|confirmartemporada|confirmar\s+temporada|cancelartemporada|cancelar\s+temporada)(?:\s|$)/i.test(text.trim());
  const centralOnly=seasonCommand||/^!(?:painel|grupos|usar|central|pendencias|equipes|confirmartimes|adicionar|remover|corrigirclubes|vagas|classificados|revisar|concluir|descartar|adms|daradm|tiraradm|emprestimo|emprestar|devolverbot|inscritosadm|inscrever|retirar|trocar|confirmarelenco|cancelarelenco|bloquear|desbloquear|bloqueados|refazersorteio|confirmarsorteio|cancelarsorteio)(?:\s|$)/i.test(text.trim());
  const outsideCup=!inChannel(group,'minicamp')&&/^!(?:modelos|ativarmodelo|sorteio|novacopa|cancelarcopa|anularcopa|nome|categoria|times|abrircopa|forcarresultado|resolver|deletar|vistoria)(?:\s|$)/i.test(text.trim());
- const loanSetup=/^!(?:novacopa|nome|modalidade|formato|jogos|classificados|times|abrircopa|cancelarcopa|modelos|imagemgrupo|imagemtexto|corrigirclubes|daradm|tiraradm|adms)(?:\s|$)/i.test(text.trim());
+ const loanSetup=/^!(?:novacopa|nome|modalidade|formato|jogos|classificados|times|abrircopa|cancelarcopa|cancelar\s+copa|modelos|imagemgrupo|imagemtexto|corrigirclubes|daradm|tiraradm|adms)(?:\s|$)/i.test(text.trim());
  if(auth.data.groups.includes(group)&&(mode==='controle'||centralOnly||outsideCup||loanSetup)){
   if(!text.trim().startsWith('!')||!cupApi||!message.key.participant)return;
   if(text.length>16000){await current.sendMessage(group,{text:'⚠️ Mensagem muito longa. Envie os times em mensagens menores com !adicionar.'});return;}
@@ -156,7 +156,7 @@ async function connect(){
    if(permission.allowed||permission.loanAllowed&&inChannel(group,'minicamp')){
     const loanMode=!permission.allowed;
     if(loanMode&&!enabled('minicamp'))response='⏸️ O bot está pausado. Aguarde um ADM geral da MLG.';
-    else if(loanMode||(permission.loanGroup||auth.data.loanGroups?.includes(group))&&/^(?:!(?:painel|central|pendencias|novacopa|nome|modalidade|formato|jogos|classificados|equipes|adicionar|remover|corrigirclubes|times|vagas|revisar|abrircopa|concluir|descartar|cancelarcopa|imagemgrupo|imagemtexto|daradm|tiraradm|adms)(?:\s|$))/i.test(text.trim())){
+    else if(loanMode||(permission.loanGroup||auth.data.loanGroups?.includes(group))&&/^(?:!(?:painel|central|pendencias|novacopa|nome|modalidade|formato|jogos|classificados|equipes|adicionar|remover|corrigirclubes|times|vagas|revisar|abrircopa|concluir|descartar|cancelarcopa|cancelar\s+copa|imagemgrupo|imagemtexto|daradm|tiraradm|adms)(?:\s|$))/i.test(text.trim())){
      auth.data.controlRooms??={};const room=auth.data.controlRooms[group]??={};auth.data.controlRooms[group]=room;
      room.targetId=group;
      const target={id:group,name:(await current.groupMetadata(group)).subject};
