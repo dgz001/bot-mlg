@@ -94,6 +94,10 @@ Correções do sorteio exigem ausência de placares.
 M e V são os gols em números (mandante primeiro, visitante depois), sem espaços.
 Use !grupos e !usar para escolher o destino ao escrever de outro canal.
 
+📰 JORNAL DA PLATAFORMA
+No grupo autorizado do jornal: !jornal aqui — publicar automaticamente novas notícias oficiais.
+!jornal status — consultar o destino; !jornal desligar — interromper envios.
+
 📌 ADMs cadastrados podem usar esta central em qualquer grupo autorizado do bot. Use !grupos e !usar para escolher a Copa; mudanças ficam registradas.`;
 function requireSuccess<T>(value:any):T {if(value?.error)throw Error(value.error);return value as T;}
 

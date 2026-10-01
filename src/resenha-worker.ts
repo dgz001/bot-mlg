@@ -21,16 +21,20 @@ import {vaultAuth} from './whatsapp/vault-auth.ts';
 import {privateControl} from './infra/private-control.ts';
 import {reconnect} from './infra/security.ts';
 import {progressMessage} from './whatsapp/progress-message.ts';
+import {newerNews,newsCursor,newsMessage,newsSource} from './infra/platform-news.ts';
 process.umask(0o077);
 const endpoint=process.env.SESSION_VAULT_URL,token=process.env.SESSION_VAULT_TOKEN,master=process.env.AUTH_ENCRYPTION_KEY;
 if(!endpoint||!token||!master||!process.env.CONTROL_PASSWORD||!process.env.CONTROL_ORIGIN)throw new Error('Resenha configuration missing');
 const key=Buffer.from(master,/^[a-f0-9]{64}$/i.test(master)?'hex':'base64');
 if(key.length!==32)throw new Error('Invalid session key');
 const cupApi=process.env.MINICAMP_URL&&process.env.MINICAMP_TOKEN?minicampClient(process.env.MINICAMP_URL,process.env.MINICAMP_TOKEN):undefined;
+const loadNews=process.env.MLG_NEWS_SUPABASE_URL&&process.env.MLG_NEWS_SUPABASE_KEY?newsSource(process.env.MLG_NEWS_SUPABASE_URL,process.env.MLG_NEWS_SUPABASE_KEY):undefined;
+delete process.env.MLG_NEWS_SUPABASE_KEY;
 delete process.env.MINICAMP_TOKEN;
 const cupClubs=[...minicampClubs];
 const configuredCups=new Set<string>();
 let cupBusy=false,lastCupTick=Date.now(),lastCupSuccessAt=0,cupHealthy=!cupApi,cupTimer:ReturnType<typeof setInterval>|undefined;
+let newsBusy=false,newsTimer:ReturnType<typeof setInterval>|undefined;
 const controlPath='/tmp/mlg-bot-control.sock';
 const portal=privateControl({secret:process.env.CONTROL_PASSWORD,origin:process.env.CONTROL_ORIGIN,socketPath:controlPath,resenha:true});
 for(const name of ['AUTH_ENCRYPTION_KEY','CONTROL_PASSWORD','SESSION_VAULT_TOKEN','DATABASE_URL','APP_DATABASE_PASSWORD'])delete process.env[name];
@@ -101,6 +105,25 @@ async function connect(){
  if(cupApi&&text.trim().startsWith('!')&&message.key.participant&&auth.data.groups.includes(group)){
   const checked=await cupApi<{blocked:boolean}>({action:'block-check',aliases:await cupAliases(message.key.participant,current)});
   if(checked.blocked)return;
+ }
+ if(/^!jornal(?:\s|$)/i.test(text)&&message.key.participant&&auth.data.groups.includes(group)){
+  if(!cupApi)return;
+  try{
+   const aliases=await cupAliases(message.key.participant,current);
+   const permission=await cupApi<{allowed:boolean}>({action:'control-check',group,aliases});
+   if(!permission.allowed){await current.sendMessage(group,{text:'🔒 Somente um ADM geral da MLG pode configurar o jornal.'});return;}
+   const choice=text.replace(/^!jornal\s*/i,'').trim().toLowerCase();
+   let response:string;
+   if(choice==='status'||choice==='')response=auth.data.newsGroup?'📰 Jornal automático ativo no grupo '+(await current.groupMetadata(auth.data.newsGroup)).subject+'.':'📰 Jornal automático sem grupo definido. Use !jornal aqui no grupo desejado.';
+   else if(choice==='desligar'){delete auth.data.newsGroup;await auth.save();response='📰 Envio automático do jornal desligado.';}
+   else if(choice==='aqui'){
+    if(!loadNews)response='⚠️ A fonte de notícias ainda não está configurada no servidor.';
+    else if(auth.data.loanGroups?.includes(group))response='⚠️ O jornal MLG não pode ser ativado em grupo emprestado.';
+    else {const latest=(await loadNews())[0];auth.data.newsCursor=latest?newsCursor(latest):{publishedAt:new Date().toISOString(),id:'ffffffff-ffff-ffff-ffff-ffffffffffff'};auth.data.newsGroup=group;await auth.save();response='📰 Jornal ativado neste grupo. As próximas notícias publicadas na plataforma serão enviadas automaticamente. Publicações antigas não serão repetidas.';}
+   }else response='Use !jornal aqui, !jornal status ou !jornal desligar.';
+   await current.sendMessage(group,{text:response});
+  }catch{log('NEWS_CONTROL_RETRY');await current.sendMessage(group,{text:'⚠️ Não consegui configurar o jornal agora. Tente novamente.'}).catch(()=>{});}
+  return;
  }
  const self=[current.user?.id,current.user?.lid].filter(Boolean).map(v=>jidNormalizedUser(v!));
  const mention=context?.mentionedJid?.some(j=>self.includes(jidNormalizedUser(j)));
@@ -518,9 +541,22 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  })().then(r=>client.end(JSON.stringify(r)+'\n')).catch(()=>client.end(JSON.stringify({error:'Operação recusada. Confira conexão, número e seleção.'})+'\n'));});});
 const health=httpServer((req,res)=>{if(req.url==='/livez'||req.url==='/readyz'){const ok=!stopping&&(req.url==='/livez'||(phase==='CONNECTED'&&(!enabled('minicamp')||!cupApi||(cupHealthy&&Date.now()-lastCupTick<120000))));res.writeHead(ok?200:503,{'Cache-Control':'no-store'}).end(ok?'OK':'UNAVAILABLE');return;}void portal(req,res).catch(()=>{if(!res.headersSent)res.writeHead(500);res.end();});});
 function fail(event:string){log(event);void shutdown(1);}
-async function shutdown(code:number){if(stopping)return;stopping=true;if(cupTimer)clearInterval(cupTimer);if(timer)clearTimeout(timer);if(stable)clearTimeout(stable);const deadline=setTimeout(()=>process.exit(code),12000);deadline.unref();controls.close();health.close();socket?.end(undefined);await queue;while(cupBusy)await new Promise(r=>setTimeout(r,50));await auth?.flush();key.fill(0);process.exit(code);}
+async function shutdown(code:number){if(stopping)return;stopping=true;if(cupTimer)clearInterval(cupTimer);if(newsTimer)clearInterval(newsTimer);if(timer)clearTimeout(timer);if(stable)clearTimeout(stable);const deadline=setTimeout(()=>process.exit(code),12000);deadline.unref();controls.close();health.close();socket?.end(undefined);await queue;while(cupBusy||newsBusy)await new Promise(r=>setTimeout(r,50));await auth?.flush();key.fill(0);process.exit(code);}
 process.on('SIGTERM',()=>{void shutdown(0);});process.on('SIGINT',()=>{void shutdown(0);});process.on('uncaughtException',()=>fail('UNCAUGHT_ERROR'));process.on('unhandledRejection',()=>fail('UNHANDLED_REJECTION'));
-async function main(){auth=await vaultAuth(endpoint!,token!,key);auth.data.replyHistory??={};auth.data.cupInbox??=[];if(cupApi){try{await cupApi({action:'health'});cupHealthy=true;}catch{cupHealthy=false;log('MINICAMP_RETRY');}cupTimer=setInterval(()=>{void cupTick();},15000);}banterReply=createBanterReply(auth.data.replyHistory);await auth.save();await unlink(controlPath).catch(()=>undefined);controls.listen(controlPath,()=>{void chmod(controlPath,0o600).catch(()=>fail('CONTROL_PERMISSIONS_FAILED'));});if(!process.send)health.listen(Number(process.env.PORT??3000),'0.0.0.0');if(auth.state.creds.registered)await connect();else {phase='NEEDS_PAIRING';log(phase);}}
+async function main(){auth=await vaultAuth(endpoint!,token!,key);auth.data.replyHistory??={};auth.data.cupInbox??=[];if(cupApi){try{await cupApi({action:'health'});cupHealthy=true;}catch{cupHealthy=false;log('MINICAMP_RETRY');}cupTimer=setInterval(()=>{void cupTick();},15000);}if(loadNews)newsTimer=setInterval(()=>{void newsTick();},60000);banterReply=createBanterReply(auth.data.replyHistory);await auth.save();await unlink(controlPath).catch(()=>undefined);controls.listen(controlPath,()=>{void chmod(controlPath,0o600).catch(()=>fail('CONTROL_PERMISSIONS_FAILED'));});if(!process.send)health.listen(Number(process.env.PORT??3000),'0.0.0.0');if(auth.state.creds.registered)await connect();else {phase='NEEDS_PAIRING';log(phase);}}
+async function newsTick(){
+ if(!loadNews||newsBusy||stopping||phase!=='CONNECTED'||!socket||!enabled()||!auth.data.newsGroup)return;
+ newsBusy=true;const current=socket,group=auth.data.newsGroup;
+ try{
+  if(!auth.data.groups.includes(group)||auth.data.loanGroups?.includes(group))return;
+  if(!auth.data.newsCursor){const latest=(await loadNews())[0];auth.data.newsCursor=latest?newsCursor(latest):{publishedAt:new Date().toISOString(),id:'ffffffff-ffff-ffff-ffff-ffffffffffff'};await auth.save();return;}
+  for(const article of await loadNews(auth.data.newsCursor)){
+   if(!newerNews(article,auth.data.newsCursor)||socket!==current||stopping||auth.data.newsGroup!==group)continue;
+   await current.sendMessage(group,{text:newsMessage(article)},{messageId:'MLGNEWS'+article.id.replaceAll('-','').toUpperCase()});
+   auth.data.newsCursor=newsCursor(article);await auth.save();
+  }
+ }catch{log('NEWS_DELIVERY_RETRY');}finally{newsBusy=false;}
+}
 // Parent owns HTTP while this process owns the WhatsApp session and queues.
 if(process.send){
  const pulse=setInterval(()=>{if(process.connected)process.send?.({type:'health',phase,ready:!stopping&&phase==='CONNECTED'&&(!enabled('minicamp')||!cupApi||(cupHealthy&&Date.now()-lastCupTick<120000))});},2000);
