@@ -30,3 +30,12 @@ test('community jokes reflect the archive without inventing official results',()
   assert.doesNotMatch(response,/\+?\d[\d\s()-]{8,}\d|campeão oficial|venceu por \d+x\d+/i);
  }
 });
+
+ test('market channels never run banter or cups; loan channel stays reserved',()=>{
+ for(const mode of ['transfer','trade','market-loan'] as const){
+ assert.equal(validGroupMode(mode),true);
+ assert.equal(groupMode({g:mode},'g'),mode);
+ assert.equal(allowsGroup({g:mode},'g','resenha'),false);
+ assert.equal(allowsGroup({g:mode},'g','minicamp'),false);
+ }
+ });

@@ -175,6 +175,7 @@ async function connect(){
   }
  }
 
+ if(auth.data.groups.includes(group)&&['transfer','trade','market-loan'].includes(groupMode(auth.data.groupModes,group)))return;
  const receivedAt=Number(message.messageTimestamp)*1000;
  const eventAt=Number.isSafeInteger(receivedAt)&&receivedAt>1577836800000&&receivedAt<Date.now()+60000?receivedAt:Date.now();
  if(!auth.data.groups.includes(group)&&/^!novacopa\s*$/i.test(text.trim())&&cupApi&&message.key.participant){
@@ -590,7 +591,7 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  if(['setadmins','history-candidates','history-review','competition-get','competition-save','templates-list','template-get','template-save','template-activate','template-delete','cup-open','cup-cancel','cup-void'].includes(req.action)){
  const startingControl=req.action==='setadmins'&&req.mode==='controle'&&!auth.data.groups.includes(req.group);
  if(!cupApi||!socket||(!auth.data.groups.includes(req.group)&&!startingControl))throw Error('Group unavailable');
- if(groupMode(auth.data.groupModes,req.group)==='controle'&&!['setadmins','history-candidates','history-review'].includes(req.action))throw Error('Control group cannot host a Cup');
+ if(!allowsGroup(auth.data.groupModes,req.group,'minicamp')&&!['setadmins','history-candidates','history-review'].includes(req.action))throw Error('Control group cannot host a Cup');
  await configureCup(req.group,socket);
  if(req.action==='setadmins'){
   const metadata=await socket.groupMetadata(req.group);
@@ -663,7 +664,7 @@ async function marketTick(){
  try{
   const config=await marketApi<{channels:MarketChannel[];batches:MarketBatch[]}>('config');
   if(!Array.isArray(config.channels))throw Error('Invalid market channel list');
-  marketChannels=config.channels;
+  marketChannels=config.channels.filter(c=>groupMode(auth.data.groupModes,c.group)!=='market-loan');
   if(phase!=='CONNECTED'||!socket||!enabled())return;
   const current=socket;
   let gateHealthy=true;
