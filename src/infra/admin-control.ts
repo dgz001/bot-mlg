@@ -95,8 +95,7 @@ M e V são os gols em números (mandante primeiro, visitante depois), sem espaç
 Use !grupos e !usar para escolher o destino ao escrever de outro canal.
 
 📰 JORNAL DA PLATAFORMA
-No grupo autorizado do jornal: !jornal aqui — publicar automaticamente novas notícias oficiais.
-!jornal status — consultar o destino; !jornal desligar — interromper envios.
+Configure o grupo de destino na aba Bot da plataforma MLG. A publicação é automática e não exige comando no grupo.
 
 📌 ADMs cadastrados podem usar esta central em qualquer grupo autorizado do bot. Use !grupos e !usar para escolher a Copa; mudanças ficam registradas.`;
 function requireSuccess<T>(value:any):T {if(value?.error)throw Error(value.error);return value as T;}

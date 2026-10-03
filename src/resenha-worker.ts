@@ -106,25 +106,6 @@ async function connect(){
   const checked=await cupApi<{blocked:boolean}>({action:'block-check',aliases:await cupAliases(message.key.participant,current)});
   if(checked.blocked)return;
  }
- if(/^!jornal(?:\s|$)/i.test(text)&&message.key.participant&&auth.data.groups.includes(group)){
-  if(!cupApi)return;
-  try{
-   const aliases=await cupAliases(message.key.participant,current);
-   const permission=await cupApi<{allowed:boolean}>({action:'control-check',group,aliases});
-   if(!permission.allowed){await current.sendMessage(group,{text:'🔒 Somente um ADM geral da MLG pode configurar o jornal.'});return;}
-   const choice=text.replace(/^!jornal\s*/i,'').trim().toLowerCase();
-   let response:string;
-   if(choice==='status'||choice==='')response=auth.data.newsGroup?'📰 Jornal automático ativo no grupo '+(await current.groupMetadata(auth.data.newsGroup)).subject+'.':'📰 Jornal automático sem grupo definido. Use !jornal aqui no grupo desejado.';
-   else if(choice==='desligar'){delete auth.data.newsGroup;await auth.save();response='📰 Envio automático do jornal desligado.';}
-   else if(choice==='aqui'){
-    if(!loadNews)response='⚠️ A fonte de notícias ainda não está configurada no servidor.';
-    else if(auth.data.loanGroups?.includes(group))response='⚠️ O jornal MLG não pode ser ativado em grupo emprestado.';
-    else {const latest=(await loadNews())[0];auth.data.newsCursor=latest?newsCursor(latest):{publishedAt:new Date().toISOString(),id:'ffffffff-ffff-ffff-ffff-ffffffffffff'};auth.data.newsGroup=group;await auth.save();response='📰 Jornal ativado neste grupo. As próximas notícias publicadas na plataforma serão enviadas automaticamente. Publicações antigas não serão repetidas.';}
-   }else response='Use !jornal aqui, !jornal status ou !jornal desligar.';
-   await current.sendMessage(group,{text:response});
-  }catch{log('NEWS_CONTROL_RETRY');await current.sendMessage(group,{text:'⚠️ Não consegui configurar o jornal agora. Tente novamente.'}).catch(()=>{});}
-  return;
- }
  const self=[current.user?.id,current.user?.lid].filter(Boolean).map(v=>jidNormalizedUser(v!));
  const mention=context?.mentionedJid?.some(j=>self.includes(jidNormalizedUser(j)));
  const reply=context?.participant&&self.includes(jidNormalizedUser(context.participant));
@@ -459,7 +440,18 @@ async function cupTick(){
  }
 }
 const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>client.destroy());client.on('data',chunk=>{buffer+=chunk.toString();if(buffer.length>8192){client.destroy();return;}if(!buffer.includes('\n'))return;client.pause();void(async()=>{
- const req=JSON.parse(buffer.trim());if(req.action==='status')return {controls:auth.data.controls??{enabled:true,resenha:true,minicamp:true},queued:auth.data.cupInbox?.length??0,phase,authorizedGroups:auth.data.groups.length,minicamp:cupApi?(cupHealthy?'READY':'RETRYING'):'DISABLED',minicampLastSuccessAt:lastCupSuccessAt||null,checkedAt:Date.now()};
+ const req=JSON.parse(buffer.trim());if(req.action==='status')return {controls:auth.data.controls??{enabled:true,resenha:true,minicamp:true},queued:auth.data.cupInbox?.length??0,phase,authorizedGroups:auth.data.groups.length,minicamp:cupApi?(cupHealthy?'READY':'RETRYING'):'DISABLED',minicampLastSuccessAt:lastCupSuccessAt||null,newsGroup:auth.data.newsGroup??null,newsConfigured:Boolean(loadNews),checkedAt:Date.now()};
+ if(req.action==='news-target'){
+  if(req.group===null){const previous=auth.data.newsGroup;delete auth.data.newsGroup;try{await auth.save();}catch{auth.data.newsGroup=previous;throw Error('News target persistence failed');}return {newsGroup:null,updated:true};}
+  if(!loadNews||!socket||phase!=='CONNECTED')throw Error('News source or bot unavailable');
+  if(typeof req.group!=='string'||!req.group.endsWith('@g.us')||!auth.data.groups.includes(req.group)||auth.data.loanGroups?.includes(req.group))throw Error('Invalid journal group');
+  const participating=await socket.groupFetchAllParticipating();if(!Object.hasOwn(participating,req.group))throw Error('Bot is not in journal group');
+  const latest=(await loadNews())[0];const previous={group:auth.data.newsGroup,cursor:auth.data.newsCursor};
+  auth.data.newsCursor=latest?newsCursor(latest):{publishedAt:new Date().toISOString(),id:'ffffffff-ffff-ffff-ffff-ffffffffffff'};
+  auth.data.newsGroup=req.group;
+  try{await auth.save();}catch{auth.data.newsGroup=previous.group;auth.data.newsCursor=previous.cursor;throw Error('News target persistence failed');}
+  return {newsGroup:req.group,updated:true};
+ }
  if(req.action==='select-context'){
   if(typeof req.group!=='string'||!req.group.endsWith('@g.us')||typeof req.templateId!=='string'||req.templateId.length>100)throw Error('Invalid selection');
   if(phase!=='CONNECTED'||!socket)throw Error('Not connected');
@@ -482,6 +474,7 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  }
  if(req.action==='revoke'){
  if(typeof req.group!=='string'||!auth.data.groups.includes(req.group))throw Error('Invalid group');
+ if(auth.data.newsGroup===req.group){delete auth.data.newsGroup;}
  auth.data.groups=auth.data.groups.filter(g=>g!==req.group);
  if(auth.data.groupModes)delete auth.data.groupModes[req.group];
  if(auth.data.controlRooms)delete auth.data.controlRooms[req.group];
