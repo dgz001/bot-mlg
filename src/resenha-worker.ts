@@ -41,6 +41,32 @@ const cupClubs=[...minicampClubs];
 const configuredCups=new Set<string>();
 let cupBusy=false,lastCupTick=Date.now(),lastCupSuccessAt=0,cupHealthy=!cupApi,cupTimer:ReturnType<typeof setInterval>|undefined;
 let marketBusy=false,marketHealthy=!marketApi,marketChannels:MarketChannel[]=[],marketTimer:ReturnType<typeof setInterval>|undefined;
+type MarketBatch={group:string;batch:number;count:number;botLocked:boolean};
+type MarketPrivateNotice={id:string;recipient:string;body:string;lease:string};
+const marketReminderAt=new Map<string,number>();
+const marketReminderQueues=new Map<string,{participants:Set<string>;timer:ReturnType<typeof setTimeout>}>();
+async function remindMarketChat(group:string,participant:string,current:ReturnType<typeof makeWASocket>){
+ const now=Date.now(),key=group+':'+participant;
+ if(now-(marketReminderAt.get(key)??0)<120000)return;
+ const metadata=await current.groupMetadata(group);
+ const aliases=await cupAliases(participant,current);
+ const admins=await Promise.all(metadata.participants.filter(p=>Boolean(p.admin)).map(p=>cupAliases(p.id,current).catch(():string[]=>[])));
+ if(admins.some(ids=>ids.some(id=>aliases.includes(id))))return;
+ marketReminderAt.set(key,now);
+ let entry=marketReminderQueues.get(group);
+ if(!entry){
+  const participants=new Set<string>();
+  const timer=setTimeout(()=>{
+   marketReminderQueues.delete(group);
+   if(socket!==current||stopping||!enabled()||!marketChannels.some(c=>c.group===group))return;
+   const mentions=[...participants].slice(0,20);
+   void current.sendMessage(group,{text:'Pessoal, este grupo é para propostas de transferência. Conversem no grupo de resenha, por favor. '+mentions.map(j=>'@'+j.split('@')[0]).join(' '),mentions}).catch(()=>log('MARKET_REMINDER_RETRY'));
+  },6000);
+  entry={participants,timer};marketReminderQueues.set(group,entry);
+ }
+ entry.participants.add(participant);
+}
+
 let newsBusy=false,newsTimer:ReturnType<typeof setInterval>|undefined;
 const controlPath='/tmp/mlg-bot-control.sock';
 const portal=privateControl({secret:process.env.CONTROL_PASSWORD,origin:process.env.CONTROL_ORIGIN,socketPath:controlPath,resenha:true});
@@ -142,6 +168,10 @@ async function connect(){
     auth.data.marketInbox.push(proposal);await auth.save();
    }
    void marketTick();return;
+  }
+  if(marketChannels.some(c=>c.group===group)){
+   if(text.trim())await remindMarketChat(group,message.key.participant,current);
+   return;
   }
  }
 
@@ -631,10 +661,24 @@ async function marketTick(){
  if(!marketApi||marketBusy||stopping)return;
  marketBusy=true;
  try{
-  const config=await marketApi<{channels:MarketChannel[]}>('config');
+  const config=await marketApi<{channels:MarketChannel[];batches:MarketBatch[]}>('config');
   if(!Array.isArray(config.channels))throw Error('Invalid market channel list');
   marketChannels=config.channels;
   if(phase!=='CONNECTED'||!socket||!enabled())return;
+  const current=socket;
+  for(const batch of (Array.isArray(config.batches)?config.batches:[]) as MarketBatch[]){
+   if(!marketChannels.some(c=>c.group===batch.group)||!auth.data.groups.includes(batch.group)||auth.data.loanGroups?.includes(batch.group))continue;
+   const metadata=await current.groupMetadata(batch.group);
+   if(batch.count>=10&&!metadata.announce){
+    if(!batch.botLocked)await marketApi('gate_ack',{group:batch.group,locked:true});
+    await current.groupSettingUpdate(batch.group,'announcement');
+    await current.sendMessage(batch.group,{text:'🔒 Dez propostas recebidas. Os ADMs vão conferir esta remessa; o grupo reabre após a conclusão e liberação pela plataforma.'});
+   }else if(batch.count<10&&batch.botLocked){
+    if(metadata.announce)await current.groupSettingUpdate(batch.group,'not_announcement');
+    await marketApi('gate_ack',{group:batch.group,locked:false});
+    if(metadata.announce)await current.sendMessage(batch.group,{text:'🔓 Nova remessa liberada: até dez propostas podem ser enviadas.'});
+   }
+  }
   await drainMarketInbox(auth.data,marketApi,()=>auth.save());
   for(const response of [...(auth.data.marketResponses??[])].slice(0,20)){
    const result=await marketApi<{success:boolean}>('response',response);if(!result.success)throw Error('Response not confirmed');
@@ -642,11 +686,18 @@ async function marketTick(){
    try{await auth.save();}catch(error){auth.data.marketResponses=previous;throw error;}
   }
 
-  const current=socket;
   await deliverMarketReactions(marketApi,async r=>{
    if(!auth.data.groups.includes(r.group)||auth.data.loanGroups?.includes(r.group))throw Error('Market reaction group is not authorized');
    await current.sendMessage(r.group,{react:{text:r.emoji,key:{remoteJid:r.group,participant:r.participant,id:r.messageId,fromMe:false}}});
   },()=>socket===current&&!stopping&&enabled());
+  const {notices}=await marketApi<{notices:MarketPrivateNotice[]}>('claim_private');
+  if(!Array.isArray(notices))throw Error('Invalid private notice list');
+  for(const notice of notices){
+   let sent=false;
+   if(socket===current&&!stopping&&enabled()&&/^[0-9]+@(s\.whatsapp\.net|lid)$/.test(notice.recipient))
+    try{await current.sendMessage(notice.recipient,{text:notice.body});sent=true;}catch{log('MARKET_PRIVATE_NOTICE_RETRY');}
+   await marketApi('ack_private',{id:notice.id,lease:notice.lease,sent});
+  }
   marketHealthy=true;
  }catch{marketHealthy=false;log('MARKET_BRIDGE_RETRY');}finally{marketBusy=false;}
 }
