@@ -666,7 +666,9 @@ async function marketTick(){
   marketChannels=config.channels;
   if(phase!=='CONNECTED'||!socket||!enabled())return;
   const current=socket;
+  let gateHealthy=true;
   for(const batch of (Array.isArray(config.batches)?config.batches:[]) as MarketBatch[]){
+   try{
    if(!marketChannels.some(c=>c.group===batch.group)||!auth.data.groups.includes(batch.group)||auth.data.loanGroups?.includes(batch.group))continue;
    const metadata=await current.groupMetadata(batch.group);
    if(batch.count>=10&&!metadata.announce){
@@ -678,6 +680,7 @@ async function marketTick(){
     await marketApi('gate_ack',{group:batch.group,locked:false});
     if(metadata.announce)await current.sendMessage(batch.group,{text:'🔓 Nova remessa liberada: até dez propostas podem ser enviadas.'});
    }
+   }catch{gateHealthy=false;log('MARKET_GROUP_GATE_RETRY');}
   }
   await drainMarketInbox(auth.data,marketApi,()=>auth.save());
   for(const response of [...(auth.data.marketResponses??[])].slice(0,20)){
@@ -698,6 +701,6 @@ async function marketTick(){
     try{await current.sendMessage(notice.recipient,{text:notice.body});sent=true;}catch{log('MARKET_PRIVATE_NOTICE_RETRY');}
    await marketApi('ack_private',{id:notice.id,lease:notice.lease,sent});
   }
-  marketHealthy=true;
+  marketHealthy=gateHealthy;
  }catch{marketHealthy=false;log('MARKET_BRIDGE_RETRY');}finally{marketBusy=false;}
 }
