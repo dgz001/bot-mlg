@@ -26,3 +26,14 @@ Limite: supervisor e bot estão na mesma hospedagem gratuita. Uma indisponibilid
 `npm run test:isolated` executa PostgreSQL temporário local em ambiente não root. `npm test` usa esse modo automaticamente no build do Render. Nenhuma credencial ou dado de produção é passado aos testes. Cada teste de integração cria e remove seu próprio banco. Os testes recriam os papéis NOLOGIN e aplicam as migrations necessárias antes do cadastro explícito do ADM de teste.
 
 Não rode a suíte com credenciais de produção. Em CI com PostgreSQL próprio e descartável, use MLG_TEST_DATABASE_URL. Os quatro cenários são: Copa completa + retomada + duplicidade; sessão cifrada; rollback sem inscrição parcial; constraints e permissões de confirmação.
+
+## Central na plataforma MLG
+
+A plataforma pode usar o endpoint privado `/control` pelo servidor, sem expor a
+senha aos ADMs. Os comandos `news-status` e `news-config` consultam e configuram
+o jornal. `news-config` aceita um grupo autorizado da MLG ou `null` para pausar;
+grupos emprestados são recusados. É necessário configurar
+`MLG_NEWS_SUPABASE_URL` e `MLG_NEWS_SUPABASE_KEY` na hospedagem.
+A chave da fonte é publicável; apenas artigos publicados são lidos.
+Salvar o destino atual mantém o cursor. Um destino novo começa após a publicação
+mais recente, sem reenviar notícias antigas. A consulta ocorre a cada 60 segundos.

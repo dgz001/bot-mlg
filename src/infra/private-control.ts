@@ -43,7 +43,7 @@ export function privateControl(options:{secret:string;origin:string;socketPath:s
     try {
       for await(const chunk of req){body+=chunk.toString();if(Buffer.byteLength(body)>24000){reply(413,{error:'Solicitação grande demais'});return;}}
       const data=JSON.parse(body);
-      if(!['status','pair','groups','participants','authorize','settings','revoke','setadmins','history-candidates','history-review','competition-get','competition-save','templates-list','template-get','template-save','template-activate','template-delete','cup-open','cup-cancel','cup-void','set-group-mode','select-context','leave-group','restart','change-password'].includes(data.action)){reply(400,{error:'Operação inválida'});return;}
+      if(!['status','pair','groups','participants','authorize','settings','revoke','setadmins','history-candidates','history-review','competition-get','competition-save','templates-list','template-get','template-save','template-activate','template-delete','cup-open','cup-cancel','cup-void','set-group-mode','select-context','leave-group','restart','change-password','news-status','news-config'].includes(data.action)){reply(400,{error:'Operação inválida'});return;}
       if(data.action==='change-password'){
         if(!options.rotatePassword){reply(503,{error:'Troca de senha indisponível nesta instalação.'});return;}
         try{await options.rotatePassword(authorization,data.newPassword);res.setHeader('Set-Cookie',session.issue(data.newPassword));reply(200,{passwordChanged:true});}

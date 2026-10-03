@@ -2,7 +2,7 @@ import {connect} from 'node:net';
 import type {IncomingMessage,ServerResponse} from 'node:http';
 
 type Identity={id:string;admin:boolean};
-const adminActions=new Set(['status','groups','participants','authorize','settings','revoke','setadmins','history-candidates','history-review','competition-get','competition-save','templates-list','template-get','template-save','template-activate','template-delete','cup-open','cup-cancel','cup-void','set-group-mode','select-context','leave-group','pair','restart','news-target']);
+const adminActions=new Set(['status','groups','participants','authorize','settings','revoke','setadmins','history-candidates','history-review','competition-get','competition-save','templates-list','template-get','template-save','template-activate','template-delete','cup-open','cup-cancel','cup-void','set-group-mode','select-context','leave-group','pair','restart','news-config']);
 export function platformIdentity(url:string,key:string,fetcher:typeof fetch=fetch){
  const source=new URL(url);
  if(source.protocol!=='https:'||!/^([a-z0-9-]+)\.supabase\.co$/.test(source.hostname)||!key)throw Error('Invalid platform identity provider');
