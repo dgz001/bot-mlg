@@ -21,6 +21,7 @@ import {vaultAuth} from './whatsapp/vault-auth.ts';
 import {privateControl} from './infra/private-control.ts';
 import {reconnect} from './infra/security.ts';
 import {progressMessage} from './whatsapp/progress-message.ts';
+import {configureJournal} from './infra/journal-control.ts';
 import {newerNews,newsCursor,newsMessage,newsSource} from './infra/platform-news.ts';
 process.umask(0o077);
 const endpoint=process.env.SESSION_VAULT_URL,token=process.env.SESSION_VAULT_TOKEN,master=process.env.AUTH_ENCRYPTION_KEY;
@@ -459,7 +460,10 @@ async function cupTick(){
  }
 }
 const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>client.destroy());client.on('data',chunk=>{buffer+=chunk.toString();if(buffer.length>8192){client.destroy();return;}if(!buffer.includes('\n'))return;client.pause();void(async()=>{
- const req=JSON.parse(buffer.trim());if(req.action==='status')return {controls:auth.data.controls??{enabled:true,resenha:true,minicamp:true},queued:auth.data.cupInbox?.length??0,phase,authorizedGroups:auth.data.groups.length,minicamp:cupApi?(cupHealthy?'READY':'RETRYING'):'DISABLED',minicampLastSuccessAt:lastCupSuccessAt||null,checkedAt:Date.now()};
+ const req=JSON.parse(buffer.trim());
+ if(req.action==='news-status')return {sourceConfigured:Boolean(loadNews),group:auth.data.newsGroup??null,cursor:auth.data.newsCursor??null,paused:!enabled(),pollIntervalSeconds:60};
+ if(req.action==='news-config'){if(newsBusy)throw Error('Journal delivery in progress');const result=await configureJournal(auth.data,req.group,loadNews,()=>auth.save());log('NEWS_CONTROLS_UPDATED');return {...result,sourceConfigured:Boolean(loadNews)};}
+ if(req.action==='status')return {controls:auth.data.controls??{enabled:true,resenha:true,minicamp:true},queued:auth.data.cupInbox?.length??0,phase,authorizedGroups:auth.data.groups.length,minicamp:cupApi?(cupHealthy?'READY':'RETRYING'):'DISABLED',minicampLastSuccessAt:lastCupSuccessAt||null,checkedAt:Date.now()};
  if(req.action==='select-context'){
   if(typeof req.group!=='string'||!req.group.endsWith('@g.us')||typeof req.templateId!=='string'||req.templateId.length>100)throw Error('Invalid selection');
   if(phase!=='CONNECTED'||!socket)throw Error('Not connected');
@@ -551,7 +555,8 @@ async function newsTick(){
   if(!auth.data.groups.includes(group)||auth.data.loanGroups?.includes(group))return;
   if(!auth.data.newsCursor){const latest=(await loadNews())[0];auth.data.newsCursor=latest?newsCursor(latest):{publishedAt:new Date().toISOString(),id:'ffffffff-ffff-ffff-ffff-ffffffffffff'};await auth.save();return;}
   for(const article of await loadNews(auth.data.newsCursor)){
-   if(!newerNews(article,auth.data.newsCursor)||socket!==current||stopping||auth.data.newsGroup!==group)continue;
+   if(socket!==current||stopping||!enabled()||auth.data.newsGroup!==group||!auth.data.groups.includes(group)||auth.data.loanGroups?.includes(group))break;
+   if(!newerNews(article,auth.data.newsCursor))continue;
    await current.sendMessage(group,{text:newsMessage(article)},{messageId:'MLGNEWS'+article.id.replaceAll('-','').toUpperCase()});
    auth.data.newsCursor=newsCursor(article);await auth.save();
   }
