@@ -13,3 +13,6 @@ sessions/
 backups/
 imports/
 .DS_Store
+
+# Pinned language model is downloaded and verified by the Docker build.
+assets/*.traineddata.gz

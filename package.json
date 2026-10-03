@@ -24,6 +24,7 @@
   "dependencies": {
     "@whiskeysockets/baileys": "7.0.0-rc14",
     "pg": "8.23.0",
-    "pino": "10.3.1"
+    "pino": "10.3.1",
+    "tesseract.js": "7.0.0"
   }
 }

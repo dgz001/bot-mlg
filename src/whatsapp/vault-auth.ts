@@ -1,9 +1,11 @@
+import type {MarketResponse} from "../infra/market-response.ts";
+import type {MarketEvent} from "../infra/platform-market.ts";
 import type {PendingCupEvent} from '../minicamp/client.ts';
 import {initAuthCreds,BufferJSON,proto,type AuthenticationState,type SignalDataTypeMap} from '@whiskeysockets/baileys';
 import {seal,unseal,type Sealed} from '../infra/security.ts';
 import type {GroupMode} from '../infra/group-modes.ts';
 import type {ControlWorkspace} from '../infra/admin-control.ts';
-export type VaultData={creds:AuthenticationState['creds'];keys:Record<string,Record<string,unknown>>;groups:string[];loanGroups?:string[];groupModes?:Record<string,GroupMode>;newsGroup?:string;newsCursor?:{publishedAt:string;id:string};panelSelection?:{group:string;templates:Record<string,string>};seen:string[];controls?:{enabled:boolean;resenha:boolean;minicamp:boolean};cupInbox?:PendingCupEvent[];scoreReactions?:{group:string;participant:string;id:string;at:number}[];replyHistory?:Record<string,string[]>;controlRooms?:Record<string,ControlWorkspace>};
+export type VaultData={marketResponses?:MarketResponse[];marketInbox?:MarketEvent[];creds:AuthenticationState['creds'];keys:Record<string,Record<string,unknown>>;groups:string[];loanGroups?:string[];groupModes?:Record<string,GroupMode>;newsGroup?:string;newsCursor?:{publishedAt:string;id:string};panelSelection?:{group:string;templates:Record<string,string>};seen:string[];controls?:{enabled:boolean;resenha:boolean;minicamp:boolean};cupInbox?:PendingCupEvent[];scoreReactions?:{group:string;participant:string;id:string;at:number}[];replyHistory?:Record<string,string[]>;controlRooms?:Record<string,ControlWorkspace>};
 export async function vaultAuth(url:string,token:string,key:Buffer){
  async function remote(method:string,body?:unknown){
   const attempts=method==='GET'?3:1;

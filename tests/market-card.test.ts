@@ -1,0 +1,4 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {resolveCardReading,readMarketCard} from '../src/infra/market-card.ts';
+test('card week comes from explicit caption or confident scanned week, never overall or player name',()=>{assert.equal(resolveCardReading('Semana C','David Alaba 99',20,'hash').week,'C');assert.equal(resolveCardReading('','Semana B',80,'hash').week,'B');assert.equal(resolveCardReading('','Semana B',30,'hash').week,null);assert.equal(resolveCardReading('','David Alaba 99',99,'hash').week,null);assert.equal(resolveCardReading('Semana B','Semana C',99,'hash').week,null);});
+
+test("invalid images are rejected without crashing the bot",async()=>{await assert.rejects(readMarketCard(Buffer.alloc(0),"Semana C"),/allowed size/);await assert.rejects(readMarketCard(Buffer.alloc(4*1024*1024+1),""),/allowed size/);});

@@ -1,3 +1,6 @@
+import {readMarketCard} from "./infra/market-card.ts";
+import {marketResponse} from "./infra/market-response.ts";
+import {marketBridge,marketEvent,drainMarketInbox,deliverMarketReactions,type MarketChannel} from "./infra/platform-market.ts";
 import {loanCommand} from './infra/loan-invitation.ts';
 import {minicampClubs} from './minicamp/clubs.ts';
 import {moduleEnabled,parseControls} from './infra/bot-controls.ts';
@@ -9,7 +12,7 @@ import {cupQuestion} from './minicamp/question.ts';
 import {cupMediaFor,guestAnnouncementImage} from './minicamp/media.ts';
 import {orderMessages} from './minicamp/message-order.ts';
 import {loadRoster} from './resenha/matchup.ts';
-import makeWASocket,{DisconnectReason,jidNormalizedUser,extractMessageContent} from '@whiskeysockets/baileys';
+import makeWASocket,{DisconnectReason,jidNormalizedUser,extractMessageContent,downloadContentFromMessage} from '@whiskeysockets/baileys';
 import pino from 'pino';
 import {banterRequest} from './resenha/trigger.ts';
 import {requestReadyPairing} from './whatsapp/pairing.ts';
@@ -30,11 +33,14 @@ const key=Buffer.from(master,/^[a-f0-9]{64}$/i.test(master)?'hex':'base64');
 if(key.length!==32)throw new Error('Invalid session key');
 const cupApi=process.env.MINICAMP_URL&&process.env.MINICAMP_TOKEN?minicampClient(process.env.MINICAMP_URL,process.env.MINICAMP_TOKEN):undefined;
 const loadNews=process.env.MLG_NEWS_SUPABASE_URL&&process.env.MLG_NEWS_SUPABASE_KEY?newsSource(process.env.MLG_NEWS_SUPABASE_URL,process.env.MLG_NEWS_SUPABASE_KEY):undefined;
+const marketApi=process.env.MLG_MARKET_BRIDGE_TOKEN&&process.env.MLG_NEWS_SUPABASE_URL&&process.env.MLG_NEWS_SUPABASE_KEY?marketBridge(process.env.MLG_NEWS_SUPABASE_URL,process.env.MLG_NEWS_SUPABASE_KEY,process.env.MLG_MARKET_BRIDGE_TOKEN):undefined;
+delete process.env.MLG_MARKET_BRIDGE_TOKEN;
 delete process.env.MLG_NEWS_SUPABASE_KEY;
 delete process.env.MINICAMP_TOKEN;
 const cupClubs=[...minicampClubs];
 const configuredCups=new Set<string>();
 let cupBusy=false,lastCupTick=Date.now(),lastCupSuccessAt=0,cupHealthy=!cupApi,cupTimer:ReturnType<typeof setInterval>|undefined;
+let marketBusy=false,marketHealthy=!marketApi,marketChannels:MarketChannel[]=[],marketTimer:ReturnType<typeof setInterval>|undefined;
 let newsBusy=false,newsTimer:ReturnType<typeof setInterval>|undefined;
 const controlPath='/tmp/mlg-bot-control.sock';
 const portal=privateControl({secret:process.env.CONTROL_PASSWORD,origin:process.env.CONTROL_ORIGIN,socketPath:controlPath,resenha:true});
@@ -54,7 +60,7 @@ async function connect(){
  current.ev.on('connection.update',u=>{
  if(socket!==current||stopping)return;
  if(u.qr){pairingReady.add(current);log('PAIRING_TRANSPORT_READY');}
- if(u.connection==='open'){phase='CONNECTED';log(phase);stable=setTimeout(()=>{attempt=0;},60000);}
+ if(u.connection==='open'){phase='CONNECTED';log(phase);void marketTick();stable=setTimeout(()=>{attempt=0;},60000);}
  if(u.connection==='close'){
  if(stable)clearTimeout(stable);socket=undefined;
  const status=(u.lastDisconnect?.error as {output?:{statusCode?:number}}|undefined)?.output?.statusCode;
@@ -64,11 +70,33 @@ async function connect(){
  if(decision.delayMs)timer=setTimeout(()=>{void connect().catch(()=>fail('CONNECT_FAILED'));},decision.delayMs);
  }
  });
+ current.ev.on('messages.update',events=>{
+  for(const event of events){queue=queue.then(async()=>{
+   const group=event.key.remoteJid,id=event.key.id,participant=event.key.participant;
+   if(!marketApi||!group||!id||!participant||event.key.fromMe||!enabled()||!auth.data.groups.includes(group)||!marketChannels.some(c=>c.group===group))return;
+   const edited=extractMessageContent(event.update.message?.editedMessage?.message??event.update.message);
+   const text=(edited?.conversation??edited?.extendedTextMessage?.text??edited?.imageMessage?.caption??'').trim();
+   if(!text)return;
+   const proposal=marketEvent(group,id,participant,text,marketChannels);
+   if(!proposal)return;proposal.mentions=edited?.extendedTextMessage?.contextInfo?.mentionedJid??edited?.imageMessage?.contextInfo?.mentionedJid??[];
+   auth.data.marketInbox??=[];if(!auth.data.marketInbox.some(e=>e.group===group&&e.messageId===id&&e.text===text)){auth.data.marketInbox.push(proposal);await auth.save();}void marketTick();
+  }).catch(()=>{log('MARKET_EDIT_CAPTURE_RETRY');});}
+ });
+ current.ev.on('messages.reaction',events=>{
+  for(const event of events){queue=queue.then(async()=>{
+   const group=event.key.remoteJid,id=event.reaction.key?.id,participant=event.reaction.key?.participant;
+   if(!marketApi||!group||!id||!participant||event.reaction.key?.fromMe||!enabled()||!auth.data.groups.includes(group)||!marketChannels.some(c=>c.group===group))return;
+   const response=marketResponse({group,messageId:id,participant,proposalMessageId:event.key.id,reaction:event.reaction.text??undefined});
+   if(!response)return;auth.data.marketResponses??=[];
+   if(!auth.data.marketResponses.some(e=>e.group===group&&e.messageId===id)){auth.data.marketResponses.push(response);await auth.save();}
+   void marketTick();
+  }).catch(()=>{log('MARKET_RESPONSE_CAPTURE_RETRY');});}
+ });
  current.ev.on('messages.upsert',event=>{
  if(event.type!=='notify'||socket!==current)return;
  for(const message of orderMessages(event.messages)){queue=queue.then(async()=>{
  const group=message.key.remoteJid,id=message.key.id;if(stopping||!group||!id||message.key.fromMe)return;
- const body=extractMessageContent(message.message);const text=loanCommand((body?.conversation??body?.extendedTextMessage?.text??'').trim());const context=body?.extendedTextMessage?.contextInfo;
+ const body=extractMessageContent(message.message);const text=loanCommand((body?.conversation??body?.extendedTextMessage?.text??body?.imageMessage?.caption??'').trim());const context=body?.extendedTextMessage?.contextInfo??body?.imageMessage?.contextInfo;
  if(/^[0-9]+@(s\.whatsapp\.net|lid)$/.test(group)){
   if(!cupApi||!/^!(?:novacopa|nome|modalidade|formato|vagas|classificados|jogos|equipes|adicionar|remover|corrigirclubes|times|revisar|confirmar|descartar|central|pendencias|painel|ajuda|comandos|imagemgrupo|imagemtexto)(?:\s|$)/i.test(text))return;
   const dedup=JSON.stringify([group,id]);if(auth.data.seen.includes(dedup))return;
@@ -88,6 +116,35 @@ async function connect(){
   return;
  }
  if(!group.endsWith('@g.us'))return;
+ if(marketApi&&enabled()&&message.key.participant&&auth.data.groups.includes(group)){
+  if(marketChannels.some(c=>c.group===group)){
+   const reaction=body?.reactionMessage;
+   const response=marketResponse({group,messageId:id,participant:message.key.participant,proposalMessageId:reaction?.key?.id??context?.stanzaId,text,reaction:reaction?.text??undefined});
+   if(response){auth.data.marketResponses??=[];if(!auth.data.marketResponses.some(e=>e.group===group&&e.messageId===id)){auth.data.marketResponses.push(response);await auth.save();}void marketTick();return;}
+  }
+
+
+  let proposal=marketEvent(group,id,message.key.participant,text,marketChannels);
+  if(body?.imageMessage&&marketChannels.some(c=>c.group===group)){
+   try{
+    const stream=await downloadContentFromMessage(body.imageMessage,'image');let size=0;const chunks:Buffer[]=[];
+    for await(const chunk of stream){size+=chunk.length;if(size>4*1024*1024)throw Error('Card image too large');chunks.push(Buffer.from(chunk));}
+    const reading=await readMarketCard(Buffer.concat(chunks),text);
+    if(!proposal){proposal=marketEvent(group,id,message.key.participant,'PROPOSTA DE COMPRA\n'+text,marketChannels);if(proposal){proposal.text=text||'[Carta recebida sem modelo de proposta]';proposal.parsed.issues.push('Carta recebida sem proposta completa: associe o jogador externo e o destino antes de continuar.');}}
+    if(proposal)proposal.cardReading=reading;
+   }catch{if(!proposal){proposal=marketEvent(group,id,message.key.participant,'PROPOSTA DE COMPRA\n'+text,marketChannels);if(proposal)proposal.text=text||'[Carta recebida sem modelo de proposta]';}if(proposal)proposal.parsed.issues.push('A leitura da carta não foi confirmada. Confira a imagem original.');log('MARKET_CARD_REVIEW_REQUIRED');}
+  }
+
+  if(proposal){
+   proposal.mentions=context?.mentionedJid??[];
+   auth.data.marketInbox??=[];
+   if(!auth.data.marketInbox.some(e=>e.group===group&&e.messageId===id&&e.text===text)){
+    auth.data.marketInbox.push(proposal);await auth.save();
+   }
+   void marketTick();return;
+  }
+ }
+
  const receivedAt=Number(message.messageTimestamp)*1000;
  const eventAt=Number.isSafeInteger(receivedAt)&&receivedAt>1577836800000&&receivedAt<Date.now()+60000?receivedAt:Date.now();
  if(!auth.data.groups.includes(group)&&/^!novacopa\s*$/i.test(text.trim())&&cupApi&&message.key.participant){
@@ -463,7 +520,7 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  const req=JSON.parse(buffer.trim());
  if(req.action==='news-status')return {sourceConfigured:Boolean(loadNews),group:auth.data.newsGroup??null,cursor:auth.data.newsCursor??null,paused:!enabled(),pollIntervalSeconds:60};
  if(req.action==='news-config'){if(newsBusy)throw Error('Journal delivery in progress');if(req.group!==null){if(!socket||phase!=='CONNECTED')throw Error('Bot unavailable');const participating=await socket.groupFetchAllParticipating();if(!Object.hasOwn(participating,req.group))throw Error('Bot is not in journal group');}const result=await configureJournal(auth.data,req.group,loadNews,()=>auth.save());log('NEWS_CONTROLS_UPDATED');return {...result,sourceConfigured:Boolean(loadNews)};}
- if(req.action==='status')return {controls:auth.data.controls??{enabled:true,resenha:true,minicamp:true},queued:auth.data.cupInbox?.length??0,phase,authorizedGroups:auth.data.groups.length,minicamp:cupApi?(cupHealthy?'READY':'RETRYING'):'DISABLED',minicampLastSuccessAt:lastCupSuccessAt||null,newsGroup:auth.data.newsGroup??null,newsConfigured:Boolean(loadNews),checkedAt:Date.now()};
+ if(req.action==='status')return {controls:auth.data.controls??{enabled:true,resenha:true,minicamp:true},queued:auth.data.cupInbox?.length??0,phase,authorizedGroups:auth.data.groups.length,minicamp:cupApi?(cupHealthy?'READY':'RETRYING'):'DISABLED',minicampLastSuccessAt:lastCupSuccessAt||null,newsGroup:auth.data.newsGroup??null,newsConfigured:Boolean(loadNews),marketConfigured:Boolean(marketApi),marketHealthy,marketQueued:auth.data.marketInbox?.length??0,marketChannels:marketChannels.length,checkedAt:Date.now()};
  if(req.action==='select-context'){
   if(typeof req.group!=='string'||!req.group.endsWith('@g.us')||typeof req.templateId!=='string'||req.templateId.length>100)throw Error('Invalid selection');
   if(phase!=='CONNECTED'||!socket)throw Error('Not connected');
@@ -546,9 +603,9 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  })().then(r=>client.end(JSON.stringify(r)+'\n')).catch(()=>client.end(JSON.stringify({error:'Operação recusada. Confira conexão, número e seleção.'})+'\n'));});});
 const health=httpServer((req,res)=>{if(req.url==='/livez'||req.url==='/readyz'){const ok=!stopping&&(req.url==='/livez'||(phase==='CONNECTED'&&(!enabled('minicamp')||!cupApi||(cupHealthy&&Date.now()-lastCupTick<120000))));res.writeHead(ok?200:503,{'Cache-Control':'no-store'}).end(ok?'OK':'UNAVAILABLE');return;}void portal(req,res).catch(()=>{if(!res.headersSent)res.writeHead(500);res.end();});});
 function fail(event:string){log(event);void shutdown(1);}
-async function shutdown(code:number){if(stopping)return;stopping=true;if(cupTimer)clearInterval(cupTimer);if(newsTimer)clearInterval(newsTimer);if(timer)clearTimeout(timer);if(stable)clearTimeout(stable);const deadline=setTimeout(()=>process.exit(code),12000);deadline.unref();controls.close();health.close();socket?.end(undefined);await queue;while(cupBusy||newsBusy)await new Promise(r=>setTimeout(r,50));await auth?.flush();key.fill(0);process.exit(code);}
+async function shutdown(code:number){if(stopping)return;stopping=true;if(cupTimer)clearInterval(cupTimer);if(newsTimer)clearInterval(newsTimer);if(marketTimer)clearInterval(marketTimer);if(timer)clearTimeout(timer);if(stable)clearTimeout(stable);const deadline=setTimeout(()=>process.exit(code),12000);deadline.unref();controls.close();health.close();socket?.end(undefined);await queue;while(cupBusy||newsBusy||marketBusy)await new Promise(r=>setTimeout(r,50));await auth?.flush();key.fill(0);process.exit(code);}
 process.on('SIGTERM',()=>{void shutdown(0);});process.on('SIGINT',()=>{void shutdown(0);});process.on('uncaughtException',()=>fail('UNCAUGHT_ERROR'));process.on('unhandledRejection',()=>fail('UNHANDLED_REJECTION'));
-async function main(){auth=await vaultAuth(endpoint!,token!,key);auth.data.replyHistory??={};auth.data.cupInbox??=[];if(cupApi){try{await cupApi({action:'health'});cupHealthy=true;}catch{cupHealthy=false;log('MINICAMP_RETRY');}cupTimer=setInterval(()=>{void cupTick();},15000);}if(loadNews)newsTimer=setInterval(()=>{void newsTick();},60000);banterReply=createBanterReply(auth.data.replyHistory);await auth.save();await unlink(controlPath).catch(()=>undefined);controls.listen(controlPath,()=>{void chmod(controlPath,0o600).catch(()=>fail('CONTROL_PERMISSIONS_FAILED'));});if(!process.send)health.listen(Number(process.env.PORT??3000),'0.0.0.0');if(auth.state.creds.registered)await connect();else {phase='NEEDS_PAIRING';log(phase);}}
+async function main(){auth=await vaultAuth(endpoint!,token!,key);auth.data.replyHistory??={};auth.data.cupInbox??=[];auth.data.marketInbox??=[];auth.data.marketResponses??=[];if(marketApi){await marketTick();marketTimer=setInterval(()=>{void marketTick();},15000);}if(cupApi){try{await cupApi({action:'health'});cupHealthy=true;}catch{cupHealthy=false;log('MINICAMP_RETRY');}cupTimer=setInterval(()=>{void cupTick();},15000);}if(loadNews)newsTimer=setInterval(()=>{void newsTick();},60000);banterReply=createBanterReply(auth.data.replyHistory);await auth.save();await unlink(controlPath).catch(()=>undefined);controls.listen(controlPath,()=>{void chmod(controlPath,0o600).catch(()=>fail('CONTROL_PERMISSIONS_FAILED'));});if(!process.send)health.listen(Number(process.env.PORT??3000),'0.0.0.0');if(auth.state.creds.registered)await connect();else {phase='NEEDS_PAIRING';log(phase);}}
 async function newsTick(){
  if(!loadNews||newsBusy||stopping||phase!=='CONNECTED'||!socket||!enabled()||!auth.data.newsGroup)return;
  newsBusy=true;const current=socket,group=auth.data.newsGroup;
@@ -569,3 +626,27 @@ if(process.send){
  pulse.unref();process.on('disconnect',()=>{void shutdown(0);});
 }
 void main().catch(()=>fail('SESSION_STORAGE_UNAVAILABLE'));
+
+async function marketTick(){
+ if(!marketApi||marketBusy||stopping)return;
+ marketBusy=true;
+ try{
+  const config=await marketApi<{channels:MarketChannel[]}>('config');
+  if(!Array.isArray(config.channels))throw Error('Invalid market channel list');
+  marketChannels=config.channels;
+  if(phase!=='CONNECTED'||!socket||!enabled())return;
+  await drainMarketInbox(auth.data,marketApi,()=>auth.save());
+  for(const response of [...(auth.data.marketResponses??[])].slice(0,20)){
+   const result=await marketApi<{success:boolean}>('response',response);if(!result.success)throw Error('Response not confirmed');
+   const previous=auth.data.marketResponses;auth.data.marketResponses=auth.data.marketResponses?.filter(e=>!(e.group===response.group&&e.messageId===response.messageId));
+   try{await auth.save();}catch(error){auth.data.marketResponses=previous;throw error;}
+  }
+
+  const current=socket;
+  await deliverMarketReactions(marketApi,async r=>{
+   if(!auth.data.groups.includes(r.group)||auth.data.loanGroups?.includes(r.group))throw Error('Market reaction group is not authorized');
+   await current.sendMessage(r.group,{react:{text:r.emoji,key:{remoteJid:r.group,participant:r.participant,id:r.messageId,fromMe:false}}});
+  },()=>socket===current&&!stopping&&enabled());
+  marketHealthy=true;
+ }catch{marketHealthy=false;log('MARKET_BRIDGE_RETRY');}finally{marketBusy=false;}
+}

@@ -1,5 +1,5 @@
 FROM node:24-bookworm AS verify
-RUN apt-get update && apt-get install -y --no-install-recommends postgresql && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends postgresql curl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts
@@ -8,6 +8,8 @@ COPY src ./src
 COPY scripts ./scripts
 COPY deploy ./deploy
 COPY assets ./assets
+# Package the pinned OCR language file; runtime never downloads language data.
+RUN curl --fail --location --retry 3 https://tessdata.projectnaptha.com/4.0.0/eng.traineddata.gz --output assets/eng.traineddata.gz && echo "ed350f3752f81ee8f38769edc14d92d997dababe23b565c59879372cc46a2468  assets/eng.traineddata.gz" | sha256sum --check -
 COPY migrations ./migrations
 COPY tests ./tests
 # Disposable database exists only in the build stage. No production secret is
