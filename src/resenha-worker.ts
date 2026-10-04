@@ -43,30 +43,6 @@ let cupBusy=false,lastCupTick=Date.now(),lastCupSuccessAt=0,cupHealthy=!cupApi,c
 let marketBusy=false,marketHealthy=!marketApi,marketChannels:MarketChannel[]=[],marketTimer:ReturnType<typeof setInterval>|undefined;
 type MarketBatch={group:string;batch:number;count:number;botLocked:boolean};
 type MarketPrivateNotice={id:string;recipient:string;body:string;lease:string};
-const marketReminderAt=new Map<string,number>();
-const marketReminderQueues=new Map<string,{participants:Set<string>;timer:ReturnType<typeof setTimeout>}>();
-async function remindMarketChat(group:string,participant:string,current:ReturnType<typeof makeWASocket>){
- const now=Date.now(),key=group+':'+participant;
- if(now-(marketReminderAt.get(key)??0)<120000)return;
- const metadata=await current.groupMetadata(group);
- const aliases=await cupAliases(participant,current);
- const admins=await Promise.all(metadata.participants.filter(p=>Boolean(p.admin)).map(p=>cupAliases(p.id,current).catch(():string[]=>[])));
- if(admins.some(ids=>ids.some(id=>aliases.includes(id))))return;
- marketReminderAt.set(key,now);
- let entry=marketReminderQueues.get(group);
- if(!entry){
-  const participants=new Set<string>();
-  const timer=setTimeout(()=>{
-   marketReminderQueues.delete(group);
-   if(socket!==current||stopping||!enabled()||!marketChannels.some(c=>c.group===group))return;
-   const mentions=[...participants].slice(0,20);
-   void current.sendMessage(group,{text:'Pessoal, este grupo é para propostas de transferência. Conversem no grupo de resenha, por favor. '+mentions.map(j=>'@'+j.split('@')[0]).join(' '),mentions}).catch(()=>log('MARKET_REMINDER_RETRY'));
-  },6000);
-  entry={participants,timer};marketReminderQueues.set(group,entry);
- }
- entry.participants.add(participant);
-}
-
 let newsBusy=false,newsTimer:ReturnType<typeof setInterval>|undefined;
 const controlPath='/tmp/mlg-bot-control.sock';
 const portal=privateControl({secret:process.env.CONTROL_PASSWORD,origin:process.env.CONTROL_ORIGIN,socketPath:controlPath,resenha:true});
@@ -151,7 +127,7 @@ async function connect(){
 
 
   let proposal=marketEvent(group,id,message.key.participant,text,marketChannels);
-  if(body?.imageMessage&&marketChannels.some(c=>c.group===group)){
+  if(proposal&&body?.imageMessage&&marketChannels.some(c=>c.group===group)){
    try{
     const stream=await downloadContentFromMessage(body.imageMessage,'image');let size=0;const chunks:Buffer[]=[];
     for await(const chunk of stream){size+=chunk.length;if(size>4*1024*1024)throw Error('Card image too large');chunks.push(Buffer.from(chunk));}
@@ -170,7 +146,7 @@ async function connect(){
    void marketTick();return;
   }
   if(marketChannels.some(c=>c.group===group)){
-   if(text.trim())await remindMarketChat(group,message.key.participant,current);
+   // Notices, examples and discussion do not create proposals or trigger warnings.
    return;
   }
  }

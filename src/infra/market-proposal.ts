@@ -18,8 +18,12 @@ export function parseWhatsAppMarketProposal(text: string): WhatsAppMarketProposa
   if (text.length > 16000) throw Error("Proposta maior que o limite permitido.");
   const lines = clean(text).split(/\r?\n/).map(line => line.replace(/\*/g, "").trim());
   const header = lines.slice(0,4).map(marketTextKey).join(" ");
-  if (!/proposta (?:de )?(compra|troca)/.test(header)) return null;
-  const kind = /proposta (?:de )?troca/.test(header) ? "trade" : "transfer";
+  // Only a title identifies a submission; sentences discussing proposals are notices.
+  const title=lines.slice(0,4).findIndex(line=>/^(?:proposta|modulo)(?: de)? (?:compra|troca)$/.test(marketTextKey(line)));
+  if(title<0)return null;
+  const intro=marketTextKey(lines.slice(0,title+1).join(' '));
+  if(/\b(?:exemplo|modelo|instrucao|instrucoes|aviso|tutorial|como preencher)\b/.test(intro))return null;
+  const kind = /(?:proposta|modulo) (?:de )?troca/.test(header) ? "trade" : "transfer";
   const fields = new Map<string,string>(); const issues: string[] = [];
   for (const line of lines) {
     const colon = line.indexOf(":"); if (colon < 0) continue;
@@ -31,6 +35,9 @@ export function parseWhatsAppMarketProposal(text: string): WhatsAppMarketProposa
   const origin = pick("clube de origem", "clube origem"), destination = pick("clube de destino", "clube destino");
   const list = (value: string) => value.split(/[;,]|\s+\+\s+/).map(clean).filter(Boolean);
   const playersFrom = list(pick("jogador", "jogadores", "jogador de origem", "jogadores de origem", "jogador origem", "jogadores origem"));
+  // Empty forms and placeholders are teaching material, never batch entries.
+  const placeholder=(value:string)=>!value||/^(?:clube|jogador|nome|origem|destino|exemplo|xxx|preencher|seu clube|nome do clube|nome do jogador)$/.test(marketTextKey(value))||/[<>\[\]_]/.test(value);
+  if(placeholder(origin)||placeholder(destination)||!playersFrom.length||playersFrom.some(placeholder))return null;
   const playersTo = kind === "trade" ? list(pick("jogador de destino", "jogadores de destino", "jogador destino", "jogadores destino", "jogador da troca", "jogadores da troca", "jogador de troca", "em troca de")) : [];
   if (!origin || !destination || marketTextKey(origin) === marketTextKey(destination)) issues.push("Informe dois clubes diferentes.");
   if (!playersFrom.length || (kind === "trade" && !playersTo.length)) issues.push("Faltam jogadores de um dos lados.");
