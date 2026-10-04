@@ -1,7 +1,7 @@
 import {parseWhatsAppMarketProposal,type WhatsAppMarketProposal} from './market-proposal.ts';
 export type MarketEvent={group:string;messageId:string;participant:string;text:string;mentions?:string[];cardReading?:{week:string|null;confidence:number;text:string;imageHash:string};parsed:WhatsAppMarketProposal};
 export type MarketChannel={kind:'transfer'|'trade';group:string};
-export type MarketReaction={id:string;revision:number;emoji:'🟠'|'🟢'|'🔴';lease:string;group:string;messageId:string;participant:string};
+export type MarketReaction={id:string;revision:number;emoji:''|'🟠'|'🟢'|'🔴';lease:string;group:string;messageId:string;participant:string};
 export function marketEvent(group:string,messageId:string,participant:string,text:string,channels:MarketChannel[]):MarketEvent|null{
  const channel=channels.find(c=>c.group===group);if(!channel)return null;
  const parsed=parseWhatsAppMarketProposal(text);if(!parsed)return null;
@@ -19,7 +19,8 @@ export function marketBridge(url:string,key:string,token:string,fetcher:typeof f
 }
 export async function drainMarketInbox(state:{marketInbox?:MarketEvent[]},api:ReturnType<typeof marketBridge>,save:()=>Promise<void>){
  for(const event of [...(state.marketInbox??[])].slice(0,20)){
-  const result=await api<{success:boolean}>('ingest',event);
+  const result=await api<{success:boolean;reason?:string}>('ingest',event);
+  if(result.success!==true&&result.reason==='batch_closed')continue;
   if(result.success!==true)throw Error('Market proposal not confirmed');
   const previous=state.marketInbox;state.marketInbox=state.marketInbox?.filter(e=>!(e.group===event.group&&e.messageId===event.messageId&&e.text===event.text));
   try{await save();}catch(error){state.marketInbox=previous;throw error;}

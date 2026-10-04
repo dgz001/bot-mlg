@@ -1,3 +1,4 @@
+import {platformLoan} from './platform-loan.ts';
 import {minicampClubs} from './clubs.ts';
 // Private server-to-server gateway. Inject only a token digest during deployment.
 import {Pool} from 'npm:pg@8.23.0';
@@ -105,8 +106,14 @@ Deno.serve(async req=>{
  try{
  const raw=await req.text();if(raw.length>120000)return new Response('Too large',{status:413});
  const body=JSON.parse(raw);let result={};
- if(body.action==='health'){await db.transaction(q=>q.query('SELECT 1'));result={database:true};}
+ if(body.action==='platform-loan')result=await platformLoan(db,body,identity);
+ else if(body.action==='health'){await db.transaction(q=>q.query('SELECT 1'));result={database:true};}
  else if(body.action==='guest-open')result=await guestOpen(db,body);
+ else if(body.action==='platform-guest-event'){
+  const status=await platformLoan(db,{...body,operation:'get'},identity);
+  if(!status.loan?.active||!status.aliases?.length)throw Error('Loan unavailable');
+  result=await guestEvent(db,{...body,aliases:status.aliases,platformOnly:true},identity);
+ }
  else if(body.action==='guest-event'){
   if(!validAliases(body.aliases))throw Error('Invalid guest identity');
   result=await guestEvent(db,body,identity);
@@ -174,6 +181,15 @@ Deno.serve(async req=>{
    const loan=await q.query('SELECT 1 FROM mlg_bot.loan_groups WHERE group_id=$1 AND manager_id=$2 AND active',[body.group,id]);
    const loanGroup=await q.query('SELECT 1 FROM mlg_bot.loan_groups WHERE group_id=$1 AND active',[body.group]);
    return {allowed:allowed.rows.some(a=>a.role==='owner'||a.role==='admin'),channelAllowed:allowed.rows.some(a=>a.group_id===body.group&&a.role==='channel'),loanAllowed:loanGroup.rows.length===1&&(loan.rows.length===1||allowed.rows.some(a=>a.group_id===body.group&&a.role==='channel')),loanGroup:loanGroup.rows.length===1};
+  });
+ }
+ else if(body.action==='loan-join-check'){
+  if(!groupId.test(body.group)||!Array.isArray(body.candidates)||body.candidates.length>100||body.candidates.some(j=>!jid.test(j)))throw Error('Invalid loan candidates');
+  result=await db.transaction(async q=>{
+   const found=await q.query(`SELECT DISTINCT l.manager_id,u.display_name AS name,extract(epoch from l.granted_at)*1000 AS granted_at_ms FROM mlg_bot.loan_invitations l JOIN mlg_bot.wa_identities w ON w.user_id=l.manager_id JOIN mlg_bot.users u ON u.id=l.manager_id WHERE l.active AND (l.claimed_group IS NULL OR l.claimed_group=$1) AND w.jid=ANY($2::text[]) AND NOT EXISTS(SELECT 1 FROM mlg_bot.member_blocks b WHERE b.user_id=l.manager_id)`,[body.group,body.candidates]);
+   if(found.rows.length!==1)return {eligible:false};
+   const manager=found.rows[0];const aliases=(await q.query('SELECT jid FROM mlg_bot.wa_identities WHERE user_id=$1 ORDER BY (jid LIKE $2) DESC,verified_at DESC LIMIT 2',[manager.manager_id,'%@s.whatsapp.net'])).rows.map(r=>r.jid);
+   return {eligible:true,manager:manager.manager_id,name:manager.name,grantedAt:Number(manager.granted_at_ms),aliases};
   });
  }
  else if(body.action==='loan-private-check'){

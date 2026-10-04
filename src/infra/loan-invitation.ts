@@ -13,7 +13,7 @@ Seu número foi liberado para organizar campeonatos no seu grupo.
 PRIMEIRO, PREPARE O GRUPO
 1. Adicione este bot ao grupo do campeonato no WhatsApp e me dê acesso como administrador do grupo para acompanhar e enviar os avisos.
 2. Você também precisa ser administrador desse grupo com o mesmo número que recebeu este convite.
-3. Você pode configurar tudo aqui no nosso privado: envie !novacopa, faça suas escolhas, depois !revisar e !confirmar. Eu salvo o preparo só para o seu número.
+3. Configure aqui no privado com !configbot. Faço poucas perguntas e mostro a revisão final para você confirmar ou rejeitar. Depois use !alterarconfig para mudar uma opção. Os comandos individuais continuam disponíveis.
 4. No grupo em que quer disputar, envie !novacopa. Eu ativo o empréstimo nesse grupo e publico a configuração confirmada com inscrições abertas.
 5. Os jogadores usam !entrar. Quando as vagas se completarem, eu anuncio os confrontos, marco os inscritos e explico os resultados.
 

@@ -13,3 +13,19 @@ test('admin and member submissions use the same batch path; notices and examples
  for(const notice of ['A proposta de compra deve ter os clubes e o jogador.','Esse jogador não está disponível na liga.','Ele ainda não confirmou.', 'MODELO DE EXEMPLO\n'+text,'EXEMPLO\n'+text,text.replace('Manchester City','[clube de origem]')])assert.equal(marketEvent('12345@g.us','id','111@lid',notice,channels),null);
  assert.ok(marketEvent('12345@g.us','id','111@lid',text.replace('PROPOSTA DE COMPRA','MÓDULO DE COMPRA'),channels));
 });
+test('closed batch preserves overflow proposals while allowing delivery work to continue',async()=>{
+ const state={marketInbox:[event]};let saved=0;
+ await drainMarketInbox(state,(async()=>({success:false,reason:'batch_closed'})) as any,async()=>{saved++;});
+ assert.equal(state.marketInbox.length,1);assert.equal(saved,0);
+ await drainMarketInbox(state,(async()=>({success:true})) as any,async()=>{saved++;});
+ assert.equal(state.marketInbox.length,0);assert.equal(saved,1);
+});
+test('explicit external and internal purchases are distinct; conflicting labels need review',()=>{
+ const channels=[{kind:'transfer' as const,group:'12345@g.us'}];
+ const parse=(s:string)=>marketEvent('12345@g.us','m','123@lid',s,channels)!.parsed;
+ assert.equal(parse(text.replace('Manchester City','Externo')).purchaseScope,'external');
+ assert.equal(parse(text+'\nTipo de compra: interna').purchaseScope,'internal');
+ assert.equal(parse(text+'\nTipo de compra: externa').purchaseScope,'external');
+ assert.equal(parse(text).purchaseScope,'review');
+ const bad=parse(text.replace('Manchester City','Externo')+'\nTipo de compra: interna');assert.equal(bad.purchaseScope,'review');assert.ok(bad.issues.length);
+});

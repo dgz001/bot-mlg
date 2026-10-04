@@ -21,7 +21,7 @@ test('convite aceita acentos e telefone formatado e não anuncia envio sem remet
  assert.match(loanGuide,/!modalidade liga.*!modalidade copa/);
  assert.match(loanGuide,/!jogos 1.*!jogos 2/);
  assert.match(loanGuide,/Adicione este bot ao grupo.*administrador do grupo/s);
- assert.match(loanGuide,/envie !novacopa.*!revisar e !confirmar/s);
+ assert.match(loanGuide,/!configbot.*!alterarconfig/s);
  assert.match(loanGuide,/!novacopa no grupo publica/);
  assert.match(loanGuide,/!forcarresultado CÓDIGO MxV motivo/);
  assert.match(loanGuide,/Ninguém acompanha este chat como atendimento humano/);

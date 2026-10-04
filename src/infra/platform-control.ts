@@ -2,7 +2,7 @@ import {connect} from 'node:net';
 import type {IncomingMessage,ServerResponse} from 'node:http';
 
 type Identity={id:string;admin:boolean};
-const adminActions=new Set(['status','groups','participants','authorize','settings','revoke','setadmins','history-candidates','history-review','competition-get','competition-save','templates-list','template-get','template-save','template-activate','template-delete','cup-open','cup-cancel','cup-void','set-group-mode','select-context','leave-group','pair','restart','news-config','news-status']);
+const adminActions=new Set(['status','groups','participants','authorize','settings','revoke','setadmins','history-candidates','history-review','competition-get','competition-save','templates-list','template-get','template-save','template-activate','template-delete','cup-open','cup-cancel','cup-void','set-group-mode','select-context','leave-group','pair','restart','news-config','news-status','loan-status','loan-configure','guest-control']);
 export function platformIdentity(url:string,key:string,fetcher:typeof fetch=fetch){
  const source=new URL(url);
  if(source.protocol!=='https:'||!/^([a-z0-9-]+)\.supabase\.co$/.test(source.hostname)||!key)throw Error('Invalid platform identity provider');
@@ -38,6 +38,7 @@ export function platformControl(options:{origin:string;socketPath:string;identif
    let body='';for await(const chunk of req){body+=chunk.toString();if(Buffer.byteLength(body)>24000){reply(413,{error:'Solicitação grande demais'});return;}}
    const data=JSON.parse(body) as Record<string,unknown>;
    if(typeof data.action!=='string'||!adminActions.has(data.action)||!identity.admin&&data.action!=='status'){reply(403,{error:'Comando restrito aos ADMs da plataforma MLG.'});return;}
+   if(['loan-status','loan-configure','guest-control'].includes(data.action))data.platformActor=identity.id;
    if(data.action==='restart'){
     if(!identity.admin){reply(403,{error:'Operação reservada'});return;}
     try{reply(202,options.restart());}catch{reply(429,{error:'Aguarde antes de reiniciar novamente.'});}return;

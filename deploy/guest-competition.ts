@@ -256,6 +256,7 @@ export async function guestEvent(db,request,identity){
     else{await q.query("UPDATE mlg_bot.guest_matches SET status='disputed' WHERE code=$1",[n]);await audit(q,cup,selected,user,'dispute',score(selected),score(selected));reply='⚖️ Jogo #'+n+' contestado. O organizador deve verificar o print e usar !forcarresultado '+n+' MxV motivo.';}
    }
   }
+  if(request.platformOnly)return {accepted:true,response:reply};
   await notify(q,group,user,messageId,reply);
   return {accepted:true};
  });

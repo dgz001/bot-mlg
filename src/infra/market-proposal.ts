@@ -1,4 +1,4 @@
-export type WhatsAppMarketProposal = { kind: "transfer" | "trade"; origin: string; destination: string; playersFrom: string[]; playersTo: string[]; amountEuros: string | null; issues: string[] };
+export type WhatsAppMarketProposal = { kind: "transfer" | "trade"; purchaseScope?: "internal" | "external" | "review" | "trade"; origin: string; destination: string; playersFrom: string[]; playersTo: string[]; amountEuros: string | null; issues: string[] };
 export function marketTextKey(text: string): string { return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); }
 const clean = (text: string) => text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, "").trim();
 export function parseWhatsAppEuros(text: string): string {
@@ -19,7 +19,7 @@ export function parseWhatsAppMarketProposal(text: string): WhatsAppMarketProposa
   const lines = clean(text).split(/\r?\n/).map(line => line.replace(/\*/g, "").trim());
   const header = lines.slice(0,4).map(marketTextKey).join(" ");
   // Only a title identifies a submission; sentences discussing proposals are notices.
-  const title=lines.slice(0,4).findIndex(line=>/^(?:proposta|modulo)(?: de)? (?:compra|troca)$/.test(marketTextKey(line)));
+  const title=lines.slice(0,4).findIndex(line=>/^(?:proposta|modulo)(?: de)? (?:compra|troca)(?: interna| externa)?$/.test(marketTextKey(line)));
   if(title<0)return null;
   const intro=marketTextKey(lines.slice(0,title+1).join(' '));
   if(/\b(?:exemplo|modelo|instrucao|instrucoes|aviso|tutorial|como preencher)\b/.test(intro))return null;
@@ -47,5 +47,11 @@ export function parseWhatsAppMarketProposal(text: string): WhatsAppMarketProposa
   if (money) { try { amountEuros = parseWhatsAppEuros(money); } catch (e) { issues.push(e instanceof Error ? e.message : "Valor inválido."); } }
   if (kind === "transfer" && (amountEuros === null || amountEuros === "0")) issues.push("Compra precisa de valor positivo.");
   if (kind === "trade" && amountEuros !== "0") issues.push("Este modelo de troca não permite dinheiro.");
-  return { kind, origin, destination, playersFrom, playersTo, amountEuros, issues };
+  const declared=marketTextKey(pick("tipo de compra", "tipo da compra", "tipo de negociacao"));
+  const externalOrigin=/^(?:externo|externa|fora da mlg|fora da liga|agente livre|agentes livres|mercado externo)$/.test(marketTextKey(origin));
+  const external=externalOrigin||/\bexterna\b/.test(header)||['externa','externo','compra externa'].includes(declared);
+  const internal=/\binterna\b/.test(header)||['interna','interno','entre clubes','compra interna'].includes(declared);
+  if(external&&internal)issues.push('Tipo de compra conflitante; os ADMs precisam conferir.');
+  const purchaseScope=kind==='trade'?'trade':external&&!internal?'external':internal&&!external?'internal':'review';
+  return { kind, purchaseScope, origin, destination, playersFrom, playersTo, amountEuros, issues };
 }

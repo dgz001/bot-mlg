@@ -1,3 +1,4 @@
+import {loanWizard} from './infra/loan-wizard.ts';
 import {readMarketCard} from "./infra/market-card.ts";
 import {marketResponse} from "./infra/market-response.ts";
 import {marketBridge,marketEvent,drainMarketInbox,deliverMarketReactions,type MarketChannel} from "./infra/platform-market.ts";
@@ -41,7 +42,7 @@ const cupClubs=[...minicampClubs];
 const configuredCups=new Set<string>();
 let cupBusy=false,lastCupTick=Date.now(),lastCupSuccessAt=0,cupHealthy=!cupApi,cupTimer:ReturnType<typeof setInterval>|undefined;
 let marketBusy=false,marketHealthy=!marketApi,marketChannels:MarketChannel[]=[],marketTimer:ReturnType<typeof setInterval>|undefined;
-type MarketBatch={group:string;batch:number;count:number;botLocked:boolean};
+type MarketBatch={group:string;batch:number;count:number;limit?:number;botLocked:boolean};
 type MarketPrivateNotice={id:string;recipient:string;body:string;lease:string};
 let newsBusy=false,newsTimer:ReturnType<typeof setInterval>|undefined;
 const controlPath='/tmp/mlg-bot-control.sock';
@@ -62,7 +63,7 @@ async function connect(){
  current.ev.on('connection.update',u=>{
  if(socket!==current||stopping)return;
  if(u.qr){pairingReady.add(current);log('PAIRING_TRANSPORT_READY');}
- if(u.connection==='open'){phase='CONNECTED';log(phase);void marketTick();stable=setTimeout(()=>{attempt=0;},60000);}
+ if(u.connection==='open'){phase='CONNECTED';log(phase);void marketTick();void loanJoinTick();stable=setTimeout(()=>{attempt=0;},60000);}
  if(u.connection==='close'){
  if(stable)clearTimeout(stable);socket=undefined;
  const status=(u.lastDisconnect?.error as {output?:{statusCode?:number}}|undefined)?.output?.statusCode;
@@ -72,6 +73,9 @@ async function connect(){
  if(decision.delayMs)timer=setTimeout(()=>{void connect().catch(()=>fail('CONNECT_FAILED'));},decision.delayMs);
  }
  });
+ const queueLoanJoin=(group:string)=>{queue=queue.then(async()=>{if(stopping||socket!==current)return;auth.data.loanJoinPending??=[];if(!auth.data.loanJoinPending.includes(group)){auth.data.loanJoinPending.push(group);await auth.save();}void loanJoinTick();}).catch(()=>log('LOAN_JOIN_RETRY'));};
+ current.ev.on('groups.upsert',groups=>{for(const group of groups)queueLoanJoin(group.id);});
+ current.ev.on('group-participants.update',event=>{if(['add','promote'].includes(event.action))queueLoanJoin(event.id);});
  current.ev.on('messages.update',events=>{
   for(const event of events){queue=queue.then(async()=>{
    const group=event.key.remoteJid,id=event.key.id,participant=event.key.participant;
@@ -100,18 +104,18 @@ async function connect(){
  const group=message.key.remoteJid,id=message.key.id;if(stopping||!group||!id||message.key.fromMe)return;
  const body=extractMessageContent(message.message);const text=loanCommand((body?.conversation??body?.extendedTextMessage?.text??body?.imageMessage?.caption??'').trim());const context=body?.extendedTextMessage?.contextInfo??body?.imageMessage?.contextInfo;
  if(/^[0-9]+@(s\.whatsapp\.net|lid)$/.test(group)){
-  if(!cupApi||!/^!(?:novacopa|nome|modalidade|formato|vagas|classificados|jogos|equipes|adicionar|remover|corrigirclubes|times|revisar|confirmar|descartar|central|pendencias|painel|ajuda|comandos|imagemgrupo|imagemtexto)(?:\s|$)/i.test(text))return;
+  if(!cupApi||!(/^!(?:configbot|alterarconfig|cancelarconfig|rejeitar|novacopa|nome|modalidade|formato|vagas|classificados|jogos|equipes|adicionar|remover|corrigirclubes|times|revisar|confirmar|descartar|central|pendencias|painel|ajuda|comandos|imagemgrupo|imagemtexto)(?:\s|$)/i.test(text)||Object.values(auth.data.controlRooms??{}).some(r=>r.guestWizard)))return;
   const dedup=JSON.stringify([group,id]);if(auth.data.seen.includes(dedup))return;
   if(text.length>16000){await current.sendMessage(group,{text:'⚠️ Lista muito longa. Envie em partes com !adicionar.'});return;}
   let finish:ReturnType<typeof progressMessage>|undefined;
   try{
   const aliases=await cupAliases(group,current);
-  const check=await cupApi<{allowed:boolean;manager?:string;grantedAt?:number}>({action:'loan-private-check',aliases});
+  const check=await cupApi<{allowed:boolean;manager?:string;claimedGroup?:string|null;grantedAt?:number}>({action:'loan-private-check',aliases});
   if(!check.allowed||!check.manager||!Number.isFinite(check.grantedAt))return;
   finish=progressMessage(current,group,()=>socket===current&&!stopping);
-  auth.data.controlRooms??={};const key='loan-private:'+check.manager,room=auth.data.controlRooms[key]??={};auth.data.controlRooms[key]=room;room.targetId='private';
-  if(room.guestInvitationAt!==check.grantedAt){delete room.guestDraft;delete room.guestImage;room.guestInvitationAt=check.grantedAt;await auth.save();}
-  const response=await adminControl(text,room,[],async()=>({error:'Operação indisponível no privado.'}),()=>auth.save(),Date.now(),{controlGroup:group,aliases,messageId:id},auth.data.controlRooms,true,true);
+  auth.data.controlRooms??={};const key=check.claimedGroup??'loan-private:'+check.manager,previous=auth.data.controlRooms['loan-private:'+check.manager],room=auth.data.controlRooms[key]??previous??{};auth.data.controlRooms[key]=room;room.targetId=check.claimedGroup??'private';
+  if(room.guestInvitationAt!==check.grantedAt){if(room.guestInvitationAt!=null){delete room.guestDraft;delete room.guestImage;delete room.guestWizard;}room.guestInvitationAt=check.grantedAt;await auth.save();}
+  const response=await loanWizard(text,room,()=>auth.save())??await adminControl(text,room,[],async()=>({error:'Operação indisponível no privado.'}),()=>auth.save(),Date.now(),{controlGroup:group,aliases,messageId:id},auth.data.controlRooms,true,true);
   auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);await auth.save();
   await finish(response);
   }catch{log('LOAN_PRIVATE_RETRY');if(finish)await finish('⚠️ Não consegui salvar agora. Tente o comando novamente em instantes.').catch(()=>{});}
@@ -263,8 +267,8 @@ async function connect(){
       return null;
      };
      const privateCheck=/^!novacopa\s*$/i.test(text.trim())?await cupApi<{allowed:boolean;manager?:string;claimedGroup?:string|null;grantedAt?:number}>({action:'loan-private-check',aliases}).catch(()=>null):null;
-     const privateRoom=privateCheck?.allowed&&(!privateCheck.claimedGroup||privateCheck.claimedGroup===group)?auth.data.controlRooms['loan-private:'+privateCheck.manager]:undefined;
-     if(privateRoom&&privateRoom.guestInvitationAt!==privateCheck?.grantedAt){delete privateRoom.guestDraft;delete privateRoom.guestImage;privateRoom.guestInvitationAt=privateCheck?.grantedAt;await auth.save();}
+     const privateRoom=privateCheck?.allowed&&(!privateCheck.claimedGroup||privateCheck.claimedGroup===group)?(privateCheck.claimedGroup?auth.data.controlRooms[group]:auth.data.controlRooms['loan-private:'+privateCheck.manager]):undefined;
+     if(privateRoom&&privateRoom.guestInvitationAt!=null&&privateRoom.guestInvitationAt!==privateCheck?.grantedAt){delete privateRoom.guestDraft;delete privateRoom.guestImage;privateRoom.guestInvitationAt=privateCheck?.grantedAt;await auth.save();}
      const prepared=privateRoom?guestPrepared(privateRoom):null;
      if(prepared){
       const opened=await api({action:'guest-open',group,...prepared});
@@ -525,6 +529,36 @@ async function cupTick(){
 }
 const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>client.destroy());client.on('data',chunk=>{buffer+=chunk.toString();if(buffer.length>8192){client.destroy();return;}if(!buffer.includes('\n'))return;client.pause();void(async()=>{
  const req=JSON.parse(buffer.trim());
+
+ if(['loan-status','loan-configure','guest-control'].includes(req.action)){
+  if(!cupApi||!socket||phase!=='CONNECTED'||!auth.data.groups.includes(req.group)||!/^([0-9a-f-]{36})$/i.test(req.platformActor??''))throw Error('Loan controls unavailable');
+  const metadata=await socket.groupMetadata(req.group);
+  if(req.action==='loan-configure'){
+   if(!['grant','revoke'].includes(req.operation))throw Error('Invalid operation');
+   const person=metadata.participants.find(p=>p.id===req.admin);
+   if(req.operation==='grant'&&(!person?.admin||!metadata.participants.some(p=>p.admin&&[socket!.user?.id,socket!.user?.lid].some(id=>id&&id.replace(/:[0-9]+(?=@)/,'')===p.id.replace(/:[0-9]+(?=@)/,'')))))throw Error('Organizer and bot must be group admins');
+   await configureCup(req.group,socket);
+   const result=await cupApi<Record<string,any>>({action:'platform-loan',group:req.group,platformActor:req.platformActor,operation:req.operation,targetAliases:person?await cupAliases(person.id,socket):undefined,name:'Organizador convidado'});
+   if(result.error)throw Error(result.error);
+   auth.data.loanGroups??=[];
+   if(req.operation==='grant'){auth.data.loanJoinPending??=[];if(!auth.data.loanJoinPending.includes(req.group))auth.data.loanJoinPending.push(req.group);if(!auth.data.loanGroups.includes(req.group))auth.data.loanGroups.push(req.group);auth.data.groupModes??={};auth.data.groupModes[req.group]='minicamp';}
+   else{auth.data.loanGroups=auth.data.loanGroups.filter(g=>g!==req.group);delete auth.data.controlRooms?.[req.group];}
+   await auth.save();void loanJoinTick();return result;
+  }
+  const status=await cupApi<Record<string,any>>({action:'platform-loan',group:req.group,platformActor:req.platformActor,operation:'get'});
+  if(status.error)throw Error(status.error);
+  if(req.action==='loan-status'){delete status.aliases;return {...status,draft:auth.data.controlRooms?.[req.group]?.guestDraft??null};}
+  if(!status.loan?.active||!Array.isArray(status.aliases)||!status.aliases.length||typeof req.text!=='string'||req.text.length>16000)throw Error('Invalid guest command');
+  const cmd=req.text.trim().split(/\s/)[0].toLowerCase();
+  const setup=['!painel','!central','!pendencias','!novacopa','!nome','!modalidade','!formato','!vagas','!jogos','!classificados','!equipes','!times','!adicionar','!remover','!corrigirclubes','!revisar','!abrircopa','!descartar','!cancelarcopa','!imagemgrupo','!imagemtexto','!daradm','!tiraradm','!adms'];
+  const play=['!copa','!tabela','!proximafase','!jogo','!campeoes','!historico','!forcarresultado'];
+  if(!setup.includes(cmd)&&!play.includes(cmd))throw Error('Unsupported guest command');
+  if(play.includes(cmd))return cupApi({action:'platform-guest-event',group:req.group,platformActor:req.platformActor,aliases:status.aliases,messageId:'platform-'+crypto.randomUUID(),text:req.text,name:'Organizador'});
+  auth.data.controlRooms??={};const room=auth.data.controlRooms[req.group]??={};room.targetId=req.group;auth.data.controlRooms[req.group]=room;
+  const resolveGroupAdmin=async(group:string,phone:string)=>{if(group!==req.group)return null;for(const person of metadata.participants){if(!person.admin)continue;const aliases=await cupAliases(person.id,socket!);if(aliases.includes(phone+'@s.whatsapp.net'))return aliases;}return null;};
+  const response=await adminControl(req.text,room,[{id:req.group,name:metadata.subject}],async payload=>{if(!['guest-status','guest-open','guest-cancel','guest-admin'].includes(String(payload.action))||payload.group!==req.group)throw Error('Invalid guest action');return cupApi!(payload);},()=>auth.save(),Date.now(),{controlGroup:req.group,aliases:status.aliases,messageId:'platform-'+crypto.randomUUID(),resolveGroupAdmin},auth.data.controlRooms,true);
+  return {response,draft:room.guestDraft??null};
+ }
  if(req.action==='news-status')return {sourceConfigured:Boolean(loadNews),group:auth.data.newsGroup??null,cursor:auth.data.newsCursor??null,paused:!enabled(),pollIntervalSeconds:60};
  if(req.action==='news-config'){if(newsBusy)throw Error('Journal delivery in progress');if(req.group!==null){if(!socket||phase!=='CONNECTED')throw Error('Bot unavailable');const participating=await socket.groupFetchAllParticipating();if(!Object.hasOwn(participating,req.group))throw Error('Bot is not in journal group');}const result=await configureJournal(auth.data,req.group,loadNews,()=>auth.save());log('NEWS_CONTROLS_UPDATED');return {...result,sourceConfigured:Boolean(loadNews)};}
  if(req.action==='status')return {controls:auth.data.controls??{enabled:true,resenha:true,minicamp:true},queued:auth.data.cupInbox?.length??0,phase,authorizedGroups:auth.data.groups.length,minicamp:cupApi?(cupHealthy?'READY':'RETRYING'):'DISABLED',minicampLastSuccessAt:lastCupSuccessAt||null,newsGroup:auth.data.newsGroup??null,newsConfigured:Boolean(loadNews),marketConfigured:Boolean(marketApi),marketHealthy,marketQueued:auth.data.marketInbox?.length??0,marketChannels:marketChannels.length,checkedAt:Date.now()};
@@ -570,6 +604,7 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  if(!allowsGroup(auth.data.groupModes,req.group,'minicamp')&&!['setadmins','history-candidates','history-review'].includes(req.action))throw Error('Control group cannot host a Cup');
  await configureCup(req.group,socket);
  if(req.action==='setadmins'){
+ if(auth.data.loanGroups?.includes(req.group))throw Error('Use guest administrator controls for a borrowed group');
   const metadata=await socket.groupMetadata(req.group);
   if(!Array.isArray(req.admins)||req.admins.length<1||req.admins.length>10||!req.admins.every((id:string)=>metadata.participants.some(p=>p.id===id)))throw Error('Invalid admins');
   const admins=await Promise.all(req.admins.map((id:string)=>cupAliases(id,socket!)));
@@ -592,7 +627,7 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  catch{log('PAIRING_REQUEST_FAILED');return {error:'Não foi possível preparar a conexão com o WhatsApp. Aguarde 60 segundos e tente novamente.',phase};}
  }
  if(phase!=='CONNECTED'||!socket)throw new Error('Not connected');
- if(req.action==='groups')return {groups:Object.values(await socket.groupFetchAllParticipating()).map(g=>({id:g.id,name:g.subject,authorized:auth.data.groups.includes(g.id),mode:groupMode(auth.data.groupModes,g.id)})),selectedGroup:auth.data.panelSelection?.group??''};
+ if(req.action==='groups')return {groups:Object.values(await socket.groupFetchAllParticipating()).map(g=>({id:g.id,name:g.subject,authorized:auth.data.groups.includes(g.id),mode:groupMode(auth.data.groupModes,g.id),loaned:Boolean(auth.data.loanGroups?.includes(g.id))})),selectedGroup:auth.data.panelSelection?.group??''};
  if(typeof req.group!=='string'||!req.group.endsWith('@g.us'))throw new Error('Invalid group');
  const group=await socket.groupMetadata(req.group);
  if(req.action==='participants'){
@@ -600,7 +635,7 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  if(cupApi&&(auth.data.groups.includes(req.group)||req.mode==='controle')){await configureCup(req.group,socket);registered=await cupApi({action:'getadmins',group:req.group});}
  return {revision:registered.revision,participants:await Promise.all(group.participants.map(async p=>{
  const aliases=await cupAliases(p.id,socket!);const phone=aliases.find(a=>a.endsWith('@s.whatsapp.net'))?.split('@')[0];
- return {id:p.id,phone:phone?'+'+phone:p.id,selected:aliases.some(a=>registered.aliases.includes(a))};
+ return {id:p.id,phone:phone?'+'+phone:p.id,selected:aliases.some(a=>registered.aliases.includes(a)),isAdmin:Boolean(p.admin)};
  }))};}
  if(req.action==='authorize'){
  if(!group.participants.some(p=>p.id===req.admin))throw new Error('Invalid participant');
@@ -610,9 +645,9 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  })().then(r=>client.end(JSON.stringify(r)+'\n')).catch(()=>client.end(JSON.stringify({error:'Operação recusada. Confira conexão, número e seleção.'})+'\n'));});});
 const health=httpServer((req,res)=>{if(req.url==='/livez'||req.url==='/readyz'){const ok=!stopping&&(req.url==='/livez'||(phase==='CONNECTED'&&(!enabled('minicamp')||!cupApi||(cupHealthy&&Date.now()-lastCupTick<120000))));res.writeHead(ok?200:503,{'Cache-Control':'no-store'}).end(ok?'OK':'UNAVAILABLE');return;}void portal(req,res).catch(()=>{if(!res.headersSent)res.writeHead(500);res.end();});});
 function fail(event:string){log(event);void shutdown(1);}
-async function shutdown(code:number){if(stopping)return;stopping=true;if(cupTimer)clearInterval(cupTimer);if(newsTimer)clearInterval(newsTimer);if(marketTimer)clearInterval(marketTimer);if(timer)clearTimeout(timer);if(stable)clearTimeout(stable);const deadline=setTimeout(()=>process.exit(code),12000);deadline.unref();controls.close();health.close();socket?.end(undefined);await queue;while(cupBusy||newsBusy||marketBusy)await new Promise(r=>setTimeout(r,50));await auth?.flush();key.fill(0);process.exit(code);}
+async function shutdown(code:number){if(stopping)return;stopping=true;if(cupTimer)clearInterval(cupTimer);if(newsTimer)clearInterval(newsTimer);if(marketTimer)clearInterval(marketTimer);if(timer)clearTimeout(timer);if(stable)clearTimeout(stable);const deadline=setTimeout(()=>process.exit(code),12000);deadline.unref();controls.close();health.close();socket?.end(undefined);await queue;while(cupBusy||newsBusy||marketBusy||loanJoinBusy)await new Promise(r=>setTimeout(r,50));await auth?.flush();key.fill(0);process.exit(code);}
 process.on('SIGTERM',()=>{void shutdown(0);});process.on('SIGINT',()=>{void shutdown(0);});process.on('uncaughtException',()=>fail('UNCAUGHT_ERROR'));process.on('unhandledRejection',()=>fail('UNHANDLED_REJECTION'));
-async function main(){auth=await vaultAuth(endpoint!,token!,key);auth.data.replyHistory??={};auth.data.cupInbox??=[];auth.data.marketInbox??=[];auth.data.marketResponses??=[];if(marketApi){await marketTick();marketTimer=setInterval(()=>{void marketTick();},15000);}if(cupApi){try{await cupApi({action:'health'});cupHealthy=true;}catch{cupHealthy=false;log('MINICAMP_RETRY');}cupTimer=setInterval(()=>{void cupTick();},15000);}if(loadNews)newsTimer=setInterval(()=>{void newsTick();},60000);banterReply=createBanterReply(auth.data.replyHistory);await auth.save();await unlink(controlPath).catch(()=>undefined);controls.listen(controlPath,()=>{void chmod(controlPath,0o600).catch(()=>fail('CONTROL_PERMISSIONS_FAILED'));});if(!process.send)health.listen(Number(process.env.PORT??3000),'0.0.0.0');if(auth.state.creds.registered)await connect();else {phase='NEEDS_PAIRING';log(phase);}}
+async function main(){auth=await vaultAuth(endpoint!,token!,key);auth.data.replyHistory??={};auth.data.cupInbox??=[];auth.data.marketInbox??=[];auth.data.marketResponses??=[];if(marketApi){await marketTick();marketTimer=setInterval(()=>{void marketTick();},15000);}if(cupApi){try{await cupApi({action:'health'});cupHealthy=true;}catch{cupHealthy=false;log('MINICAMP_RETRY');}cupTimer=setInterval(()=>{void cupTick();void loanJoinTick();},15000);}if(loadNews)newsTimer=setInterval(()=>{void newsTick();},60000);banterReply=createBanterReply(auth.data.replyHistory);await auth.save();await unlink(controlPath).catch(()=>undefined);controls.listen(controlPath,()=>{void chmod(controlPath,0o600).catch(()=>fail('CONTROL_PERMISSIONS_FAILED'));});if(!process.send)health.listen(Number(process.env.PORT??3000),'0.0.0.0');if(auth.state.creds.registered)await connect();else {phase='NEEDS_PAIRING';log(phase);}}
 async function newsTick(){
  if(!loadNews||newsBusy||stopping||phase!=='CONNECTED'||!socket||!enabled()||!auth.data.newsGroup)return;
  newsBusy=true;const current=socket,group=auth.data.newsGroup;
@@ -648,14 +683,14 @@ async function marketTick(){
    try{
    if(!marketChannels.some(c=>c.group===batch.group)||!auth.data.groups.includes(batch.group)||auth.data.loanGroups?.includes(batch.group))continue;
    const metadata=await current.groupMetadata(batch.group);
-   if(batch.count>=10&&!metadata.announce){
+   if(batch.count>=(batch.limit??10)&&!metadata.announce){
     if(!batch.botLocked)await marketApi('gate_ack',{group:batch.group,locked:true});
     await current.groupSettingUpdate(batch.group,'announcement');
-    await current.sendMessage(batch.group,{text:'🔒 Dez propostas recebidas. Os ADMs vão conferir esta remessa; o grupo reabre após a conclusão e liberação pela plataforma.'});
-   }else if(batch.count<10&&batch.botLocked){
+    await current.sendMessage(batch.group,{text:`🔒 ${batch.limit??10} propostas recebidas. Os ADMs vão conferir esta remessa; o grupo reabre após a conclusão e liberação pela plataforma.`});
+   }else if(batch.count<(batch.limit??10)&&batch.botLocked){
     if(metadata.announce)await current.groupSettingUpdate(batch.group,'not_announcement');
     await marketApi('gate_ack',{group:batch.group,locked:false});
-    if(metadata.announce)await current.sendMessage(batch.group,{text:'🔓 Nova remessa liberada: até dez propostas podem ser enviadas.'});
+    if(metadata.announce)await current.sendMessage(batch.group,{text:`🔓 Nova remessa liberada: até ${batch.limit??10} propostas podem ser enviadas.`});
    }
    }catch{gateHealthy=false;log('MARKET_GROUP_GATE_RETRY');}
   }
@@ -678,6 +713,42 @@ async function marketTick(){
     try{await current.sendMessage(notice.recipient,{text:notice.body});sent=true;}catch{log('MARKET_PRIVATE_NOTICE_RETRY');}
    await marketApi('ack_private',{id:notice.id,lease:notice.lease,sent});
   }
+  const adminGroups=auth.data.groups.filter(g=>groupMode(auth.data.groupModes,g)==='controle'&&!auth.data.loanGroups?.includes(g));
+  if(adminGroups.length){
+   const {notices:adminNotices}=await marketApi<{notices:{id:string;lease:string;group:string;body:string}[]}>('claim_admin',{groups:adminGroups});
+   for(const notice of adminNotices??[]){let sent=false;
+    if(adminGroups.includes(notice.group)&&socket===current&&!stopping&&enabled())try{await current.sendMessage(notice.group,{text:notice.body});sent=true;}catch{log('MARKET_ADMIN_NOTICE_RETRY');}
+    await marketApi('ack_admin',{id:notice.id,lease:notice.lease,sent});
+   }
+  }
   marketHealthy=gateHealthy;
  }catch{marketHealthy=false;log('MARKET_BRIDGE_RETRY');}finally{marketBusy=false;}
+}
+
+let loanJoinBusy=false;
+async function loanJoinTick(){
+ if(loanJoinBusy||!cupApi||!socket||phase!=='CONNECTED'||stopping)return;
+ loanJoinBusy=true;const current=socket;
+ try{for(const group of (auth.data.loanJoinPending??[]).slice(0,10)){
+  if(socket!==current||stopping)break;
+  if(auth.data.groups.includes(group)&&!auth.data.loanGroups?.includes(group)){auth.data.loanJoinPending=auth.data.loanJoinPending?.filter(g=>g!==group);await auth.save();continue;}
+  const metadata=await current.groupMetadata(group);
+  if(metadata.isCommunity||metadata.isCommunityAnnounce){auth.data.loanJoinPending=auth.data.loanJoinPending?.filter(g=>g!==group);await auth.save();continue;}
+  const botAdmin=metadata.participants.some(p=>p.admin&&[current.user?.id,current.user?.lid].some(id=>id&&id.replace(/:[0-9]+(?=@)/,'')===p.id.replace(/:[0-9]+(?=@)/,'')));
+  if(!botAdmin)continue;
+  const candidates=(await Promise.all(metadata.participants.filter(p=>Boolean(p.admin)).map(p=>cupAliases(p.id,current)))).flat();
+  const candidate=await cupApi<{eligible:boolean;manager?:string;name?:string;grantedAt?:number;aliases?:string[]}>({action:'loan-join-check',group,candidates});
+  if(!candidate.eligible||!candidate.manager||!candidate.aliases?.length||!candidate.grantedAt){auth.data.loanJoinPending=auth.data.loanJoinPending?.filter(g=>g!==group);await auth.save();continue;}
+  if(auth.data.loanWelcomed?.[group]!==candidate.grantedAt){
+   const claim=await cupApi<{claimed?:boolean;error?:string}>({action:'loan-claim',group,aliases:candidate.aliases,name:candidate.name});
+   if(!claim.claimed){auth.data.loanJoinPending=auth.data.loanJoinPending?.filter(g=>g!==group);await auth.save();continue;}
+   if(!auth.data.groups.includes(group))auth.data.groups.push(group);auth.data.loanGroups??=[];if(!auth.data.loanGroups.includes(group))auth.data.loanGroups.push(group);
+   auth.data.groupModes??={};auth.data.groupModes[group]='minicamp';auth.data.controlRooms??={};
+   const room=auth.data.controlRooms[group]??auth.data.controlRooms['loan-private:'+candidate.manager]??{};room.targetId=group;room.guestInvitationAt=candidate.grantedAt;auth.data.controlRooms[group]=room;await auth.save();
+   const recipient=candidate.aliases.find(j=>j.endsWith('@s.whatsapp.net'))??candidate.aliases[0]!;
+   const sent=await current.sendMessage(recipient,{text:'🤝 Entrei no grupo '+metadata.subject+'. Seu empréstimo foi ativado. Configure aqui no privado com !configbot: vou fazer poucas perguntas e mostrar tudo para você confirmar ou rejeitar. Depois use !alterarconfig para alterar uma opção. Só após a configuração confirmada, envie !novacopa no grupo para abrir inscrições.'});
+   if(!sent?.key.id)throw Error('Welcome not confirmed');auth.data.loanWelcomed??={};auth.data.loanWelcomed[group]=candidate.grantedAt;
+  }
+  auth.data.loanJoinPending=auth.data.loanJoinPending?.filter(g=>g!==group);await auth.save();
+ }}catch{log('LOAN_JOIN_RETRY');}finally{loanJoinBusy=false;}
 }
