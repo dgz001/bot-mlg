@@ -84,7 +84,7 @@ async function connect(){
    const text=(edited?.conversation??edited?.extendedTextMessage?.text??edited?.imageMessage?.caption??'').trim();
    if(!text)return;
    const proposal=marketEvent(group,id,participant,text,marketChannels);
-   if(!proposal)return;proposal.mentions=edited?.extendedTextMessage?.contextInfo?.mentionedJid??edited?.imageMessage?.contextInfo?.mentionedJid??[];
+   if(!proposal)return;(proposal.parsed as typeof proposal.parsed & {directoryPhone?:string}).directoryPhone=(await cupAliases(participant,current).catch(()=>[])).find(a=>a.endsWith('@s.whatsapp.net'));proposal.mentions=edited?.extendedTextMessage?.contextInfo?.mentionedJid??edited?.imageMessage?.contextInfo?.mentionedJid??[];
    auth.data.marketInbox??=[];if(!auth.data.marketInbox.some(e=>e.group===group&&e.messageId===id&&e.text===text)){auth.data.marketInbox.push(proposal);await auth.save();}void marketTick();
   }).catch(()=>{log('MARKET_EDIT_CAPTURE_RETRY');});}
  });
@@ -142,6 +142,7 @@ async function connect(){
   }
 
   if(proposal){
+   (proposal.parsed as typeof proposal.parsed & {directoryPhone?:string}).directoryPhone=(await cupAliases(message.key.participant,current).catch(()=>[])).find(a=>a.endsWith('@s.whatsapp.net'));
    proposal.mentions=context?.mentionedJid??[];
    auth.data.marketInbox??=[];
    if(!auth.data.marketInbox.some(e=>e.group===group&&e.messageId===id&&e.text===text)){
