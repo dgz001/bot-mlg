@@ -4,7 +4,7 @@ test('Market integrity SQL in a disposable PostgreSQL database',{skip:!process.e
  try{
   for(const file of ['mlg-window-integrity-base.sql','mlg-window-ledger.sql','mlg-window-integrity.sql','mlg-window-corrected-quotas.sql','mlg-window-reconcile.sql'])await db.query(await readFile(new URL('./fixtures/'+file,import.meta.url),'utf8'));
   const client=await db.connect(),actor=randomUUID();await client.query('insert into auth.users values($1);',[actor]);await client.query('insert into public.admin_users values($1)',[actor]);
-  const scalar=async(sql:string,args:any[]=[])=>{const result=await client.query(sql,args),value=Object.values(result.rows[0])[0] as any;if(result.fields[0].dataTypeID===20){const number=Number(value);assert.ok(Number.isSafeInteger(number));return number;}return value;};
+  const scalar=async(sql:string,args:any[]=[])=>{const result=await client.query(sql,args),value=Object.values(result.rows[0])[0] as any;if(result.fields[0]?.dataTypeID===20){const number=Number(value);assert.ok(Number.isSafeInteger(number));return number;}return value;};
   const negative=async(fn:()=>Promise<any>,pattern:RegExp)=>{await client.query('savepoint negative');try{await assert.rejects(fn,pattern);}finally{await client.query('rollback to savepoint negative');await client.query('release savepoint negative');}};
   async function scenario(kind='transfer',external=false,settle=true){
    const buyer=randomUUID(),seller=randomUUID(),p=randomUUID(),p2=randomUUID(),source=randomUUID(),inbox=randomUUID(),cycle=randomUUID(),agent=randomUUID();
