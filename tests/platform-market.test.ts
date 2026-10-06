@@ -1,7 +1,26 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {marketBridge,marketEvent,drainMarketInbox,deliverMarketReactions} from '../src/infra/platform-market.ts';
+import {marketBridge,marketEvent,drainMarketInbox,deliverMarketReactions,canRecoverMarketMessage,marketHealthPayload} from '../src/infra/platform-market.ts';
 const text='💰 PROPOSTA DE COMPRA\nClube de origem: Manchester City\nJogador: Mateus Nunes\nClube de destino: Galatasaray\nValor da transferência: €5 milhões';
 const event=marketEvent('12345@g.us','MESSAGE','123456789@s.whatsapp.net',text,[{kind:'transfer',group:'12345@g.us'}])!;
+test('reconnect history recovers only configured market messages from the current cycle',()=>{
+ const since=1700000000000,now=since+60000,channels=[{group:event.group,kind:'transfer' as const}];
+ assert.equal(canRecoverMarketMessage('append',event.group,since/1000,since,channels,now),true);
+ assert.equal(canRecoverMarketMessage('append',event.group,(since-1000)/1000,since,channels,now),false);
+ assert.equal(canRecoverMarketMessage('append','other@g.us',since/1000,since,channels,now),false);
+ assert.equal(canRecoverMarketMessage('append',event.group,'invalid',since,channels,now),false);
+ assert.equal(canRecoverMarketMessage('append',event.group,since/1000,0,channels,now),false);
+});
+test('restart after remote acknowledgement but before local save retries the same durable proposal once',async()=>{
+ const persisted={marketInbox:[event]},stored=new Set<string>();let effects=0;
+ const api=(async(_action:string,payload:any)=>{if(!stored.has(payload.messageId)){stored.add(payload.messageId);effects++;}return {success:true};}) as any;
+ await assert.rejects(drainMarketInbox(persisted,api,async()=>{throw Error('disk unavailable');}));
+ const restarted=JSON.parse(JSON.stringify(persisted));await drainMarketInbox(restarted,api,async()=>{});
+ assert.equal(effects,1);assert.equal(restarted.marketInbox.length,0);
+});
+test('health signal records backlog age without message contents or personal numbers',()=>{
+ const signal=marketHealthPayload({marketInbox:[{...event,queuedAt:1000}],marketResponses:[{at:500}]},{phase:'CONNECTED',enabled:true,healthy:true,blocked:false,groups:['12345@g.us'],now:601000});
+ assert.equal(signal.oldestAgeSeconds,600);assert.equal(signal.proposalQueue,1);assert.equal(signal.responseQueue,1);assert.ok(!JSON.stringify(signal).includes(event.text));assert.ok(!JSON.stringify(signal).includes(event.participant));
+});
 test('capture only configured groups and flag a wrong template',()=>{assert.equal(marketEvent('other@g.us','id','123@lid',text,[{kind:'transfer',group:'12345@g.us'}]),null);assert.equal(event.parsed.amountEuros,'5000000');assert.ok(marketEvent('12345@g.us','id','123@lid',text,[{kind:'trade',group:'12345@g.us'}])!.parsed.issues.length);});
 test('bridge sends token only to configured TLS Supabase endpoint',async()=>{let request:any;const api=marketBridge('https://fixture.supabase.co','public','a'.repeat(64),async(url,options)=>{request={url:String(url),options};return new Response('{"success":true}',{status:200});});await api('ingest',event);assert.equal(request.url,'https://fixture.supabase.co/rest/v1/rpc/bot_whatsapp_market_gate');assert.equal(JSON.parse(request.options.body).p_payload.messageId,'MESSAGE');assert.throws(()=>marketBridge('https://malicious.invalid','key','a'.repeat(64)));});
 test('failed ingestion and failed persistence preserve exact message for retry',async()=>{const state={marketInbox:[event]};await assert.rejects(drainMarketInbox(state,(async()=>{throw Error('offline');}) as any,async()=>{}));assert.equal(state.marketInbox.length,1);await assert.rejects(drainMarketInbox(state,(async()=>({success:true})) as any,async()=>{throw Error('vault failed');}));assert.equal(state.marketInbox.length,1);await drainMarketInbox(state,(async()=>({success:true})) as any,async()=>{});assert.equal(state.marketInbox.length,0);});

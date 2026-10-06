@@ -1,12 +1,21 @@
 import {parseWhatsAppMarketProposal,type WhatsAppMarketProposal} from './market-proposal.ts';
-export type MarketEvent={group:string;messageId:string;participant:string;text:string;mentions?:string[];cardReading?:{week:string|null;confidence:number;text:string;imageHash:string};parsed:WhatsAppMarketProposal};
+export type MarketEvent={group:string;messageId:string;participant:string;text:string;queuedAt?:number;mentions?:string[];cardReading?:{week:string|null;confidence:number;text:string;imageHash:string};parsed:WhatsAppMarketProposal};
 export type MarketChannel={kind:'transfer'|'trade';group:string};
 export type MarketReaction={id:string;revision:number;emoji:''|'🟠'|'🟢'|'🔴';lease:string;group:string;messageId:string;participant:string};
 export function marketEvent(group:string,messageId:string,participant:string,text:string,channels:MarketChannel[]):MarketEvent|null{
  const channel=channels.find(c=>c.group===group);if(!channel)return null;
  const parsed=parseWhatsAppMarketProposal(text);if(!parsed)return null;
  if(parsed.kind!==channel.kind)parsed.issues.push('Modelo de proposta diferente do grupo configurado.');
- return {group,messageId,participant,text,parsed:{...parsed,kind:channel.kind}};
+ return {group,messageId,participant,text,queuedAt:Date.now(),parsed:{...parsed,kind:channel.kind}};
+}
+export function canRecoverMarketMessage(type:string,group:string,timestampSeconds:unknown,captureSince:number,channels:MarketChannel[],now=Date.now()){
+ if(type==='notify')return true;
+ const at=Number(timestampSeconds)*1000;
+ return type==='append'&&channels.some(c=>c.group===group)&&Number.isSafeInteger(at)&&captureSince>0&&at>=captureSince&&at<=now+60000;
+}
+export function marketHealthPayload(state:{marketInbox?:MarketEvent[];marketResponses?:{at:number}[]},options:{phase:string;enabled:boolean;healthy:boolean;blocked:boolean;groups:string[];now?:number}){
+ const now=options.now??Date.now(),times=[...(state.marketInbox??[]).map(e=>e.queuedAt??now),...(state.marketResponses??[]).map(e=>e.at)].filter(Number.isFinite);
+ return {phase:options.phase,enabled:options.enabled,healthy:options.healthy,blocked:options.blocked,groups:options.groups,proposalQueue:state.marketInbox?.length??0,responseQueue:state.marketResponses?.length??0,oldestAgeSeconds:Math.min(315360000,Math.max(0,Math.floor((now-(times.length?Math.min(...times):now))/1000)))};
 }
 export function marketBridge(url:string,key:string,token:string,fetcher:typeof fetch=fetch){
  const source=new URL(url);

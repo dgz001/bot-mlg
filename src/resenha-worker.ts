@@ -1,7 +1,7 @@
 import {loanWizard} from './infra/loan-wizard.ts';
 import {readMarketCard} from "./infra/market-card.ts";
 import {marketResponse} from "./infra/market-response.ts";
-import {marketBridge,marketEvent,drainMarketInbox,deliverMarketReactions,type MarketChannel} from "./infra/platform-market.ts";
+import {marketBridge,marketEvent,drainMarketInbox,deliverMarketReactions,canRecoverMarketMessage,marketHealthPayload,type MarketChannel} from "./infra/platform-market.ts";
 import {loanCommand} from './infra/loan-invitation.ts';
 import {minicampClubs} from './minicamp/clubs.ts';
 import {moduleEnabled,parseControls} from './infra/bot-controls.ts';
@@ -41,6 +41,7 @@ delete process.env.MINICAMP_TOKEN;
 const cupClubs=[...minicampClubs];
 const configuredCups=new Set<string>();
 let cupBusy=false,lastCupTick=Date.now(),lastCupSuccessAt=0,cupHealthy=!cupApi,cupTimer:ReturnType<typeof setInterval>|undefined;
+let marketSafetySupported=false,marketCaptureSince=0,marketPaused=false,marketDeliveryBlocked=false,lastMarketTick=0,lastMarketSuccessAt=0;
 let marketBusy=false,marketHealthy=!marketApi,marketChannels:MarketChannel[]=[],marketTimer:ReturnType<typeof setInterval>|undefined;
 type MarketBatch={group:string;batch:number;count:number;limit?:number;botLocked:boolean};
 type MarketPrivateNotice={id:string;recipient:string;body:string;lease:string};
@@ -99,9 +100,10 @@ async function connect(){
   }).catch(()=>{log('MARKET_RESPONSE_CAPTURE_RETRY');});}
  });
  current.ev.on('messages.upsert',event=>{
- if(event.type!=='notify'||socket!==current)return;
+ if(!['notify','append'].includes(event.type)||socket!==current)return;
  for(const message of orderMessages(event.messages)){queue=queue.then(async()=>{
  const group=message.key.remoteJid,id=message.key.id;if(stopping||!group||!id||message.key.fromMe)return;
+ if(!canRecoverMarketMessage(event.type,group,message.messageTimestamp,marketCaptureSince,marketChannels))return;
  const body=extractMessageContent(message.message);const text=loanCommand((body?.conversation??body?.extendedTextMessage?.text??body?.imageMessage?.caption??'').trim());const context=body?.extendedTextMessage?.contextInfo??body?.imageMessage?.contextInfo;
  if(/^[0-9]+@(s\.whatsapp\.net|lid)$/.test(group)){
   if(!cupApi||!(/^!(?:configbot|alterarconfig|cancelarconfig|rejeitar|novacopa|nome|modalidade|formato|vagas|classificados|jogos|equipes|adicionar|remover|corrigirclubes|times|revisar|confirmar|descartar|central|pendencias|painel|ajuda|comandos|imagemgrupo|imagemtexto)(?:\s|$)/i.test(text)||Object.values(auth.data.controlRooms??{}).some(r=>r.guestWizard)))return;
@@ -562,7 +564,7 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  }
  if(req.action==='news-status')return {sourceConfigured:Boolean(loadNews),group:auth.data.newsGroup??null,cursor:auth.data.newsCursor??null,paused:!enabled(),pollIntervalSeconds:60};
  if(req.action==='news-config'){if(newsBusy)throw Error('Journal delivery in progress');if(req.group!==null){if(!socket||phase!=='CONNECTED')throw Error('Bot unavailable');const participating=await socket.groupFetchAllParticipating();if(!Object.hasOwn(participating,req.group))throw Error('Bot is not in journal group');}const result=await configureJournal(auth.data,req.group,loadNews,()=>auth.save());log('NEWS_CONTROLS_UPDATED');return {...result,sourceConfigured:Boolean(loadNews)};}
- if(req.action==='status')return {controls:auth.data.controls??{enabled:true,resenha:true,minicamp:true},queued:auth.data.cupInbox?.length??0,phase,authorizedGroups:auth.data.groups.length,minicamp:cupApi?(cupHealthy?'READY':'RETRYING'):'DISABLED',minicampLastSuccessAt:lastCupSuccessAt||null,newsGroup:auth.data.newsGroup??null,newsConfigured:Boolean(loadNews),marketConfigured:Boolean(marketApi),marketHealthy,marketQueued:auth.data.marketInbox?.length??0,marketChannels:marketChannels.length,checkedAt:Date.now()};
+ if(req.action==='status')return {controls:auth.data.controls??{enabled:true,resenha:true,minicamp:true},queued:auth.data.cupInbox?.length??0,phase,authorizedGroups:auth.data.groups.length,minicamp:cupApi?(cupHealthy?'READY':'RETRYING'):'DISABLED',minicampLastSuccessAt:lastCupSuccessAt||null,newsGroup:auth.data.newsGroup??null,newsConfigured:Boolean(loadNews),marketConfigured:Boolean(marketApi),marketHealthy,marketPaused,marketLastSuccessAt:lastMarketSuccessAt||null,marketQueued:auth.data.marketInbox?.length??0,marketChannels:marketChannels.length,marketResponsesQueued:auth.data.marketResponses?.length??0,checkedAt:Date.now()};
  if(req.action==='select-context'){
   if(typeof req.group!=='string'||!req.group.endsWith('@g.us')||typeof req.templateId!=='string'||req.templateId.length>100)throw Error('Invalid selection');
   if(phase!=='CONNECTED'||!socket)throw Error('Not connected');
@@ -644,7 +646,8 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  if(!validGroupMode(req.mode))throw Error('Invalid group mode');auth.data.groupModes??={};auth.data.groupModes[req.group]=req.mode;await auth.save();log('GROUP_AUTHORIZED');return {authorized:true,mode:req.mode};
  }throw new Error('Unknown operation');
  })().then(r=>client.end(JSON.stringify(r)+'\n')).catch(()=>client.end(JSON.stringify({error:'Operação recusada. Confira conexão, número e seleção.'})+'\n'));});});
-const health=httpServer((req,res)=>{if(req.url==='/livez'||req.url==='/readyz'){const ok=!stopping&&(req.url==='/livez'||(phase==='CONNECTED'&&(!enabled('minicamp')||!cupApi||(cupHealthy&&Date.now()-lastCupTick<120000))));res.writeHead(ok?200:503,{'Cache-Control':'no-store'}).end(ok?'OK':'UNAVAILABLE');return;}void portal(req,res).catch(()=>{if(!res.headersSent)res.writeHead(500);res.end();});});
+function runtimeReady(){return !stopping&&phase==='CONNECTED'&&(!enabled('minicamp')||!cupApi||(cupHealthy&&Date.now()-lastCupTick<120000))&&(!marketApi||!enabled()||(marketHealthy&&Date.now()-lastMarketTick<120000));}
+const health=httpServer((req,res)=>{if(req.url==='/livez'||req.url==='/readyz'){const ok=req.url==='/livez'?!stopping:runtimeReady();res.writeHead(ok?200:503,{'Cache-Control':'no-store'}).end(ok?'OK':'UNAVAILABLE');return;}void portal(req,res).catch(()=>{if(!res.headersSent)res.writeHead(500);res.end();});});
 function fail(event:string){log(event);void shutdown(1);}
 async function shutdown(code:number){if(stopping)return;stopping=true;if(cupTimer)clearInterval(cupTimer);if(newsTimer)clearInterval(newsTimer);if(marketTimer)clearInterval(marketTimer);if(timer)clearTimeout(timer);if(stable)clearTimeout(stable);const deadline=setTimeout(()=>process.exit(code),12000);deadline.unref();controls.close();health.close();socket?.end(undefined);await queue;while(cupBusy||newsBusy||marketBusy||loanJoinBusy)await new Promise(r=>setTimeout(r,50));await auth?.flush();key.fill(0);process.exit(code);}
 process.on('SIGTERM',()=>{void shutdown(0);});process.on('SIGINT',()=>{void shutdown(0);});process.on('uncaughtException',()=>fail('UNCAUGHT_ERROR'));process.on('unhandledRejection',()=>fail('UNHANDLED_REJECTION'));
@@ -665,18 +668,19 @@ async function newsTick(){
 }
 // Parent owns HTTP while this process owns the WhatsApp session and queues.
 if(process.send){
- const pulse=setInterval(()=>{if(process.connected)process.send?.({type:'health',phase,ready:!stopping&&phase==='CONNECTED'&&(!enabled('minicamp')||!cupApi||(cupHealthy&&Date.now()-lastCupTick<120000))});},2000);
+ const pulse=setInterval(()=>{if(process.connected)process.send?.({type:'health',phase,ready:runtimeReady()});},2000);
  pulse.unref();process.on('disconnect',()=>{void shutdown(0);});
 }
 void main().catch(()=>fail('SESSION_STORAGE_UNAVAILABLE'));
 
 async function marketTick(){
  if(!marketApi||marketBusy||stopping)return;
- marketBusy=true;
+ marketBusy=true;lastMarketTick=Date.now();
  try{
-  const config=await marketApi<{channels:MarketChannel[];batches:MarketBatch[]}>('config');
+  const config=await marketApi<{channels:MarketChannel[];batches:MarketBatch[];safety:{paused:boolean};captureSince:string}>('config');
   if(!Array.isArray(config.channels))throw Error('Invalid market channel list');
   marketChannels=config.channels.filter(c=>groupMode(auth.data.groupModes,c.group)!=='market-loan');
+  marketSafetySupported=typeof config.safety?.paused==='boolean';marketPaused=config.safety?.paused===true;marketCaptureSince=Date.parse(config.captureSince)||0;marketDeliveryBlocked=(config.batches??[]).some(b=>b.count>=(b.limit??10));
   if(phase!=='CONNECTED'||!socket||!enabled())return;
   const current=socket;
   let gateHealthy=true;
@@ -695,6 +699,8 @@ async function marketTick(){
    }
    }catch{gateHealthy=false;log('MARKET_GROUP_GATE_RETRY');}
   }
+  // Save captured events before any remote acknowledgement or queue removal.
+  if(auth.data.marketInbox?.length||auth.data.marketResponses?.length)await auth.save();
   await drainMarketInbox(auth.data,marketApi,()=>auth.save());
   for(const response of [...(auth.data.marketResponses??[])].slice(0,20)){
    const result=await marketApi<{success:boolean}>('response',response);if(!result.success)throw Error('Response not confirmed');
@@ -722,8 +728,15 @@ async function marketTick(){
     await marketApi('ack_admin',{id:notice.id,lease:notice.lease,sent});
    }
   }
-  marketHealthy=gateHealthy;
- }catch{marketHealthy=false;log('MARKET_BRIDGE_RETRY');}finally{marketBusy=false;}
+  if(marketSafetySupported&&adminGroups.length){
+   const result=await marketApi<{notices:{id:string;lease:string;group:string;body:string}[]}>('claim_health',{groups:adminGroups});
+   for(const notice of result.notices??[]){let sent=false;if(adminGroups.includes(notice.group)&&socket===current&&!stopping&&enabled())try{await current.sendMessage(notice.group,{text:notice.body});sent=true;}catch{}
+    await marketApi('ack_health',{id:notice.id,lease:notice.lease,sent});}
+  }
+  marketHealthy=gateHealthy;if(gateHealthy)lastMarketSuccessAt=Date.now();
+ }catch{marketHealthy=false;log('MARKET_BRIDGE_RETRY');}finally{
+  try{if(marketSafetySupported){const groups=auth.data.groups.filter(g=>groupMode(auth.data.groupModes,g)==='controle'&&!auth.data.loanGroups?.includes(g));await marketApi('heartbeat',marketHealthPayload(auth.data,{phase,enabled:enabled(),healthy:marketHealthy,blocked:marketDeliveryBlocked,groups}));}}catch{log('MARKET_HEALTH_RETRY');}
+  marketBusy=false;}
 }
 
 let loanJoinBusy=false;
