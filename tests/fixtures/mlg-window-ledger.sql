@@ -23,7 +23,7 @@ begin
   end if;
   return new;
 end;
-$function$
+$function$;
 
 CREATE OR REPLACE FUNCTION private.protect_financial_ledger()
  RETURNS trigger
@@ -36,7 +36,7 @@ begin
   raise exception 'Movimentação financeira imutável. Registre uma correção auditada.';
  end if;
  return new;
-end$function$
+end$function$;
 
 CREATE OR REPLACE FUNCTION public.sync_club_balance()
  RETURNS trigger
@@ -51,7 +51,7 @@ BEGIN
   WHERE id = NEW.club_id;
   RETURN NEW;
 END;
-$function$
+$function$;
 
 CREATE OR REPLACE FUNCTION private.stamp_financial_balance()
  RETURNS trigger
@@ -67,7 +67,7 @@ begin
  new.balance_after:=v_balance+new.amount;
  new.created_at:=clock_timestamp();
  return new;
-end$function$
+end$function$;
 
 create trigger a_guard before insert on public.transactions for each row execute function private.guard_market_debit_commitment();
 create trigger b_stamp before insert on public.transactions for each row execute function private.stamp_financial_balance();

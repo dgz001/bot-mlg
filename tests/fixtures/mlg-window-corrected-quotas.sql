@@ -9,7 +9,7 @@ select jsonb_build_object(
  'sales',coalesce((select sum(jsonb_array_length(n.player_ids_b)) from public.negotiations n where n.club_b_id=p_club_id and n.type='transfer' and n.market_cycle_id=p_cycle_id and n.status in ('open','waiting','accepted','executed') and not private.whatsapp_market_source_corrected('negotiation',n.id) and n.id is distinct from p_exclude_negotiation),0)+(select count(*) from public.transfers t where t.from_club_id=p_club_id and t.market_cycle_id=p_cycle_id and t.source_negotiation_id is null and t.status in ('pending','approved') and t.deleted_at is null and not private.whatsapp_market_source_corrected('transfer',t.id) and t.id is distinct from p_exclude_transfer),
  'trades',(select count(*) from public.negotiations n where p_club_id in (n.club_a_id,n.club_b_id) and n.type='trade' and n.market_cycle_id=p_cycle_id and n.status in ('open','waiting','accepted','executed') and not private.whatsapp_market_source_corrected('negotiation',n.id) and n.id is distinct from p_exclude_negotiation)
 );
-$function$
+$function$;
 
 CREATE OR REPLACE FUNCTION private.guard_midseason_market_rules()
  RETURNS trigger
@@ -43,5 +43,5 @@ begin
     end loop;
   end if;
   return new;
-end $function$
+end $function$;
 
