@@ -371,6 +371,8 @@ begin
  if not found or r.status<>'awaiting_signatures' or r.revision is distinct from p_expected_revision then raise exception 'Proposta mudou: atualize a conferência';end if;
  select * into w from public.market_windows order by updated_at desc nulls last limit 1;
  if not found or r.market_cycle_id is distinct from w.market_cycle_id or w.maintenance_mode or w.read_only_mode or (r.kind='trade' and not w.trade_window_open) or (r.kind='transfer' and not w.transfer_window_open) then raise exception 'A janela desta proposta não está liberada';end if;
+ perform private.check_market_balance_penalty(r.to_club_id,w.market_cycle_id,case when r.kind='transfer' then case when r.transfer_id is not null then 1 else cardinality(r.player_ids_from) end else 0 end,r.negotiation_id,r.transfer_id);
+ perform private.check_market_balance_penalty(r.from_club_id,w.market_cycle_id,0,r.negotiation_id,r.transfer_id);
  v_actor:=coalesce(private.whatsapp_market_directory_actor(r.participant_id),case when r.participant_id ~ '^[0-9]+@lid$' then private.whatsapp_market_directory_actor(r.parsed->>'directoryPhone') end);
  select jsonb_agg(jsonb_build_object('id',c.id,'name',c.name,'balance',c.balance,'available',c.balance-private.market_other_commitment(c.id,r.negotiation_id,r.transfer_id),'delta',case when c.id=r.to_club_id then -r.amount else r.amount end,'after',c.balance+case when c.id=r.to_club_id then -r.amount else r.amount end) order by c.id) into v_clubs from public.clubs c where c.id in(r.from_club_id,r.to_club_id) and c.deleted_at is null;
  if r.to_club_id is null or jsonb_array_length(coalesce(v_clubs,'[]'))<>(case when r.from_club_id is null then 1 else 2 end) then raise exception 'Clubes oficiais não confirmados';end if;
