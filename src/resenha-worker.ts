@@ -1,3 +1,4 @@
+import {loanJoinBatch} from './infra/loan-join-batch.ts';
 import {loanWizard} from './infra/loan-wizard.ts';
 import {readMarketCard} from "./infra/market-card.ts";
 import {marketResponse} from "./infra/market-response.ts";
@@ -743,7 +744,8 @@ let loanJoinBusy=false;
 async function loanJoinTick(){
  if(loanJoinBusy||!cupApi||!socket||phase!=='CONNECTED'||stopping)return;
  loanJoinBusy=true;const current=socket;
- try{for(const group of (auth.data.loanJoinPending??[]).slice(0,10)){
+ try{for(const group of loanJoinBatch(auth.data.loanJoinPending??[],10)){
+  try{
   if(socket!==current||stopping)break;
   if(auth.data.groups.includes(group)&&!auth.data.loanGroups?.includes(group)){auth.data.loanJoinPending=auth.data.loanJoinPending?.filter(g=>g!==group);await auth.save();continue;}
   const metadata=await current.groupMetadata(group);
@@ -764,5 +766,6 @@ async function loanJoinTick(){
    if(!sent?.key.id)throw Error('Welcome not confirmed');auth.data.loanWelcomed??={};auth.data.loanWelcomed[group]=candidate.grantedAt;
   }
   auth.data.loanJoinPending=auth.data.loanJoinPending?.filter(g=>g!==group);await auth.save();
- }}catch{log('LOAN_JOIN_RETRY');}finally{loanJoinBusy=false;}
+  }catch{log('LOAN_JOIN_RETRY');}
+ }}finally{loanJoinBusy=false;}
 }
