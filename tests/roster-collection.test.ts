@@ -12,3 +12,8 @@ test('closed configured window requests exactly 25, pairs delayed photo, resumes
  const recovered=JSON.parse(JSON.stringify(holder));await rosterTick(recovered,config,save,send,photo,progress,['23456@g.us']);assert.equal(photos.length,1);assert.equal(recovered.rosterCollection.entries[0].delivered,true);assert.ok(statuses.includes('delivered'));assert.ok(saves>25);
  const count=messages.length;await rosterTick(recovered,config,save,send,photo,progress,['23456@g.us']);assert.equal(messages.length,count);
 });
+
+test('failed photos ask for resend without losing roster text; other clubs are not blocked',async()=>{
+ const holder:{rosterCollection?:RosterState}={};const replies:string[]=[];const save=async()=>{},send=async(r:string,t:string)=>{replies.push(t);},progress=async()=>{};await rosterTick(holder,config,save,send,async()=>{},progress,[]);const e=holder.rosterCollection!.entries[0]!;e.text=text;e.image={reference:'expired'};for(let i=0;i<3;i++)await assert.rejects(()=>rosterTick(holder,config,save,send,async()=>{throw Error('Unavailable');},progress,[]));assert.equal(e.image,undefined);assert.equal(e.text,text);assert.ok(replies.some(t=>t.includes('Reenvie a foto')));
+ const updated={...config,directory:config.directory.map(c=>c.id==='0'?{...c,recipient:'999@s.whatsapp.net'}:c)};await rosterTick(holder,updated,save,send,async()=>{},progress,[]);assert.equal(holder.rosterCollection!.entries[0]!.recipient,'999@s.whatsapp.net');assert.equal(holder.rosterCollection!.entries[0]!.text,undefined);
+});
