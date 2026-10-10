@@ -110,6 +110,10 @@ async function connect(){
  if(!canRecoverMarketMessage(event.type,group,message.messageTimestamp,marketCaptureSince,marketChannels))return;
  const body=extractMessageContent(message.message);const text=loanCommand((body?.conversation??body?.extendedTextMessage?.text??body?.imageMessage?.caption??'').trim());const context=body?.extendedTextMessage?.contextInfo??body?.imageMessage?.contextInfo;
  if(/^[0-9]+@(s\.whatsapp\.net|lid)$/.test(group)){
+  if(marketApi&&enabled()&&event.type==='notify'&&/^(sim|não|nao)$/i.test(text)){
+   const aliases=await cupAliases(group,current);const groups=marketAdminGroups(auth.data.groups,auth.data.groupModes,auth.data.loanGroups,auth.data.rosterCollection?.group);
+   auth.data.surveyAnswers??=[];if(!auth.data.surveyAnswers.some(e=>e.messageId===id&&e.aliases.includes(group))){auth.data.surveyAnswers.push({aliases,text,messageId:id,groups});await auth.save();}void marketTick();return;
+  }
    const collection=auth.data.rosterCollection;
   if(rosterCaptureEnabled&&enabled()&&collection&&!/^!/.test(text)&&event.type==='notify'){
    const aliases=await cupAliases(group,current);
@@ -176,7 +180,7 @@ async function connect(){
   }
  }
 
- if(auth.data.groups.includes(group)&&['transfer','trade','market-loan'].includes(groupMode(auth.data.groupModes,group)))return;
+ if(auth.data.groups.includes(group)&&['transfer','trade','market-loan','roster'].includes(groupMode(auth.data.groupModes,group)))return;
  const receivedAt=Number(message.messageTimestamp)*1000;
  const eventAt=Number.isSafeInteger(receivedAt)&&receivedAt>1577836800000&&receivedAt<Date.now()+60000?receivedAt:Date.now();
  if(!auth.data.groups.includes(group)&&/^!novacopa\s*$/i.test(text.trim())&&cupApi&&message.key.participant){
@@ -741,6 +745,16 @@ async function marketTick(){
    await marketApi('ack_private',{id:notice.id,lease:notice.lease,sent});
   }
   const adminGroups=marketAdminGroups(auth.data.groups,auth.data.groupModes,auth.data.loanGroups,config.rosterCollection?.group);
+  for(const answer of [...(auth.data.surveyAnswers??[])].slice(0,20)){
+   const result=await marketApi<{success:boolean}>('survey_answer',answer);if(!result.success)throw Error('Survey answer not confirmed');
+   const previous=auth.data.surveyAnswers;auth.data.surveyAnswers=previous?.filter(e=>e!==answer);try{await auth.save();}catch(error){auth.data.surveyAnswers=previous;throw error;}
+  }
+  const survey=await marketApi<{notices:MarketPrivateNotice[]}>('survey_claim',{groups:adminGroups});
+  for(const notice of survey.notices??[]){let sent=false;
+   const allowed=/^[0-9]+@(s[.]whatsapp[.]net|lid)$/.test(notice.recipient)||adminGroups.includes(notice.recipient);
+   if(socket===current&&!stopping&&enabled()&&allowed)try{const result=await current.sendMessage(notice.recipient,{text:notice.body},{messageId:rosterMessageId(notice.id,notice.recipient,'survey')});sent=Boolean(result?.key.id);}catch{log('CONFIDENCE_SURVEY_RETRY');}
+   await marketApi('survey_ack',{id:notice.id,lease:notice.lease,sent});
+  }
   if(config.rosterCollection?.enabled&&config.rosterCollection.group){
    try{
     const participating=await current.groupFetchAllParticipating();
