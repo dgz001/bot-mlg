@@ -43,6 +43,7 @@ begin
  if p_trust_trade is null or length(trim(coalesce(p_reason,''))) not between 5 and 500 then raise exception 'Confirme a opção e descreva o motivo';end if;
  select * into w from public.market_windows order by updated_at desc nulls last limit 1 for share;
  if not found then raise exception 'Janela não configurada';end if;
+ if not w.transfer_window_open then raise exception 'Abra a janela de compras antes de autorizar opções deste ciclo';end if;
  perform 1 from public.clubs where id=p_club_id and deleted_at is null for update;if not found then raise exception 'Clube não encontrado';end if;
  if p_exception_limit is not null and (p_exception_limit<w.max_transfers_per_club or p_exception_limit>100) then raise exception 'Limite excepcional inválido';end if;
  v_trade:=w.max_trades_per_club-case when p_trust_trade then 1 else 0 end;
@@ -174,9 +175,7 @@ begin
    end if;
  end if;
  return new;
-end $function$
-
-
+end $function$;
 CREATE OR REPLACE FUNCTION public.get_my_market_window_usage()
  RETURNS jsonb
  LANGUAGE plpgsql
@@ -190,9 +189,7 @@ begin
  if v_club is null then raise exception 'Clube ativo obrigatório'; end if;
  select * into v_w from public.market_windows order by updated_at desc nulls last limit 1;
  return private.market_window_usage(v_club,v_w.market_cycle_id)||jsonb_build_object('purchase_limit',(private.market_effective_limits(v_club,v_w.market_cycle_id)->>'purchase_limit')::int,'sale_limit',v_w.max_sales_per_club,'trade_limit',(private.market_effective_limits(v_club,v_w.market_cycle_id)->>'trade_limit')::int,'completed',private.market_window_completed_usage(v_club,v_w.market_cycle_id),'loan_window_open',v_w.loan_window_open,'market_cycle_id',v_w.market_cycle_id);
-end $function$
-
-
+end $function$;
 CREATE OR REPLACE FUNCTION public.admin_retract_whatsapp_market_classification(p_id uuid, p_expected_revision integer, p_scope text, p_reason text)
  RETURNS jsonb
  LANGUAGE plpgsql
@@ -211,9 +208,7 @@ begin
  insert into public.audit_logs(actor_id,action,target,details) values(auth.uid(),'whatsapp_market_classification_retracted',p_id::text,jsonb_build_object('previous_scope',r.purchase_scope,'scope',p_scope,'reason',trim(p_reason),'automatic_rejection',r.automatic_rejection));
  perform private.queue_whatsapp_market_reaction(p_id,'');
  return jsonb_build_object('success',true,'financial_effect',false,'roster_effect',false);
-end $function$
-
-
+end $function$;
 CREATE OR REPLACE FUNCTION public.bot_whatsapp_market_bridge(p_token text, p_action text, p_payload jsonb DEFAULT '{}'::jsonb)
  RETURNS jsonb
  LANGUAGE plpgsql
@@ -267,7 +262,7 @@ declare r public.whatsapp_market_inbox%rowtype;v_kind text;v_hash text;v_output 
   if not found or v_reaction.lease_id is distinct from (p_payload->>'lease')::uuid or v_reaction.revision is distinct from (p_payload->>'revision')::integer or v_reaction.emoji is distinct from p_payload->>'emoji' then return jsonb_build_object('success',false,'stale',true);end if;
   update private.whatsapp_market_reactions set delivered_at=case when p_payload->>'sent'='true' then clock_timestamp() else null end,lease_id=null,lease_until=null where inbox_id=v_reaction.inbox_id;
   return jsonb_build_object('success',true);
- end if;raise exception 'Ação da captura inválida';end$function$
+ end if;raise exception 'Ação da captura inválida';end$function$;
 
 
 CREATE OR REPLACE FUNCTION private.claim_whatsapp_market_admin_notices(p_groups jsonb)
@@ -283,7 +278,7 @@ begin
  if coalesce(cardinality(v_groups),0)=0 then return jsonb_build_object('notices','[]'::jsonb);end if;
  perform pg_advisory_xact_lock(hashtextextended('whatsapp-market-reminders',0));
  for r in select * from public.whatsapp_market_inbox where (status not in('settled','rejected') and updated_at<clock_timestamp()-interval '30 minutes') or (automatic_rejection and created_at>clock_timestamp()-interval '1 hour') or (jsonb_array_length(quota_flags)>0 and status not in('settled','rejected')) order by created_at limit 100 loop
-  v_body:=case when r.automatic_rejection or jsonb_array_length(r.quota_flags)>0 then '🔎 Rejeição automática para conferir: ' else '⏳ Negociação pendente de conferência: ' end||'MLG-'||left(r.id::text,8)||'. '||case r.purchase_scope when 'internal' then 'Compra entre clubes' when 'external' then 'Compra externa' when 'trade' then 'Troca' else 'Tipo de compra a conferir' end||'. '||coalesce(r.classification_note,'')||' Estado: '||r.status||'. Confira a proposta original na plataforma MLG: https://v0-mlg01.vercel.app/admin?mlg_target=whatsapp-market';
+  v_body:=case when r.automatic_rejection then '🔎 Rejeição automática para conferir: ' when jsonb_array_length(r.quota_flags)>0 then '🔎 Limite excedido para decisão dos ADMs: ' else '⏳ Negociação pendente de conferência: ' end||'MLG-'||left(r.id::text,8)||'. '||case r.purchase_scope when 'internal' then 'Compra entre clubes' when 'external' then 'Compra externa' when 'trade' then 'Troca' else 'Tipo de compra a conferir' end||'. '||coalesce(r.classification_note,'')||' Estado: '||r.status||'. Confira a proposta original na plataforma MLG: https://v0-mlg01.vercel.app/admin?mlg_target=whatsapp-market';
   if not exists(select 1 from private.whatsapp_market_admin_notices where inbox_id=r.id and revision=r.revision and (case when r.automatic_rejection or jsonb_array_length(r.quota_flags)>0 then true else bucket=v_bucket end)) then
    insert into public.notifications(user_id,category,title,body,deep_link)
    select a.user_id,'market','Negociação precisa de atenção',v_body,'/admin?mlg_target=whatsapp-market' from public.admin_users a join auth.users u on u.id=a.user_id where u.deleted_at is null and u.email_confirmed_at is not null and (u.banned_until is null or u.banned_until<=now());
@@ -296,8 +291,7 @@ begin
  with picked as(select id from private.whatsapp_market_admin_notices where delivered_at is null and group_id=any(v_groups) and (lease_until is null or lease_until<clock_timestamp()) order by created_at limit 20 for update skip locked),leased as(update private.whatsapp_market_admin_notices n set lease_id=v_lease,lease_until=clock_timestamp()+interval '90 seconds' from picked where n.id=picked.id returning n.*)
  select coalesce(jsonb_agg(jsonb_build_object('id',id,'lease',lease_id,'group',group_id,'body',body)),'[]'::jsonb) into v_output from leased;
  return jsonb_build_object('notices',v_output);
-end $function$
-
+end $function$;
 notify pgrst,'reload schema';
 create or replace function private.claim_market_balance_penalty_notices(p_groups jsonb) returns jsonb language plpgsql security definer set search_path='' as $$
 declare v_groups text[];v_lease uuid:=gen_random_uuid();v_output jsonb;v_existing jsonb;
@@ -318,3 +312,26 @@ end $$;
 revoke all on function private.claim_market_balance_penalty_notices(jsonb) from public,anon,authenticated;
 
 
+
+create or replace function private.check_market_balance_penalty(p_club uuid,p_cycle uuid,p_purchase_count integer default 0,p_exclude_n uuid default null,p_exclude_t uuid default null) returns void language plpgsql security definer set search_path='' as $$
+declare v public.market_balance_penalties%rowtype;v_limit integer;v_usage integer;
+begin
+ select * into v from public.market_balance_penalties where club_id=p_club and market_cycle_id=p_cycle and penalty in('all_market','one_purchase');
+ if not found then return;end if;
+ if v.penalty='all_market' then raise exception 'Transfer Ban: todas as movimentações bloqueadas nesta janela';end if;
+ if p_purchase_count>0 then
+  v_limit:=(private.market_effective_limits(p_club,p_cycle)->>'purchase_limit')::integer;
+  v_usage:=(private.market_window_usage(p_club,p_cycle,p_exclude_n,p_exclude_t)->>'purchases')::integer;
+  if v_limit is null or v_usage+p_purchase_count>greatest(v_limit-1,0) then raise exception 'Transfer Ban: uma compra retirada da quota desta janela';end if;
+ end if;
+end $$;
+revoke all on function private.check_market_balance_penalty(uuid,uuid,integer,uuid,uuid) from public,anon,authenticated;
+create or replace function private.expire_market_balance_penalties() returns trigger language plpgsql security definer set search_path='' as $$
+begin
+ if new.market_cycle_id is distinct from old.market_cycle_id then
+  with expired as(update public.market_balance_penalties set penalty='expired',revision=revision+1,updated_at=clock_timestamp() where market_cycle_id is distinct from new.market_cycle_id and penalty in('pending_review','all_market','one_purchase') returning *)
+  insert into public.audit_logs(actor_id,action,target,details) select auth.uid(),'market_balance_penalty_expired',id::text,jsonb_build_object('club_id',club_id,'served_market_cycle_id',market_cycle_id,'new_market_cycle_id',new.market_cycle_id) from expired;
+ end if;return new;
+end $$;
+revoke all on function private.expire_market_balance_penalties() from public,anon,authenticated;
+notify pgrst,'reload schema';

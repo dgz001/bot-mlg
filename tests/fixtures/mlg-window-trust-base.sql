@@ -44,3 +44,37 @@ begin
 end $function$;
 
 create trigger whatsapp_market_classification before insert or update of parsed,kind on public.whatsapp_market_inbox for each row execute function private.classify_whatsapp_market();
+
+CREATE OR REPLACE FUNCTION private.guard_market_debit_commitment()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+declare
+  v_balance bigint;
+  v_committed bigint;
+  v_exclude_negotiation uuid;
+  v_match text[];
+begin
+  if new.type='bulk_balance_import' and current_setting('mlg.balance_reconciliation',true)=new.club_id::text then return new; end if;
+  if new.type in ('negotiation_payment','external_transfer_purchase') then return new;end if;
+  if new.amount >= 0 then return new; end if;
+  if new.type = 'negotiation_payment' then
+    v_match := regexp_match(coalesce(new.description, ''), '([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})', 'i');
+    if v_match is not null then v_exclude_negotiation := v_match[1]::uuid; end if;
+  end if;
+  select c.balance into v_balance from public.clubs c where c.id = new.club_id for update;
+  v_committed := private.club_financial_commitment(new.club_id, v_exclude_negotiation, null, null);
+  if coalesce(v_balance, 0) - v_committed < abs(new.amount) then
+    raise exception 'Débito bloqueado: saldo disponível insuficiente após compromissos ativos';
+  end if;
+  return new;
+end;
+$function$
+;
+
+create or replace function private.guard_negotiation_commitment() returns trigger language plpgsql security definer set search_path='' as $$ begin perform 1 from public.clubs where id in(new.club_a_id,new.club_b_id) order by id for update;return new;end $$;
+
+create or replace function private.guard_member_offer_budget() returns trigger language plpgsql security definer set search_path='' as $$ begin perform 1 from public.clubs where id in(new.club_a_id,new.club_b_id) order by id for update;return new;end $$;
+
