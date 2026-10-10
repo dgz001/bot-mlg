@@ -694,7 +694,7 @@ async function marketTick(){
  if(!marketApi||marketBusy||stopping)return;
  marketBusy=true;lastMarketTick=Date.now();
  try{
-  const config=await marketApi<{channels:MarketChannel[];batches:MarketBatch[];safety:{paused:boolean};captureSince:string;rosterCollection?:RosterConfig}>('config');
+  const config=await marketApi<{channels:MarketChannel[];batches:MarketBatch[];safety:{paused:boolean};captureSince:string;rosterCollection?:RosterConfig}>('config',{rosterVersion:1});
   if(!Array.isArray(config.channels))throw Error('Invalid market channel list');
   rosterCaptureEnabled=Boolean(config.rosterCollection?.enabled&&!config.rosterCollection.opened&&config.rosterCollection.run);
   marketChannels=config.channels.filter(c=>groupMode(auth.data.groupModes,c.group)!=='market-loan');

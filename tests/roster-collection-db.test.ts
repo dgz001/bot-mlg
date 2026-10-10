@@ -7,6 +7,9 @@ test('roster collection closure, access rules and immutable delivered progress',
   await db.query(await readFile(new URL('./fixtures/mlg-roster-collection.sql',import.meta.url),'utf8'));
   await assert.rejects(()=>db.query("select public.admin_configure_roster_collection(true,'12345@g.us',1)"),/Somente ADMs/);
   const a=randomUUID();await db.query('insert into auth.users values($1);',[a]);await db.query('insert into public.admin_users values($1)',[a]);const c=await db.connect();await c.query("select set_config('mlg_test.actor',$1,false)",[a]);
+  await db.query(await readFile(new URL('./fixtures/mlg-roster-readiness.sql',import.meta.url),'utf8'));
+  await assert.rejects(()=>c.query("select public.admin_configure_roster_collection(true,'12345@g.us',1)"),/Atualize o bot/);
+  await db.query('update public.roster_collection_settings set bot_seen=clock_timestamp()');
   await c.query("select public.admin_configure_roster_collection(true,'12345@g.us',1)");await assert.rejects(()=>c.query("select public.admin_configure_roster_collection(true,'12345@g.us',1)"),/mudou/);
   const ids:string[]=[];for(let i=0;i<25;i++){const id=randomUUID();ids.push(id);await c.query('insert into public.clubs(id,name,balance) values($1,$2,0)',[id,'Club '+i]);await c.query('insert into public.whatsapp_market_club_directory values($1,$2)',[id,'556599340'+String(i).padStart(4,'0')]);}
   await c.query('insert into public.market_windows(market_cycle_id) values($1)',[randomUUID()]);await c.query('update public.market_windows set transfer_window_open=false');assert.equal((await c.query('select count(*) from public.roster_collection_runs')).rows[0].count,'0');
