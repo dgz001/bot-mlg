@@ -1,5 +1,6 @@
 import {rosterTick,rosterTextReady,rosterMessageId,type RosterConfig} from "./infra/roster-collection.ts";
 import {loanJoinBatch} from './infra/loan-join-batch.ts';
+import {reconcileMarketGroupGate} from './infra/market-group-gate.ts';
 import {loanWizard} from './infra/loan-wizard.ts';
 import {readMarketCard} from "./infra/market-card.ts";
 import {marketResponse} from "./infra/market-response.ts";
@@ -702,24 +703,25 @@ async function marketTick(){
   if(phase!=='CONNECTED'||!socket||!enabled())return;
   const current=socket;
   let gateHealthy=true;
-  for(const batch of (Array.isArray(config.batches)?config.batches:[]) as MarketBatch[]){
+  const syncGates=async(batches:MarketBatch[])=>{for(const batch of batches){
    try{
    if(!marketChannels.some(c=>c.group===batch.group)||!auth.data.groups.includes(batch.group)||auth.data.loanGroups?.includes(batch.group))continue;
    const metadata=await current.groupMetadata(batch.group);
-   if(batch.count>=(batch.limit??10)&&!metadata.announce){
-    if(!batch.botLocked)await marketApi('gate_ack',{group:batch.group,locked:true});
-    await current.groupSettingUpdate(batch.group,'announcement');
-    await current.sendMessage(batch.group,{text:`🔒 ${batch.limit??10} propostas recebidas. Os ADMs vão conferir esta remessa; o grupo reabre após a conclusão e liberação pela plataforma.`});
-   }else if(batch.count<(batch.limit??10)&&batch.botLocked){
-    if(metadata.announce)await current.groupSettingUpdate(batch.group,'not_announcement');
-    await marketApi('gate_ack',{group:batch.group,locked:false});
-    if(metadata.announce)await current.sendMessage(batch.group,{text:`🔓 Nova remessa liberada: até ${batch.limit??10} propostas podem ser enviadas.`});
-   }
+   const closed=await reconcileMarketGroupGate(batch,Boolean(metadata.announce),()=>current.groupSettingUpdate(batch.group,'announcement'),async locked=>{await marketApi!('gate_ack',{group:batch.group,locked});});
+   if(closed)await current.sendMessage(batch.group,{text:`🔒 ${batch.limit??10} propostas recebidas. Os ADMs conferem a remessa e liberam a próxima pela plataforma; depois reabrem o grupo manualmente. O bot não reabre o grupo.`});
    }catch{gateHealthy=false;log('MARKET_GROUP_GATE_RETRY');}
-  }
+  }};
+  await syncGates(Array.isArray(config.batches)?config.batches:[]);
   // Save captured events before any remote acknowledgement or queue removal.
   if(auth.data.marketInbox?.length||auth.data.marketResponses?.length)await auth.save();
+  const hadMarketInbox=Boolean(auth.data.marketInbox?.length);
   await drainMarketInbox(auth.data,marketApi,()=>auth.save());
+  if(hadMarketInbox){
+   const updated=await marketApi<{batches:MarketBatch[]}>('config',{rosterVersion:1});
+   if(!Array.isArray(updated.batches))throw Error('Invalid market batches');
+   marketDeliveryBlocked=updated.batches.some(b=>b.count>=(b.limit??10));
+   await syncGates(updated.batches);
+  }
   for(const response of [...(auth.data.marketResponses??[])].slice(0,20)){
    const result=await marketApi<{success:boolean}>('response',response);if(!result.success)throw Error('Response not confirmed');
    const previous=auth.data.marketResponses;auth.data.marketResponses=auth.data.marketResponses?.filter(e=>!(e.group===response.group&&e.messageId===response.messageId));
