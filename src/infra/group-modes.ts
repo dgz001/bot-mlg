@@ -10,3 +10,7 @@ export function allowsGroup(groups:Record<string,GroupMode>|undefined,id:string,
 export function validGroupMode(value:unknown):value is GroupMode {
  return value==='resenha'||value==='minicamp'||value==='both'||value==='controle'||value==='transfer'||value==='trade'||value==='market-loan';
 }
+
+export function marketAdminGroups(groups:string[],modes:Record<string,GroupMode>|undefined,loaned:string[]|undefined,rosterDestination:string|null|undefined):string[]{
+ return groups.filter(g=>g!==rosterDestination&&groupMode(modes,g)==='controle'&&!loaned?.includes(g));
+}

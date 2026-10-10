@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {allowsGroup,groupMode,validGroupMode} from '../src/infra/group-modes.ts';
+import {allowsGroup,groupMode,validGroupMode,marketAdminGroups} from '../src/infra/group-modes.ts';
 import {createBanterReply} from '../src/resenha/reply.ts';
 
 test('group modes separate banter and tournament, with legacy continuity',()=>{
@@ -39,3 +39,10 @@ test('community jokes reflect the archive without inventing official results',()
  assert.equal(allowsGroup({g:mode},'g','minicamp'),false);
  }
  });
+
+test('roster collection destination never receives private ADM market alerts despite legacy control category',()=>{
+ const groups=['admin','rosters','borrowed','market'];const modes={admin:'controle',rosters:'controle',borrowed:'controle',market:'transfer'} as const;
+ assert.deepEqual(marketAdminGroups(groups,modes,['borrowed'],'rosters'),['admin']);
+ assert.deepEqual(marketAdminGroups(groups,modes,['borrowed'],undefined),['admin','rosters']);
+ assert.deepEqual(marketAdminGroups(['rosters'],modes,undefined,'rosters'),[]);
+});

@@ -8,7 +8,7 @@ import {marketBridge,marketEvent,drainMarketInbox,deliverMarketReactions,canReco
 import {loanCommand} from './infra/loan-invitation.ts';
 import {minicampClubs} from './minicamp/clubs.ts';
 import {moduleEnabled,parseControls} from './infra/bot-controls.ts';
-import {allowsGroup,groupMode,validGroupMode} from './infra/group-modes.ts';
+import {allowsGroup,groupMode,validGroupMode,marketAdminGroups} from './infra/group-modes.ts';
 import {adminControl,guestPrepared,type ControlTarget} from './infra/admin-control.ts';
 import {whatsappControls} from './infra/whatsapp-controls.ts';
 import {minicampClient,minicampCommand,pendingCupBatch,type PendingCupEvent} from './minicamp/client.ts';
@@ -740,7 +740,7 @@ async function marketTick(){
     try{await current.sendMessage(notice.recipient,{text:notice.body});sent=true;}catch{log('MARKET_PRIVATE_NOTICE_RETRY');}
    await marketApi('ack_private',{id:notice.id,lease:notice.lease,sent});
   }
-  const adminGroups=auth.data.groups.filter(g=>groupMode(auth.data.groupModes,g)==='controle'&&!auth.data.loanGroups?.includes(g));
+  const adminGroups=marketAdminGroups(auth.data.groups,auth.data.groupModes,auth.data.loanGroups,config.rosterCollection?.group);
   if(config.rosterCollection?.enabled&&config.rosterCollection.group){
    try{
     const participating=await current.groupFetchAllParticipating();
