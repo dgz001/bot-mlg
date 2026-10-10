@@ -1,3 +1,4 @@
+import {rosterTick,rosterTextReady,rosterMessageId,type RosterConfig} from "./infra/roster-collection.ts";
 import {loanJoinBatch} from './infra/loan-join-batch.ts';
 import {loanWizard} from './infra/loan-wizard.ts';
 import {readMarketCard} from "./infra/market-card.ts";
@@ -42,6 +43,7 @@ delete process.env.MINICAMP_TOKEN;
 const cupClubs=[...minicampClubs];
 const configuredCups=new Set<string>();
 let cupBusy=false,lastCupTick=Date.now(),lastCupSuccessAt=0,cupHealthy=!cupApi,cupTimer:ReturnType<typeof setInterval>|undefined;
+let rosterCaptureEnabled=false;
 let marketSafetySupported=false,marketCaptureSince=0,marketPaused=false,marketDeliveryBlocked=false,lastMarketTick=0,lastMarketSuccessAt=0;
 let marketBusy=false,marketHealthy=!marketApi,marketChannels:MarketChannel[]=[],marketTimer:ReturnType<typeof setInterval>|undefined;
 type MarketBatch={group:string;batch:number;count:number;limit?:number;botLocked:boolean};
@@ -107,7 +109,21 @@ async function connect(){
  if(!canRecoverMarketMessage(event.type,group,message.messageTimestamp,marketCaptureSince,marketChannels))return;
  const body=extractMessageContent(message.message);const text=loanCommand((body?.conversation??body?.extendedTextMessage?.text??body?.imageMessage?.caption??'').trim());const context=body?.extendedTextMessage?.contextInfo??body?.imageMessage?.contextInfo;
  if(/^[0-9]+@(s\.whatsapp\.net|lid)$/.test(group)){
-  if(!cupApi||!(/^!(?:configbot|alterarconfig|cancelarconfig|rejeitar|novacopa|nome|modalidade|formato|vagas|classificados|jogos|equipes|adicionar|remover|corrigirclubes|times|revisar|confirmar|descartar|central|pendencias|painel|ajuda|comandos|imagemgrupo|imagemtexto)(?:\s|$)/i.test(text)||Object.values(auth.data.controlRooms??{}).some(r=>r.guestWizard)))return;
+   const collection=auth.data.rosterCollection;
+  if(rosterCaptureEnabled&&enabled()&&collection&&!/^!/.test(text)&&event.type==='notify'){
+   const aliases=await cupAliases(group,current);
+   const entry=collection.entries.find(e=>e.requested&&!e.delivered&&aliases.includes(e.recipient));
+   if(entry){
+    if(entry.seen.includes(id))return;
+    if(text.length>16000){await current.sendMessage(group,{text:'A lista excedeu o tamanho permitido. Envie a lista completa em uma mensagem menor.'});return;}
+    if(body?.imageMessage)entry.image=body.imageMessage;
+    if(text&&(/goleir/i.test(text)||(!entry.text&&!body?.imageMessage)))entry.text=text;
+    entry.seen.push(id);entry.seen=entry.seen.slice(-50);await auth.save();
+    const reply=!entry.image?'Recebi a lista. Falta a foto do elenco.':!entry.text?'Recebi a foto. Falta a lista completa por posições.':!rosterTextReady(entry.text)?'Confira a lista: inclua a seção GOLEIROS com pelo menos dois nomes e o elenco completo por posições.':'Foto e lista recebidas. Vou encaminhar ao grupo de elencos para conferência dos ADMs.';
+    await current.sendMessage(group,{text:reply},{messageId:rosterMessageId(collection.run,entry.club,'receipt-'+id)});void marketTick();return;
+   }
+  }
+ if(!cupApi||!(/^!(?:configbot|alterarconfig|cancelarconfig|rejeitar|novacopa|nome|modalidade|formato|vagas|classificados|jogos|equipes|adicionar|remover|corrigirclubes|times|revisar|confirmar|descartar|central|pendencias|painel|ajuda|comandos|imagemgrupo|imagemtexto)(?:\s|$)/i.test(text)||Object.values(auth.data.controlRooms??{}).some(r=>r.guestWizard)))return;
   const dedup=JSON.stringify([group,id]);if(auth.data.seen.includes(dedup))return;
   if(text.length>16000){await current.sendMessage(group,{text:'⚠️ Lista muito longa. Envie em partes com !adicionar.'});return;}
   let finish:ReturnType<typeof progressMessage>|undefined;
@@ -678,8 +694,9 @@ async function marketTick(){
  if(!marketApi||marketBusy||stopping)return;
  marketBusy=true;lastMarketTick=Date.now();
  try{
-  const config=await marketApi<{channels:MarketChannel[];batches:MarketBatch[];safety:{paused:boolean};captureSince:string}>('config');
+  const config=await marketApi<{channels:MarketChannel[];batches:MarketBatch[];safety:{paused:boolean};captureSince:string;rosterCollection?:RosterConfig}>('config');
   if(!Array.isArray(config.channels))throw Error('Invalid market channel list');
+  rosterCaptureEnabled=Boolean(config.rosterCollection?.enabled&&!config.rosterCollection.opened&&config.rosterCollection.run);
   marketChannels=config.channels.filter(c=>groupMode(auth.data.groupModes,c.group)!=='market-loan');
   marketSafetySupported=typeof config.safety?.paused==='boolean';marketPaused=config.safety?.paused===true;marketCaptureSince=Date.parse(config.captureSince)||0;marketDeliveryBlocked=(config.batches??[]).some(b=>b.count>=(b.limit??10));
   if(phase!=='CONNECTED'||!socket||!enabled())return;
@@ -722,6 +739,18 @@ async function marketTick(){
    await marketApi('ack_private',{id:notice.id,lease:notice.lease,sent});
   }
   const adminGroups=auth.data.groups.filter(g=>groupMode(auth.data.groupModes,g)==='controle'&&!auth.data.loanGroups?.includes(g));
+  if(config.rosterCollection?.enabled&&config.rosterCollection.group){
+   try{
+    const participating=await current.groupFetchAllParticipating();
+    if(!Object.hasOwn(participating,config.rosterCollection.group))throw Error('Roster destination unavailable');
+    await rosterTick(auth.data,config.rosterCollection,()=>auth.save(),async(recipient,text,id)=>{if(socket!==current||phase!=='CONNECTED'||stopping||!enabled())throw Error('Disconnected');const sent=await current.sendMessage(recipient,{text},{messageId:id});if(!sent?.key.id)throw Error('Send unconfirmed');},async(entry,dest,id)=>{
+     const stream=await downloadContentFromMessage(entry.image,'image');const chunks:Buffer[]=[];let size=0;
+     for await(const chunk of stream){size+=chunk.length;if(size>8*1024*1024)throw Error('Image too large');chunks.push(Buffer.from(chunk));}
+     const sent=await current.sendMessage(dest,{image:Buffer.concat(chunks),caption:'Elenco final — '+entry.name},{messageId:id});if(!sent?.key.id)throw Error('Photo not confirmed');
+    },async(entry,status)=>{const result=await marketApi('roster_progress',{run:auth.data.rosterCollection!.run,club:entry.club,status});if(result.success!==true)throw Error('Progress not confirmed');},adminGroups);
+   }catch{log('ROSTER_COLLECTION_RETRY');}
+  }
+
   if(adminGroups.length){
    const {notices:adminNotices}=await marketApi<{notices:{id:string;lease:string;group:string;body:string}[]}>('claim_admin',{groups:adminGroups});
    for(const notice of adminNotices??[]){let sent=false;
