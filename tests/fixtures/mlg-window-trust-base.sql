@@ -41,6 +41,6 @@ begin
   else new.classification_note:='Compra externa declarada. Carta, identidade e assinaturas precisam de conferência.';end if;
  end if;
  return new;
-end $function$
+end $function$;
 
 create trigger whatsapp_market_classification before insert or update of parsed,kind on public.whatsapp_market_inbox for each row execute function private.classify_whatsapp_market();
