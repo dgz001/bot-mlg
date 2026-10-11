@@ -16,10 +16,10 @@ import {cupQuestion} from './minicamp/question.ts';
 import {cupMediaFor,guestAnnouncementImage} from './minicamp/media.ts';
 import {orderMessages} from './minicamp/message-order.ts';
 import {loadRoster} from './resenha/matchup.ts';
-import makeWASocket,{DisconnectReason,jidNormalizedUser,extractMessageContent,downloadContentFromMessage} from '@whiskeysockets/baileys';
+import makeWASocket,{initAuthCreds,DisconnectReason,jidNormalizedUser,extractMessageContent,downloadContentFromMessage} from '@whiskeysockets/baileys';
 import pino from 'pino';
 import {banterRequest} from './resenha/trigger.ts';
-import {requestReadyPairing} from './whatsapp/pairing.ts';
+import {requestReadyPairing,recoverRevokedSession} from './whatsapp/pairing.ts';
 import {createServer as httpServer} from 'node:http';
 import {createServer} from 'node:net';
 import {chmod,readFile,unlink} from 'node:fs/promises';
@@ -73,6 +73,7 @@ async function connect(){
  if(stable)clearTimeout(stable);socket=undefined;
  const status=(u.lastDisconnect?.error as {output?:{statusCode?:number}}|undefined)?.output?.statusCode;
  log('WA_CLOSE_'+(Number.isInteger(status)?status:'UNKNOWN'));
+ if(status===DisconnectReason.loggedOut){auth.data.sessionRevoked=true;void auth.save().catch(()=>fail('SESSION_SAVE_FAILED'));}
  if(status===DisconnectReason.restartRequired){timer=setTimeout(()=>{void connect().catch(()=>fail('CONNECT_FAILED'));},1500);return;}
  const decision=reconnect(status===DisconnectReason.loggedOut?'logged-out':status===DisconnectReason.connectionReplaced?'connection-replaced':'transient',attempt++,Math.random());phase=decision.state;log(phase);
  if(decision.delayMs)timer=setTimeout(()=>{void connect().catch(()=>fail('CONNECT_FAILED'));},decision.delayMs);
@@ -641,9 +642,10 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  return req.action==='templates-list'?{...result,selectedTemplate:auth.data.panelSelection?.templates[req.group]}:result;
  }
  if(req.action==='pair'){
- if(auth.state.creds.registered||phase==='CONNECTED'||phase==='STOPPED')throw new Error('Pairing unavailable');
+ if((auth.state.creds.registered&&!auth.data.sessionRevoked)||phase==='CONNECTED'||phase==='STOPPED')throw new Error('Pairing unavailable');
  if(!/^\d{10,15}$/.test(req.phone??''))throw new Error('Invalid phone');
  if(timer)clearTimeout(timer);
+ if(recoverRevokedSession(auth.data,auth.state,initAuthCreds))await auth.save();
  // A failed code request sets creds.me before registration. Clear only that
  // incomplete login marker on an explicit retry, never a registered session.
  if(!socket){delete auth.state.creds.me;delete auth.state.creds.pairingCode;await auth.save();await connect();}
@@ -673,7 +675,7 @@ const health=httpServer((req,res)=>{if(req.url==='/livez'||req.url==='/readyz'){
 function fail(event:string){log(event);void shutdown(1);}
 async function shutdown(code:number){if(stopping)return;stopping=true;if(cupTimer)clearInterval(cupTimer);if(newsTimer)clearInterval(newsTimer);if(marketTimer)clearInterval(marketTimer);if(timer)clearTimeout(timer);if(stable)clearTimeout(stable);const deadline=setTimeout(()=>process.exit(code),12000);deadline.unref();controls.close();health.close();socket?.end(undefined);await queue;while(cupBusy||newsBusy||marketBusy||loanJoinBusy)await new Promise(r=>setTimeout(r,50));await auth?.flush();key.fill(0);process.exit(code);}
 process.on('SIGTERM',()=>{void shutdown(0);});process.on('SIGINT',()=>{void shutdown(0);});process.on('uncaughtException',()=>fail('UNCAUGHT_ERROR'));process.on('unhandledRejection',()=>fail('UNHANDLED_REJECTION'));
-async function main(){auth=await vaultAuth(endpoint!,token!,key);auth.data.replyHistory??={};auth.data.cupInbox??=[];auth.data.marketInbox??=[];for(const event of auth.data.marketInbox)event.queuedAt??=Date.now();auth.data.marketResponses??=[];if(marketApi){await marketTick();marketTimer=setInterval(()=>{void marketTick();},15000);}if(cupApi){try{await cupApi({action:'health'});cupHealthy=true;}catch{cupHealthy=false;log('MINICAMP_RETRY');}cupTimer=setInterval(()=>{void cupTick();void loanJoinTick();},15000);}if(loadNews)newsTimer=setInterval(()=>{void newsTick();},60000);banterReply=createBanterReply(auth.data.replyHistory);await auth.save();await unlink(controlPath).catch(()=>undefined);controls.listen(controlPath,()=>{void chmod(controlPath,0o600).catch(()=>fail('CONTROL_PERMISSIONS_FAILED'));});if(!process.send)health.listen(Number(process.env.PORT??3000),'0.0.0.0');if(auth.state.creds.registered)await connect();else {phase='NEEDS_PAIRING';log(phase);}}
+async function main(){auth=await vaultAuth(endpoint!,token!,key);auth.data.replyHistory??={};auth.data.cupInbox??=[];auth.data.marketInbox??=[];for(const event of auth.data.marketInbox)event.queuedAt??=Date.now();auth.data.marketResponses??=[];if(marketApi){await marketTick();marketTimer=setInterval(()=>{void marketTick();},15000);}if(cupApi){try{await cupApi({action:'health'});cupHealthy=true;}catch{cupHealthy=false;log('MINICAMP_RETRY');}cupTimer=setInterval(()=>{void cupTick();void loanJoinTick();},15000);}if(loadNews)newsTimer=setInterval(()=>{void newsTick();},60000);banterReply=createBanterReply(auth.data.replyHistory);await auth.save();await unlink(controlPath).catch(()=>undefined);controls.listen(controlPath,()=>{void chmod(controlPath,0o600).catch(()=>fail('CONTROL_PERMISSIONS_FAILED'));});if(!process.send)health.listen(Number(process.env.PORT??3000),'0.0.0.0');if(auth.state.creds.registered&&!auth.data.sessionRevoked)await connect();else {phase='NEEDS_PAIRING';log(phase);}}
 async function newsTick(){
  if(!loadNews||newsBusy||stopping||phase!=='CONNECTED'||!socket||!enabled()||!auth.data.newsGroup)return;
  newsBusy=true;const current=socket,group=auth.data.newsGroup;
