@@ -16,6 +16,9 @@ services:
         value: production
       - key: BOT_MODE
         value: resenha
+      # Keep archive import disabled during normal operation; enable temporarily when needed.
+      - key: WA_SYNC_FULL_HISTORY
+        value: "false"
       - key: SESSION_VAULT_URL
         sync: false
       - key: SESSION_VAULT_TOKEN
