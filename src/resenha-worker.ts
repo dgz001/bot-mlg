@@ -36,6 +36,9 @@ if(!endpoint||!token||!master||!process.env.CONTROL_PASSWORD||!process.env.CONTR
 const key=Buffer.from(master,/^[a-f0-9]{64}$/i.test(master)?'hex':'base64');
 if(key.length!==32)throw new Error('Invalid session key');
 const cupApi=process.env.MINICAMP_URL&&process.env.MINICAMP_TOKEN?minicampClient(process.env.MINICAMP_URL,process.env.MINICAMP_TOKEN):undefined;
+// Full WhatsApp history sync is opt-in: it can be large and may replay old messages.
+// Live messages are always handled normally; enable this only during an intentional archive import.
+const syncFullWhatsAppHistory=process.env.WA_SYNC_FULL_HISTORY==='true';
 const loadNews=process.env.MLG_NEWS_SUPABASE_URL&&process.env.MLG_NEWS_SUPABASE_KEY?newsSource(process.env.MLG_NEWS_SUPABASE_URL,process.env.MLG_NEWS_SUPABASE_KEY):undefined;
 const marketApi=process.env.MLG_MARKET_BRIDGE_TOKEN&&process.env.MLG_NEWS_SUPABASE_URL&&process.env.MLG_NEWS_SUPABASE_KEY?marketBridge(process.env.MLG_NEWS_SUPABASE_URL,process.env.MLG_NEWS_SUPABASE_KEY,process.env.MLG_MARKET_BRIDGE_TOKEN):undefined;
 delete process.env.MLG_MARKET_BRIDGE_TOKEN;
@@ -63,7 +66,8 @@ const enabled=(module?:'resenha'|'minicamp')=>moduleEnabled(auth.data.controls,m
 const inChannel=(group:string,module:'resenha'|'minicamp')=>auth.data.groups.includes(group)&&allowsGroup(auth.data.groupModes,group,module);
 async function connect(){
  if(stopping)return;phase='CONNECTING';
- const current=makeWASocket({auth:auth.state,logger:pino({level:'silent'}),syncFullHistory:false,markOnlineOnConnect:false,shouldSyncHistoryMessage:()=>false});socket=current;
+ const current=makeWASocket({auth:auth.state,logger:pino({level:'silent'}),syncFullHistory:syncFullWhatsAppHistory,markOnlineOnConnect:false,shouldSyncHistoryMessage:()=>syncFullWhatsAppHistory});socket=current;
+	if(syncFullWhatsAppHistory)log('WHATSAPP_FULL_HISTORY_SYNC_ENABLED');
  current.ev.on('creds.update',()=>{if(socket===current)void auth.save().catch(()=>fail('SESSION_SAVE_FAILED'));});
  current.ev.on('connection.update',u=>{
  if(socket!==current||stopping)return;
