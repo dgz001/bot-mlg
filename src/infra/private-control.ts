@@ -20,13 +20,15 @@ export function privateControl(options:{secret:string;origin:string;socketPath:s
     res.setHeader('Cache-Control','no-store');res.setHeader('Referrer-Policy','no-referrer');
     res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('X-Frame-Options','DENY');
     res.setHeader('Content-Security-Policy',`default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'`);
-    if(req.url==='/' && req.method==='GET') {
+    let pathname:string;
+    try { pathname=new URL(req.url??'/',options.origin).pathname; } catch { pathname=''; }
+    if(pathname==='/' && req.method==='GET') {
       res.setHeader('Content-Type','text/html; charset=utf-8');res.end(page(nonce,options.resenha));return;
     }
     const reply=(status:number,value:unknown)=>{res.writeHead(status,{'Content-Type':'application/json'}).end(JSON.stringify(value));};
-    if(!['/control','/logout'].includes(req.url??'') || req.method!=='POST'){reply(404,{error:'Não encontrado'});return;}
+    if(!['/control','/logout'].includes(pathname) || req.method!=='POST'){reply(404,{error:'Não encontrado'});return;}
     if(req.headers.origin!==options.origin || req.headers['x-mlg-control']!=='1' || req.headers['content-type']!=='application/json'){reply(403,{error:'Origem recusada'});return;}
-    if(req.url==='/logout'){res.setHeader('Set-Cookie',session.clear);reply(200,{loggedOut:true});return;}
+    if(pathname==='/logout'){res.setHeader('Set-Cookie',session.clear);reply(200,{loggedOut:true});return;}
     const now=Date.now();if(now>windowEnd){failures=0;windowEnd=now+60000;}
     if(failures>=5){reply(429,{error:'Aguarde um minuto antes de tentar novamente'});return;}
     const bearer=req.headers.authorization;
