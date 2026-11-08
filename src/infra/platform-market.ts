@@ -49,7 +49,7 @@ export function marketHealthPayload(state:{marketInbox?:MarketEvent[];marketResp
 }
 export function marketBridge(url:string,key:string,token:string,fetcher:typeof fetch=fetch){
  const source=new URL(url);
- if(source.protocol!=='https:'||!/^([a-z0-9-]+)\\.supabase\\.co$/.test(source.hostname)||!key||!/^[a-f0-9]{64}$/.test(token))throw Error('Invalid market bridge configuration');
+ if(source.protocol!=='https:'||!/^([a-z0-9-]+)\.supabase\.co$/.test(source.hostname)||!key||!/^[a-f0-9]{64}$/.test(token))throw Error('Invalid market bridge configuration');
  return async<T=Record<string,unknown>>(action:string,payload:unknown={}):Promise<T>=>{
   const response=await fetcher(new URL('/rest/v1/rpc/bot_whatsapp_market_gate',source),{method:'POST',headers:{apikey:key,Authorization:'Bearer '+key,'Content-Type':'application/json'},body:JSON.stringify({p_token:token,p_action:action,p_payload:payload}),signal:AbortSignal.timeout(15000)});
   if(!response.ok)throw Error('Market bridge unavailable');
