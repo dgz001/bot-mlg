@@ -56,7 +56,16 @@ let newsBusy=false,newsTimer:ReturnType<typeof setInterval>|undefined;
 const controlPath='/tmp/mlg-bot-control.sock';
 const portal=privateControl({secret:process.env.CONTROL_PASSWORD,origin:process.env.CONTROL_ORIGIN,socketPath:controlPath,resenha:true});
 for(const name of ['AUTH_ENCRYPTION_KEY','CONTROL_PASSWORD','SESSION_VAULT_TOKEN','DATABASE_URL','APP_DATABASE_PASSWORD'])delete process.env[name];
-const log=(event:string)=>console.log(JSON.stringify({event,at:new Date().toISOString()}));
+const log=(event:string,details?:Record<string,unknown>)=>console.log(JSON.stringify({event,at:new Date().toISOString(),...details}));
+function safeErrorDetails(error:unknown):Record<string,unknown>{
+ const value=error&&typeof error==='object'?error as {name?:unknown;code?:unknown;status?:unknown;output?:{statusCode?:unknown}}:undefined;
+ const details:Record<string,unknown>={};
+ if(typeof value?.name==='string'&&/^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(value.name))details.errorType=value.name;
+ if(typeof value?.code==='string'&&/^[A-Za-z0-9_.-]{1,40}$/.test(value.code))details.errorCode=value.code;
+ const status=value?.output?.statusCode??value?.status;
+ if(typeof status==='number'&&Number.isInteger(status))details.statusCode=status;
+ return details;
+}
 let phase='STARTING',stopping=false,attempt=0,timer:ReturnType<typeof setTimeout>|undefined,stable:ReturnType<typeof setTimeout>|undefined;
 let auth:Awaited<ReturnType<typeof vaultAuth>>,socket:ReturnType<typeof makeWASocket>|undefined;
 const pairingReady=new WeakSet<object>();
@@ -83,7 +92,7 @@ async function connect(){
  if(decision.delayMs)timer=setTimeout(()=>{void connect().catch(()=>fail('CONNECT_FAILED'));},decision.delayMs);
  }
  });
- const queueLoanJoin=(group:string)=>{queue=queue.then(async()=>{if(stopping||socket!==current)return;auth.data.loanJoinPending??=[];if(!auth.data.loanJoinPending.includes(group)){auth.data.loanJoinPending.push(group);await auth.save();}void loanJoinTick();}).catch(()=>log('LOAN_JOIN_RETRY'));};
+ const queueLoanJoin=(group:string)=>{queue=queue.then(async()=>{if(stopping||socket!==current)return;auth.data.loanJoinPending??=[];if(!auth.data.loanJoinPending.includes(group)){auth.data.loanJoinPending.push(group);await auth.save();}void loanJoinTick();}).catch(error=>log('LOAN_JOIN_QUEUE_RETRY',safeErrorDetails(error)));};
  current.ev.on('groups.upsert',groups=>{for(const group of groups)queueLoanJoin(group.id);});
  current.ev.on('group-participants.update',event=>{if(['add','promote'].includes(event.action))queueLoanJoin(event.id);});
  current.ev.on('messages.update',events=>{
@@ -793,9 +802,11 @@ async function marketTick(){
 
 let loanJoinBusy=false;
 async function loanJoinTick(){
- if(loanJoinBusy||!cupApi||!socket||phase!=='CONNECTED'||stopping)return;
+ // Avoid retrying the loan API while its shared Minicamp health check is failing.
+ if(loanJoinBusy||!cupApi||!cupHealthy||!socket||phase!=='CONNECTED'||stopping)return;
  loanJoinBusy=true;const current=socket;
  try{for(const group of loanJoinBatch(auth.data.loanJoinPending??[],10)){
+  let stage='group-metadata';
   try{
   if(socket!==current||stopping)break;
   if(auth.data.groups.includes(group)&&!auth.data.loanGroups?.includes(group)){auth.data.loanJoinPending=auth.data.loanJoinPending?.filter(g=>g!==group);await auth.save();continue;}
@@ -803,20 +814,25 @@ async function loanJoinTick(){
   if(metadata.isCommunity||metadata.isCommunityAnnounce){auth.data.loanJoinPending=auth.data.loanJoinPending?.filter(g=>g!==group);await auth.save();continue;}
   const botAdmin=metadata.participants.some(p=>p.admin&&[current.user?.id,current.user?.lid].some(id=>id&&id.replace(/:[0-9]+(?=@)/,'')===p.id.replace(/:[0-9]+(?=@)/,'')));
   if(!botAdmin)continue;
+  stage='resolve-admin-identities';
   const candidates=(await Promise.all(metadata.participants.filter(p=>Boolean(p.admin)).map(p=>cupAliases(p.id,current)))).flat();
+  stage='platform-loan-join-check';
   const candidate=await cupApi<{eligible:boolean;manager?:string;name?:string;grantedAt?:number;aliases?:string[]}>({action:'loan-join-check',group,candidates});
   if(!candidate.eligible||!candidate.manager||!candidate.aliases?.length||!candidate.grantedAt){auth.data.loanJoinPending=auth.data.loanJoinPending?.filter(g=>g!==group);await auth.save();continue;}
   if(auth.data.loanWelcomed?.[group]!==candidate.grantedAt){
+   stage='platform-loan-claim';
    const claim=await cupApi<{claimed?:boolean;error?:string}>({action:'loan-claim',group,aliases:candidate.aliases,name:candidate.name});
    if(!claim.claimed){auth.data.loanJoinPending=auth.data.loanJoinPending?.filter(g=>g!==group);await auth.save();continue;}
    if(!auth.data.groups.includes(group))auth.data.groups.push(group);auth.data.loanGroups??=[];if(!auth.data.loanGroups.includes(group))auth.data.loanGroups.push(group);
    auth.data.groupModes??={};auth.data.groupModes[group]='minicamp';auth.data.controlRooms??={};
-   const room=auth.data.controlRooms[group]??auth.data.controlRooms['loan-private:'+candidate.manager]??{};room.targetId=group;room.guestInvitationAt=candidate.grantedAt;auth.data.controlRooms[group]=room;await auth.save();
+   const room=auth.data.controlRooms[group]??auth.data.controlRooms['loan-private:'+candidate.manager]??{};room.targetId=group;room.guestInvitationAt=candidate.grantedAt;auth.data.controlRooms[group]=room;
+   stage='persist-loan-membership';await auth.save();
    const recipient=candidate.aliases.find(j=>j.endsWith('@s.whatsapp.net'))??candidate.aliases[0]!;
+   stage='send-welcome-message';
    const sent=await current.sendMessage(recipient,{text:'🤝 Entrei no grupo '+metadata.subject+'. Seu empréstimo foi ativado. Configure aqui no privado com !configbot: vou fazer poucas perguntas e mostrar tudo para você confirmar ou rejeitar. Depois use !alterarconfig para alterar uma opção. Só após a configuração confirmada, envie !novacopa no grupo para abrir inscrições.'});
    if(!sent?.key.id)throw Error('Welcome not confirmed');auth.data.loanWelcomed??={};auth.data.loanWelcomed[group]=candidate.grantedAt;
   }
-  auth.data.loanJoinPending=auth.data.loanJoinPending?.filter(g=>g!==group);await auth.save();
-  }catch{log('LOAN_JOIN_RETRY');}
+  stage='persist-completed-join';auth.data.loanJoinPending=auth.data.loanJoinPending?.filter(g=>g!==group);await auth.save();
+  }catch(error){log('LOAN_JOIN_RETRY',{stage,pendingCount:auth.data.loanJoinPending?.length??0,...safeErrorDetails(error)});
  }}finally{loanJoinBusy=false;}
 }
