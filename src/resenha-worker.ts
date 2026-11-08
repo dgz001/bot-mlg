@@ -4,7 +4,7 @@ import {reconcileMarketGroupGate} from './infra/market-group-gate.ts';
 import {loanWizard} from './infra/loan-wizard.ts';
 import {readMarketCard} from "./infra/market-card.ts";
 import {marketResponse} from "./infra/market-response.ts";
-import {marketBridge,marketEvent,drainMarketInbox,deliverMarketReactions,canRecoverMarketMessage,marketHealthPayload,type MarketChannel} from "./infra/platform-market.ts";
+import {marketBridge,marketEvent,enqueueMarketEvent,enqueueMarketResponse,drainMarketInbox,drainMarketResponses,deliverMarketReactions,canRecoverMarketMessage,marketHealthPayload,type MarketChannel} from "./infra/platform-market.ts";
 import {loanCommand} from './infra/loan-invitation.ts';
 import {minicampClubs} from './minicamp/clubs.ts';
 import {moduleEnabled,parseControls} from './infra/bot-controls.ts';
@@ -18,6 +18,7 @@ import {orderMessages} from './minicamp/message-order.ts';
 import {loadRoster} from './resenha/matchup.ts';
 import makeWASocket,{initAuthCreds,DisconnectReason,jidNormalizedUser,extractMessageContent,downloadContentFromMessage} from '@whiskeysockets/baileys';
 import pino from 'pino';
+import {createHash} from 'node:crypto';
 import {banterRequest} from './resenha/trigger.ts';
 import {requestReadyPairing,recoverRevokedSession} from './whatsapp/pairing.ts';
 import {createServer as httpServer} from 'node:http';
@@ -57,6 +58,11 @@ const controlPath='/tmp/mlg-bot-control.sock';
 const portal=privateControl({secret:process.env.CONTROL_PASSWORD,origin:process.env.CONTROL_ORIGIN,socketPath:controlPath,resenha:true});
 for(const name of ['AUTH_ENCRYPTION_KEY','CONTROL_PASSWORD','SESSION_VAULT_TOKEN','DATABASE_URL','APP_DATABASE_PASSWORD'])delete process.env[name];
 const log=(event:string,details?:Record<string,unknown>)=>console.log(JSON.stringify({event,at:new Date().toISOString(),...details}));
+function marketFeedbackId(group:string,sourceId:string,kind:string){return 'MLGMARKET'+createHash('sha256').update(JSON.stringify([group,sourceId,kind])).digest('hex').slice(0,24).toUpperCase();}
+async function sendMarketFeedback(current:ReturnType<typeof makeWASocket>,group:string,sourceId:string,kind:string,text:string){
+ try{const sent=await current.sendMessage(group,{text},{messageId:marketFeedbackId(group,sourceId,kind)});return Boolean(sent?.key.id);}
+ catch{log('MARKET_FEEDBACK_RETRY',{kind});return false;}
+}
 function safeErrorDetails(error:unknown):Record<string,unknown>{
  const value=error&&typeof error==='object'?error as {name?:unknown;code?:unknown;status?:unknown;output?:{statusCode?:unknown}}:undefined;
  const details:Record<string,unknown>={};
@@ -102,9 +108,15 @@ async function connect(){
    const edited=extractMessageContent(event.update.message?.editedMessage?.message??event.update.message);
    const text=(edited?.conversation??edited?.extendedTextMessage?.text??edited?.imageMessage?.caption??'').trim();
    if(!text)return;
+   if(text.length>16000){await sendMarketFeedback(current,group,id,'TEXT_LIMIT','⚠️ A proposta editada ultrapassa 16.000 caracteres. Envie uma versão menor; nenhuma alteração foi registrada.');return;}
    const proposal=marketEvent(group,id,participant,text,marketChannels);
-   if(!proposal)return;(proposal.parsed as typeof proposal.parsed & {directoryPhone?:string}).directoryPhone=(await cupAliases(participant,current).catch(()=>[])).find(a=>a.endsWith('@s.whatsapp.net'));proposal.mentions=edited?.extendedTextMessage?.contextInfo?.mentionedJid??edited?.imageMessage?.contextInfo?.mentionedJid??[];
-   auth.data.marketInbox??=[];if(!auth.data.marketInbox.some(e=>e.group===group&&e.messageId===id&&e.text===text)){auth.data.marketInbox.push(proposal);await auth.save();}void marketTick();
+   if(!proposal)return;
+   (proposal.parsed as typeof proposal.parsed & {directoryPhone?:string}).directoryPhone=(await cupAliases(participant,current).catch(()=>[])).find(a=>a.endsWith('@s.whatsapp.net'));
+   proposal.mentions=edited?.extendedTextMessage?.contextInfo?.mentionedJid??edited?.imageMessage?.contextInfo?.mentionedJid??[];
+   const queued=enqueueMarketEvent(auth.data,proposal);
+   if(queued==='queued')await auth.save();
+   else if(queued==='full')await sendMarketFeedback(current,group,id,'QUEUE_FULL','⚠️ A fila de propostas está cheia. Esta edição não foi registrada; aguarde o processamento e envie novamente.');
+   void marketTick();
   }).catch(()=>{log('MARKET_EDIT_CAPTURE_RETRY');});}
  });
  current.ev.on('messages.reaction',events=>{
@@ -112,8 +124,10 @@ async function connect(){
    const group=event.key.remoteJid,id=event.reaction.key?.id,participant=event.reaction.key?.participant;
    if(!marketApi||!group||!id||!participant||event.reaction.key?.fromMe||!enabled()||!auth.data.groups.includes(group)||!marketChannels.some(c=>c.group===group))return;
    const response=marketResponse({group,messageId:id,participant,proposalMessageId:event.key.id,reaction:event.reaction.text??undefined});
-   if(!response)return;auth.data.marketResponses??=[];
-   if(!auth.data.marketResponses.some(e=>e.group===group&&e.messageId===id)){auth.data.marketResponses.push(response);await auth.save();}
+   if(!response)return;
+   const queued=enqueueMarketResponse(auth.data,response);
+   if(queued==='queued')await auth.save();
+   else if(queued==='full')await sendMarketFeedback(current,group,id,'RESPONSE_QUEUE_FULL','⚠️ A fila de respostas de negociação está cheia. Tente novamente quando o bot normalizar.');
    void marketTick();
   }).catch(()=>{log('MARKET_RESPONSE_CAPTURE_RETRY');});}
  });
@@ -163,8 +177,14 @@ async function connect(){
  if(marketApi&&enabled()&&message.key.participant&&auth.data.groups.includes(group)){
   if(marketChannels.some(c=>c.group===group)){
    const reaction=body?.reactionMessage;
+   if(text.length>16000){await sendMarketFeedback(current,group,id,'TEXT_LIMIT','⚠️ A mensagem ultrapassa 16.000 caracteres. Envie uma proposta menor; nada foi registrado.');return;}
    const response=marketResponse({group,messageId:id,participant:message.key.participant,proposalMessageId:reaction?.key?.id??context?.stanzaId,text,reaction:reaction?.text??undefined});
-   if(response){auth.data.marketResponses??=[];if(!auth.data.marketResponses.some(e=>e.group===group&&e.messageId===id)){auth.data.marketResponses.push(response);await auth.save();}void marketTick();return;}
+   if(response){
+    const queued=enqueueMarketResponse(auth.data,response);
+    if(queued==='queued')await auth.save();
+    else if(queued==='full')await sendMarketFeedback(current,group,id,'RESPONSE_QUEUE_FULL','⚠️ A fila de respostas está cheia. Tente novamente mais tarde.');
+    void marketTick();return;
+   }
   }
 
 
@@ -182,10 +202,9 @@ async function connect(){
   if(proposal){
    (proposal.parsed as typeof proposal.parsed & {directoryPhone?:string}).directoryPhone=(await cupAliases(message.key.participant,current).catch(()=>[])).find(a=>a.endsWith('@s.whatsapp.net'));
    proposal.mentions=context?.mentionedJid??[];
-   auth.data.marketInbox??=[];
-   if(!auth.data.marketInbox.some(e=>e.group===group&&e.messageId===id&&e.text===text)){
-    auth.data.marketInbox.push(proposal);await auth.save();
-   }
+   const queued=enqueueMarketEvent(auth.data,proposal);
+   if(queued==='queued')await auth.save();
+   else if(queued==='full')await sendMarketFeedback(current,group,id,'QUEUE_FULL','⚠️ A fila de propostas está cheia. Esta proposta não foi registrada; aguarde o processamento e envie novamente.');
    void marketTick();return;
   }
   if(marketChannels.some(c=>c.group===group)){
@@ -737,19 +756,17 @@ async function marketTick(){
   // Save captured events before any remote acknowledgement or queue removal.
   if(auth.data.marketInbox?.length||auth.data.marketResponses?.length)await auth.save();
   const hadMarketInbox=Boolean(auth.data.marketInbox?.length);
-  await drainMarketInbox(auth.data,marketApi,()=>auth.save());
+  await drainMarketInbox(auth.data,marketApi,()=>auth.save(),async event=>{
+   if(socket!==current||stopping||!auth.data.groups.includes(event.group)||auth.data.loanGroups?.includes(event.group))return false;
+   return sendMarketFeedback(current,event.group,event.messageId,'BATCH_CLOSED','⚠️ Esta proposta chegou depois do encerramento da remessa. Ela não entrou na janela e não alterou saldo, elenco ou contrato. Aguarde a liberação da próxima remessa pelos ADMs.');
+  },Date.now(),(event,error)=>log('MARKET_PROPOSAL_RETRY',{attempts:event.attempts??0,...safeErrorDetails(error)}));
+  await drainMarketResponses(auth.data,marketApi,()=>auth.save(),Date.now(),(response,error)=>log('MARKET_RESPONSE_RETRY',{attempts:response.attempts??0,...safeErrorDetails(error)}));
   if(hadMarketInbox){
    const updated=await marketApi<{batches:MarketBatch[]}>('config',{rosterVersion:1});
    if(!Array.isArray(updated.batches))throw Error('Invalid market batches');
    marketDeliveryBlocked=updated.batches.some(b=>b.count>=(b.limit??10));
    await syncGates(updated.batches);
   }
-  for(const response of [...(auth.data.marketResponses??[])].slice(0,20)){
-   const result=await marketApi<{success:boolean}>('response',response);if(!result.success)throw Error('Response not confirmed');
-   const previous=auth.data.marketResponses;auth.data.marketResponses=auth.data.marketResponses?.filter(e=>!(e.group===response.group&&e.messageId===response.messageId));
-   try{await auth.save();}catch(error){auth.data.marketResponses=previous;throw error;}
-  }
-
   await deliverMarketReactions(marketApi,async r=>{
    if(!auth.data.groups.includes(r.group)||auth.data.loanGroups?.includes(r.group))throw Error('Market reaction group is not authorized');
    await current.sendMessage(r.group,{react:{text:r.emoji,key:{remoteJid:r.group,participant:r.participant,id:r.messageId,fromMe:false}}});
