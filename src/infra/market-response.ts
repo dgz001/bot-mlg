@@ -1,7 +1,7 @@
 export type MarketResponse={group:string;messageId:string;participant:string;proposalMessageId:string|null;decision:'positive'|'negative'|'withdrawn';text:string;at:number};
 const MAX_RESPONSE_TEXT=500;
 const validGroup=(value:string)=>/^[0-9-]{5,40}@g\\.us$/.test(value);
-const validParticipant=(value:string)=>/^[0-9]+@(lid|s\\.whatsapp\\.net)$/.test(value);
+const validParticipant=(value:string)=>/^[0-9]+(?::[0-9]+)?@(lid|s\\.whatsapp\\.net)$/.test(value);
 export function marketResponse(input:{group:string;messageId:string;participant:string;proposalMessageId?:string|null;text?:string;reaction?:string;at?:number}):MarketResponse|null{
  if(!validGroup(input.group)||!validParticipant(input.participant)||!input.messageId||input.messageId.length>200)return null;
  if(input.proposalMessageId!==undefined&&input.proposalMessageId!==null&&(!input.proposalMessageId||input.proposalMessageId.length>200))return null;
