@@ -15,8 +15,14 @@ export async function rosterTick(holder:{rosterCollection?:RosterState},config:R
  const state=holder.rosterCollection;if(state.group!==config.group){state.group=config.group;for(const e of state.entries)if(!e.delivered){e.photoSent=false;e.textSent=false;}await save();}
  let changed=false;for(let i=0;i<state.entries.length;i++){const e=state.entries[i]!,official=config.directory.find(c=>c.id===e.club);if(official&&!e.delivered&&official.recipient!==e.recipient){state.entries[i]={club:e.club,name:official.name,recipient:official.recipient,seen:[]};changed=true;}}if(changed)await save();
  let failed=false;
+ // At most one initial DM per tick. Persist the throttle timestamp so event-triggered
+ // runs and process restarts cannot burst-message all 25 managers.
+ const pendingRequest=state.entries.find(e=>!e.requested&&!e.delivered&&(e.nextRequestAt??0)<=now);
+ if(pendingRequest&&(state.lastManagerRequestAt??0)<=now-10000){
+  try{await send(pendingRequest.recipient,'📋 '+pendingRequest.name+': a janela encerrou. Envie aqui a foto do elenco e a lista completa atualizada, organizada por posições, com pelo menos dois goleiros. Pode enviar foto e texto separadamente.',rosterMessageId(state.run,pendingRequest.club,'request'));pendingRequest.requested=true;pendingRequest.requestFailures=0;delete pendingRequest.nextRequestAt;state.lastManagerRequestAt=now;await save();}
+  catch{pendingRequest.requestFailures=(pendingRequest.requestFailures??0)+1;pendingRequest.nextRequestAt=now+Math.min(30*60_000,60_000*2**Math.min(pendingRequest.requestFailures-1,4));failed=true;await save();}
+ }
  for(const e of state.entries){try{
-  if(!e.requested){await send(e.recipient,'📋 '+e.name+': a janela encerrou. Envie aqui a foto do elenco e a lista completa atualizada, organizada por posições, com pelo menos dois goleiros. Pode enviar foto e texto separadamente.',rosterMessageId(state.run,e.club,'request'));e.requested=true;await save();}
   if(!e.delivered&&e.image&&e.text&&rosterTextReady(e.text)){
    if(e.progress!=='ready'){await progress(e,'ready');e.progress='ready';await save();}
    if(!e.photoSent){try{await photo(e,state.group,rosterMessageId(state.run,e.club,'photo'));}catch(error){e.photoFailures=(e.photoFailures??0)+1;if(e.photoFailures>=3){delete e.image;e.photoFailures=0;await save();await send(e.recipient,'Não consegui recuperar a foto para encaminhar. Reenvie a foto aqui; sua lista continua salva.',rosterMessageId(state.run,e.club,'resend-'+e.seen.at(-1)));}else await save();throw error;}e.photoSent=true;e.photoFailures=0;await save();}
