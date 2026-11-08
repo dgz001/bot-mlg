@@ -10,6 +10,7 @@ const audit=async(q,cup,match,user,action,before,after,reason=null)=>q.query(`IN
  VALUES($1,$2,$3,$4,$5,$6,$7)`,[cup.id,match.code,user,action,before,after,reason]);
 const names=(players)=>new Map(players.map(p=>[p.user_id,p.display_name]));
 const score=(m)=>`${m.home_score}x${m.away_score}`;
+export const guestTieBreakReady=(matches)=>matches.length>0&&matches.every(m=>m.status==='confirmed');
 const card=(m,people)=>`#${m.code} · ${m.leg===3?'desempate':m.leg===2?'volta':'ida'} · ${people.get(m.home)} × ${people.get(m.away)}${m.status==='confirmed'?' · '+score(m):m.status==='pending'?' · aguardando confirmação':m.status==='disputed'?' · contestado':''}`;
 export const guestStandings=(players,matches)=>{
  const rows=players.map(p=>({id:p.user_id,name:p.display_name,team:p.team,played:0,wins:0,draws:0,goals:0,against:0,points:0}));
@@ -73,7 +74,7 @@ async function progress(q,cup,players,group){
    const cycle=playoffs.filter(m=>m.round===latest);
    if(cycle.length){
     // Never decide a multi-player tie-break while any fixture in that round is pending.
-    if(cycle.some(m=>m.status!=='confirmed'))return '';
+    if(!guestTieBreakReady(cycle))return '';
     const playoffTable=guestStandings(players.filter(p=>cycle.some(m=>m.home===p.user_id||m.away===p.user_id)),cycle);
     const top=playoffTable.filter(p=>same(p,playoffTable[0]));
     if(top.length===1){winner=top[0];resolved=true;}
