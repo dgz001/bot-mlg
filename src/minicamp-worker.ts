@@ -41,7 +41,9 @@ async function identity(jid:string):Promise<string> {
   if(!/^[0-9]+@(lid|s\.whatsapp\.net)$/.test(normalized)) throw new Error('Unsupported identity');
   const aliases=[normalized];
   const mappings=socket?.signalRepository.lidMapping;
-  const linked=normalized.endsWith('@lid')?await mappings?.getPNForLID(normalized):await mappings?.getLIDForPN(normalized);
+  let linked:string|null|undefined;
+  try{linked=normalized.endsWith('@lid')?await mappings?.getPNForLID(normalized):await mappings?.getLIDForPN(normalized);}
+  catch{linked=undefined;}
   if(linked) aliases.push(jidNormalizedUser(linked));
   const q=await pool.connect();
   try {
@@ -93,15 +95,19 @@ async function connect() {
         text=text.replace(/^!bot adm copa cancelar\b/i,'!cancelar').replace(/^!bot adm resultado resolver\b/i,'!resolver');
         // Baileys carries the selected WhatsApp account in contextInfo.mentionedJid;
         // the visible @text alone is not an identity and must never be trusted.
+        const user=await identity(m.key.participant);
         const memberAction=/^!(?:cadastrar|editar|excluir|registrar|associar)\s/i.test(text);
         if(memberAction) {
           const mentioned=content?.extendedTextMessage?.contextInfo?.mentionedJid;
           if(Array.isArray(mentioned) && mentioned.length===1 && typeof mentioned[0]==='string') {
-            try { text=memberCommand(text,await identity(mentioned[0])); }
-            catch { text=text.trim().split(/\s+/,1)[0]!.toLowerCase(); }
+            // Resolve a target only after checking the sender's stored ADM role.
+            const admin=await pool.query('SELECT 1 FROM mlg_bot.admins a JOIN mlg_bot.groups g ON g.id=a.group_id WHERE a.group_id=$1 AND a.user_id=$2 AND g.admins_configured',[group,user]);
+            if(admin.rowCount) {
+              try { text=memberCommand(text,await identity(mentioned[0])); }
+              catch { text=text.trim().split(/\s+/,1)[0]!.toLowerCase(); }
+            }
           }
         }
-        const user=await identity(m.key.participant);
         const q=await pool.connect();
         try {
           await q.query('BEGIN');
