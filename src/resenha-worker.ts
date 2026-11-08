@@ -499,7 +499,10 @@ async function connect(){
 }
 async function cupAliases(jid:string,current:ReturnType<typeof makeWASocket>):Promise<string[]>{
  const n=jidNormalizedUser(jid);if(!/^[0-9]+@(lid|s\.whatsapp\.net)$/.test(n))throw Error('Unsupported identity');
- const other=n.endsWith('@lid')?await current.signalRepository.lidMapping.getPNForLID(n):await current.signalRepository.lidMapping.getLIDForPN(n);
+ let other:string|null|undefined;
+ try{other=n.endsWith('@lid')?await current.signalRepository.lidMapping.getPNForLID(n):await current.signalRepository.lidMapping.getLIDForPN(n);}
+ catch(error){log('WA_ALIAS_MAPPING_FALLBACK',safeErrorDetails(error));}
+ // Keep the verified primary JID even when Baileys has no alternate PN/LID mapping yet.
  return [...new Set([n,...(other?[jidNormalizedUser(other)]:[])])];
 }
 async function configureCup(group:string,current:ReturnType<typeof makeWASocket>){
