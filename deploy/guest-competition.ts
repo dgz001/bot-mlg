@@ -287,23 +287,25 @@ export async function guestAutoConfirm(db){
 export async function guestArchive(db){
  return db.transaction(async q=>{
   const row=(await q.query(`SELECT c.* FROM mlg_bot.guest_competitions c JOIN mlg_bot.loan_groups l ON l.group_id=c.group_id
-   WHERE c.status IN ('completed','cancelled') AND (c.status='cancelled' OR c.completed_at<$1)
-   ORDER BY c.created_at LIMIT 1`,[Date.now()-600000])).rows[0];
+   WHERE c.status IN ('completed','cancelled') AND c.archived_at IS NULL
+   AND (c.status='cancelled' OR c.completed_at<$1)
+   ORDER BY c.created_at LIMIT 1 FOR UPDATE OF c SKIP LOCKED`,[Date.now()-600000])).rows[0];
   if(!row)return {archived:false};
   await q.query('SELECT id FROM mlg_bot.groups WHERE id=$1 FOR UPDATE',[row.group_id]);
   if((await q.query("SELECT 1 FROM mlg_bot.outbox WHERE group_id=$1 AND status<>'sent' LIMIT 1",[row.group_id])).rows.length)return {archived:false};
   if(row.status==='completed'){
    const winner=(await q.query('SELECT display_name FROM mlg_bot.guest_players WHERE cup_id=$1 AND user_id=$2',[row.id,row.champion_id])).rows[0];
+   if(!winner)throw Error('Guest champion record is missing; archive was not marked complete');
    const edition=Number((await q.query('SELECT count(*)::int AS n FROM mlg_bot.loan_champions WHERE group_id=$1',[row.group_id])).rows[0].n)+1;
-   await q.query('INSERT INTO mlg_bot.loan_champions(cup_id,group_id,champion_id,champion_name,competition_name,edition,completed_at) VALUES($1,$2,$3,$4,$5,$6,$7)',[row.id,row.group_id,row.champion_id,winner.display_name,row.name,edition,row.completed_at]);
+   await q.query(`INSERT INTO mlg_bot.loan_champions(cup_id,group_id,champion_id,champion_name,competition_name,edition,completed_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(cup_id) DO NOTHING`,[row.id,row.group_id,row.champion_id,winner.display_name,row.name,edition,row.completed_at]);
   }
-  await q.query('DELETE FROM mlg_bot.guest_result_audit WHERE cup_id=$1',[row.id]);
-  await q.query('DELETE FROM mlg_bot.guest_matches WHERE cup_id=$1',[row.id]);
-  await q.query('DELETE FROM mlg_bot.guest_players WHERE cup_id=$1',[row.id]);
-  await q.query('DELETE FROM mlg_bot.guest_competitions WHERE id=$1',[row.id]);
+  // Keep the complete competition, roster, fixtures, scores and audit trail.
+  // Only mark the notification/archive lifecycle as complete.
+  await q.query('UPDATE mlg_bot.guest_competitions SET archived_at=$2 WHERE id=$1 AND archived_at IS NULL',[row.id,Date.now()]);
   await q.query("DELETE FROM mlg_bot.outbox WHERE group_id=$1 AND status='sent' AND sent_at<now()-interval '7 days'",[row.group_id]);
   await q.query(`DELETE FROM mlg_bot.processed_messages p WHERE p.group_id=$1 AND p.received_at<$2
    AND NOT EXISTS(SELECT 1 FROM mlg_bot.outbox o WHERE o.group_id=p.group_id AND o.user_id=p.user_id AND o.message_id=p.message_id)`,[row.group_id,Date.now()-604800000]);
-  return {archived:true};
+  return {archived:true,preserved:true,cupId:row.id};
  });
 }
