@@ -833,6 +833,6 @@ async function loanJoinTick(){
    if(!sent?.key.id)throw Error('Welcome not confirmed');auth.data.loanWelcomed??={};auth.data.loanWelcomed[group]=candidate.grantedAt;
   }
   stage='persist-completed-join';auth.data.loanJoinPending=auth.data.loanJoinPending?.filter(g=>g!==group);await auth.save();
-  }catch(error){log('LOAN_JOIN_RETRY',{stage,pendingCount:auth.data.loanJoinPending?.length??0,...safeErrorDetails(error)});
+  }catch(error){log('LOAN_JOIN_RETRY',{stage,pendingCount:auth.data.loanJoinPending?.length??0,...safeErrorDetails(error)});}
  }}finally{loanJoinBusy=false;}
 }
