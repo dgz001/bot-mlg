@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {marketBridge,marketEvent,drainMarketInbox,deliverMarketReactions,canRecoverMarketMessage,marketHealthPayload} from '../src/infra/platform-market.ts';
+import {marketBridge,marketEvent,drainMarketInbox,deliverMarketReactions,canRecoverMarketMessage,marketHealthPayload,marketOperationsPayload} from '../src/infra/platform-market.ts';
 const text='💰 PROPOSTA DE COMPRA\nClube de origem: Manchester City\nJogador: Mateus Nunes\nClube de destino: Galatasaray\nValor da transferência: €5 milhões';
 const event=marketEvent('12345@g.us','MESSAGE','123456789@s.whatsapp.net',text,[{kind:'transfer',group:'12345@g.us'}])!;
 test('reconnect history recovers only configured market messages from the current cycle',()=>{
@@ -20,6 +20,20 @@ test('restart after remote acknowledgement but before local save retries the sam
 test('health signal records backlog age without message contents or personal numbers',()=>{
  const signal=marketHealthPayload({marketInbox:[{...event,queuedAt:1000}],marketResponses:[{at:500}]},{phase:'CONNECTED',enabled:true,healthy:true,blocked:false,groups:['12345@g.us'],now:601000});
  assert.equal(signal.oldestAgeSeconds,600);assert.equal(signal.proposalQueue,1);assert.equal(signal.responseQueue,1);assert.ok(!JSON.stringify(signal).includes(event.text));assert.ok(!JSON.stringify(signal).includes(event.participant));
+});
+test('operations status exposes remaining capacity and full batches without leaking proposal content',()=>{
+ const batches=[
+  {group:'12345@g.us',batch:2,count:7,limit:10,botLocked:false},
+  {group:'67890@g.us',batch:4,count:10,limit:10,botLocked:true}
+ ];
+ const status=marketOperationsPayload({marketInbox:[event],marketResponses:[]},{phase:'CONNECTED',enabled:true,healthy:true,blocked:true,groups:[],now:(event.queuedAt??Date.now())+30000},batches,[{kind:'transfer',group:'12345@g.us'},{kind:'trade',group:'67890@g.us'}]);
+ assert.deepEqual(status.batches.map(b=>({kind:b.kind,remaining:b.remaining,full:b.full,botLocked:b.botLocked})),[
+  {kind:'transfer',remaining:3,full:false,botLocked:false},
+  {kind:'trade',remaining:0,full:true,botLocked:true}
+ ]);
+ assert.equal(status.proposalQueue,1);
+ assert.ok(!JSON.stringify(status).includes(event.text));
+ assert.ok(!JSON.stringify(status).includes(event.participant));
 });
 test('capture only configured groups and flag a wrong template',()=>{assert.equal(marketEvent('other@g.us','id','123@lid',text,[{kind:'transfer',group:'12345@g.us'}]),null);assert.equal(event.parsed.amountEuros,'5000000');assert.ok(marketEvent('12345@g.us','id','123@lid',text,[{kind:'trade',group:'12345@g.us'}])!.parsed.issues.length);});
 test('bridge sends token only to configured TLS Supabase endpoint',async()=>{let request:any;const api=marketBridge('https://fixture.supabase.co','public','a'.repeat(64),async(url,options)=>{request={url:String(url),options};return new Response('{"success":true}',{status:200});});await api('ingest',event);assert.equal(request.url,'https://fixture.supabase.co/rest/v1/rpc/bot_whatsapp_market_gate');assert.equal(JSON.parse(request.options.body).p_payload.messageId,'MESSAGE');assert.throws(()=>marketBridge('https://malicious.invalid','key','a'.repeat(64)));});
