@@ -93,12 +93,12 @@ async function connect() {
         text=text.replace(/^!bot adm copa cancelar\b/i,'!cancelar').replace(/^!bot adm resultado resolver\b/i,'!resolver');
         // Baileys carries the selected WhatsApp account in contextInfo.mentionedJid;
         // the visible @text alone is not an identity and must never be trusted.
-        const memberAction=/^!(?:cadastrar|editar|excluir|registrar|associar)\\s/i.test(text);
+        const memberAction=/^!(?:cadastrar|editar|excluir|registrar|associar)\s/i.test(text);
         if(memberAction) {
           const mentioned=content?.extendedTextMessage?.contextInfo?.mentionedJid;
           if(Array.isArray(mentioned) && mentioned.length===1 && typeof mentioned[0]==='string') {
             try { text=memberCommand(text,await identity(mentioned[0])); }
-            catch { text=text.trim().split(/\\s+/,1)[0]!.toLowerCase(); }
+            catch { text=text.trim().split(/\s+/,1)[0]!.toLowerCase(); }
           }
         }
         const user=await identity(m.key.participant);
