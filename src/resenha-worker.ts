@@ -189,14 +189,14 @@ async function connect(){
 
 
   let proposal=marketEvent(group,id,message.key.participant,text,marketChannels);
+  // OCR enriches a complete text proposal; it never infers a player, club or transfer value.
   if(proposal&&body?.imageMessage&&marketChannels.some(c=>c.group===group)){
    try{
     const stream=await downloadContentFromMessage(body.imageMessage,'image');let size=0;const chunks:Buffer[]=[];
     for await(const chunk of stream){size+=chunk.length;if(size>4*1024*1024)throw Error('Card image too large');chunks.push(Buffer.from(chunk));}
     const reading=await readMarketCard(Buffer.concat(chunks),text);
-    if(!proposal){proposal=marketEvent(group,id,message.key.participant,'PROPOSTA DE COMPRA\n'+text,marketChannels);if(proposal){proposal.text=text||'[Carta recebida sem modelo de proposta]';proposal.parsed.issues.push('Carta recebida sem proposta completa: associe o jogador externo e o destino antes de continuar.');}}
-    if(proposal)proposal.cardReading=reading;
-   }catch{if(!proposal){proposal=marketEvent(group,id,message.key.participant,'PROPOSTA DE COMPRA\n'+text,marketChannels);if(proposal)proposal.text=text||'[Carta recebida sem modelo de proposta]';}if(proposal)proposal.parsed.issues.push('A leitura da carta não foi confirmada. Confira a imagem original.');log('MARKET_CARD_REVIEW_REQUIRED');}
+    proposal.cardReading=reading;
+   }catch{proposal.parsed.issues.push('A leitura da carta não foi confirmada. Confira a imagem original.');log('MARKET_CARD_REVIEW_REQUIRED');}
   }
 
   if(proposal){
