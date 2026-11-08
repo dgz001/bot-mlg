@@ -1,0 +1,17 @@
+name: Runner diagnostic (temporary)
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/runner-diagnostic.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  runner-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm GitHub-hosted runner availability
+        run: |
+          echo "RUNNER_DIAGNOSTIC_STARTED"
+          node --version
+          echo "RUNNER_DIAGNOSTIC_OK"
