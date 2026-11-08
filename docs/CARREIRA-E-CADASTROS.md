@@ -6,8 +6,10 @@ Comandos públicos:
 - `!participantes [ID da Copa]`: inscritos e clubes; sem ID, Copa ativa ou mais recente do grupo.
 
 Comandos dos ADMs explicitamente selecionados no painel:
-- `!registrar Nome do técnico | @conta`: cadastro do nome, com uma menção real a membro do grupo.
-- `!associar Nome do técnico | @conta`: atualiza o nome da mesma conta; não transfere nem funde históricos.
+- `!cadastrar @conta | Nome do técnico`: associa o nome informado à conta realmente marcada.
+- `!editar @conta | Nome novo`: corrige o nome da conta marcada.
+- `!excluir @conta`: retira a inscrição aberta sem apagar o histórico.
+- `!registrar Nome do técnico | @conta` e `!associar Nome do técnico | @conta`: formatos legados com menção real ao membro.
 - `!sincronizarcontas`: confere até 100 membros com cadastros/participações no grupo e adiciona somente pares PN/LID comprovados pelo WhatsApp. Contas conflitantes ficam intactas. Não migra dados de outro bot nem deduz identidade por nome.
 - `!revisarnumeros`: reconstrói e resume as carreiras pelas partidas confirmadas. Não há contadores acumulados para zerar; cada consulta refaz o cálculo.
 

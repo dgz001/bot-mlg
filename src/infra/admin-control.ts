@@ -72,8 +72,8 @@ No canal escolhido: !novacopa — abrir inscrições da Copa preparada
 Se o membro tiver partida pendente, um ADM deverá resolver ou substituir o jogador.
 
 🪪 NOMES NO GRUPO DA COPA
-!cadastrar @pessoa — guardar o nome da conta marcada
-!editar @pessoa | Nome novo — corrigir o nome
+!cadastrar @conta | Nome — guardar o nome da conta marcada
+!editar @conta | Nome novo — corrigir o nome
 !meunome Nome novo — corrigir o próprio nome de ADM
 !excluir @pessoa — retirar inscrição antes do sorteio
 O histórico continua na conta, sem o @ no nome.
