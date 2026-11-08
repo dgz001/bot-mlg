@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {marketBridge,marketEvent,enqueueMarketEvent,enqueueMarketResponse,drainMarketInbox,drainMarketResponses,deliverMarketReactions,canRecoverMarketMessage,marketHealthPayload,MAX_MARKET_PROPOSALS,MAX_MARKET_RESPONSES,type MarketApi,type MarketEvent} from '../src/infra/platform-market.ts';
+import {marketBridge,marketEvent,enqueueMarketEvent,enqueueMarketResponse,drainMarketInbox,drainMarketResponses,deliverMarketReactions,canRecoverMarketMessage,marketHealthPayload,MAX_MARKET_PROPOSALS,MAX_MARKET_RESPONSES,type MarketApi,type MarketEvent,type QueuedMarketResponse} from '../src/infra/platform-market.ts';
 import type {MarketResponse} from '../src/infra/market-response.ts';
 const text='💰 PROPOSTA DE COMPRA\nClube de origem: Manchester City\nJogador: Mateus Nunes\nClube de destino: Galatasaray\nValor da transferência: €5 milhões';
 const event=marketEvent('12345@g.us','MESSAGE','123456789@s.whatsapp.net',text,[{kind:'transfer',group:'12345@g.us'}])!;
@@ -80,7 +80,7 @@ test('one temporary ingest failure does not block later proposals and uses backo
  assert.deepEqual(delivered,['succeeds','fails']);assert.equal(state.marketInbox.length,0);
 });
 test('one failed response does not block later negotiation confirmations',async()=>{
- const state={marketResponses:[queueResponse('fails'),queueResponse('succeeds')]},delivered:string[]=[];
+ const state:{marketResponses:QueuedMarketResponse[]}={marketResponses:[queueResponse('fails'),queueResponse('succeeds')]},delivered:string[]=[];
  const bridge=queueApi((action,payload:any)=>{assert.equal(action,'response');if(payload.messageId==='fails')throw Error('temporary outage');delivered.push(payload.messageId);return {success:true};});
  await drainMarketResponses(state,bridge,async()=>{},5000);
  assert.deepEqual(delivered,['succeeds']);
