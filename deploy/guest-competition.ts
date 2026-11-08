@@ -72,6 +72,8 @@ async function progress(q,cup,players,group){
    const playoffs=matches.filter(m=>m.leg===3),latest=Math.max(...playoffs.map(m=>m.round),-1);
    const cycle=playoffs.filter(m=>m.round===latest);
    if(cycle.length){
+    // Never decide a multi-player tie-break while any fixture in that round is pending.
+    if(cycle.some(m=>m.status!=='confirmed'))return '';
     const playoffTable=guestStandings(players.filter(p=>cycle.some(m=>m.home===p.user_id||m.away===p.user_id)),cycle);
     const top=playoffTable.filter(p=>same(p,playoffTable[0]));
     if(top.length===1){winner=top[0];resolved=true;}
@@ -169,7 +171,7 @@ export async function guestEvent(db,request,identity){
   if(cmd==='!ajuda'||cmd==='!comandos')reply='🏆 '+(cup?.name??'CAMPEONATO')+'\n!entrar · !sair (antes do sorteio)\n!copa · !meujogo · !jogo CÓDIGO · !tabela · !classificacao · !proximafase\n!resultado CÓDIGO MxV (mandante primeiro)\n!confirmar CÓDIGO MxV · !cancelar CÓDIGO · !contestar CÓDIGO\n!campeoes · !historico\nADM: !painel · !forcarresultado CÓDIGO MxV motivo'+(cup?.mode==='misto'?'\nNeste formato, os '+cup.qualifiers+' melhores da liga avançam para o mata-mata.':'');
   else if(cmd==='!campeoes'||cmd==='!campeões'||cmd==='!historico'||cmd==='!histórico'){
    const saved=(await q.query('SELECT competition_name,champion_name,edition FROM mlg_bot.loan_champions WHERE group_id=$1 ORDER BY edition DESC LIMIT 15',[group])).rows;
-   const current=(await q.query("SELECT c.name,p.display_name FROM mlg_bot.guest_competitions c JOIN mlg_bot.guest_players p ON p.cup_id=c.id AND p.user_id=c.champion_id WHERE c.group_id=$1 AND c.status='completed' ORDER BY c.created_at DESC LIMIT 5",[group])).rows;
+   const current=(await q.query("SELECT c.name,p.display_name FROM mlg_bot.guest_competitions c JOIN mlg_bot.guest_players p ON p.cup_id=c.id AND p.user_id=c.champion_id WHERE c.group_id=$1 AND c.status='completed' AND c.archived_at IS NULL ORDER BY c.created_at DESC LIMIT 5",[group])).rows;
    reply='🏆 CAMPEÕES DESTE GRUPO\n'+([...current.map(x=>x.name+' · '+x.display_name),...saved.map(x=>'Edição '+x.edition+' · '+x.competition_name+' · '+x.champion_name)].join('\n')||'Ainda não há campeão.');
   }else if(!cup)reply='Nenhum campeonato aberto. O organizador inicia com !novacopa e !painel.';
   else if(cmd==='!entrar'){
