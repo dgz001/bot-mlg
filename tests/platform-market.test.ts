@@ -14,7 +14,7 @@ test('reconnect history recovers only configured market messages from the curren
 test('restart after remote acknowledgement but before local save retries the same durable proposal once',async()=>{
  const persisted={marketInbox:[event]},stored=new Set<string>();let effects=0;
  const api=(async(_action:string,payload:any)=>{if(!stored.has(payload.messageId)){stored.add(payload.messageId);effects++;}return {success:true};}) as any;
- await assert.rejects(drainMarketInbox(persisted,api,async()=>{throw Error('disk unavailable');}));
+ await assert.rejects(drainMarketInbox(persisted,api,async()=>{throw Error('disk unavailable');},async()=>true));
  const restarted=JSON.parse(JSON.stringify(persisted));await drainMarketInbox(restarted,api,async()=>{},async()=>true);
  assert.equal(effects,1);assert.equal(restarted.marketInbox.length,0);
 });
