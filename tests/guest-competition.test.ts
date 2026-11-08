@@ -1,7 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 // @ts-ignore Edge module has no declaration file.
-import {guestFixtures,guestStandings,guestArchive} from '../deploy/guest-competition.ts';
+import {guestFixtures,guestStandings,guestArchive,guestTieBreakReady} from '../deploy/guest-competition.ts';
+
+test('desempate entre vários participantes só é avaliado quando todos os jogos da rodada terminam',()=>{
+ assert.equal(guestTieBreakReady([{status:'confirmed'},{status:'pending'}]),false);
+ assert.equal(guestTieBreakReady([{status:'confirmed'},{status:'disputed'}]),false);
+ assert.equal(guestTieBreakReady([{status:'confirmed'},{status:'confirmed'}]),true);
+ assert.equal(guestTieBreakReady([]),false);
+});
 
 test('liga com número ímpar gera cada confronto uma vez e inverte o mando na volta',()=>{
  const ids=['a','b','c','d','e'];
