@@ -17,6 +17,19 @@ export function marketHealthPayload(state:{marketInbox?:MarketEvent[];marketResp
  const now=options.now??Date.now(),times=[...(state.marketInbox??[]).map(e=>e.queuedAt??now),...(state.marketResponses??[]).map(e=>e.at)].filter(Number.isFinite);
  return {phase:options.phase,enabled:options.enabled,healthy:options.healthy,blocked:options.blocked,groups:options.groups,proposalQueue:state.marketInbox?.length??0,responseQueue:state.marketResponses?.length??0,oldestAgeSeconds:Math.min(315360000,Math.max(0,Math.floor((now-(times.length?Math.min(...times):now))/1000)))};
 }
+export type MarketBatchStatus={group:string;batch:number;count:number;limit?:number;botLocked:boolean};
+export function marketOperationsPayload(
+ state:{marketInbox?:MarketEvent[];marketResponses?:{at:number}[]},
+ options:{phase:string;enabled:boolean;healthy:boolean;blocked:boolean;groups:string[];now?:number},
+ batches:MarketBatchStatus[],
+ channels:MarketChannel[]
+){
+ const health=marketHealthPayload(state,options);
+ return {...health,batches:batches.map(batch=>{
+  const limit=Math.max(1,Math.floor(batch.limit??10)),count=Math.max(0,Math.floor(batch.count));
+  return {group:batch.group,kind:channels.find(channel=>channel.group===batch.group)?.kind??'unconfigured',batch:batch.batch,count,limit,remaining:Math.max(0,limit-count),full:count>=limit,botLocked:batch.botLocked};
+ })};
+}
 export function marketBridge(url:string,key:string,token:string,fetcher:typeof fetch=fetch){
  const source=new URL(url);
  if(source.protocol!=='https:'||!/^([a-z0-9-]+)\.supabase\.co$/.test(source.hostname)||!key||!/^[a-f0-9]{64}$/.test(token))throw Error('Invalid market bridge configuration');
