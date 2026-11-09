@@ -44,10 +44,11 @@ export async function drainMarketInbox(state:{marketInbox?:MarketEvent[]},api:Re
   try{await save();}catch(error){state.marketInbox=previous;throw error;}
  }
 }
-export async function deliverMarketReactions(api:ReturnType<typeof marketBridge>,send:(reaction:MarketReaction)=>Promise<void>,alive:()=>boolean){
+export async function deliverMarketReactions(api:ReturnType<typeof marketBridge>,send:(reaction:MarketReaction)=>Promise<void>,alive:()=>boolean,eligible:(reaction:MarketReaction)=>boolean=()=>true){
  const {reactions}=await api<{reactions:MarketReaction[]}>('claim_reactions');
  if(!Array.isArray(reactions))throw Error('Invalid reaction list');
  for(const reaction of reactions){let sent=false;
+  if(!eligible(reaction)){await api('ack_reaction',{id:reaction.id,revision:reaction.revision,emoji:reaction.emoji,lease:reaction.lease,sent:true});continue;}
   if(alive())try{await send(reaction);sent=true;}catch{}
   await api('ack_reaction',{id:reaction.id,revision:reaction.revision,emoji:reaction.emoji,lease:reaction.lease,sent});
  }
