@@ -69,3 +69,12 @@ test('explicit external and internal purchases are distinct; conflicting labels 
  assert.equal(parse(text).purchaseScope,'review');
  const bad=parse(text.replace('Manchester City','Externo')+'\nTipo de compra: interna');assert.equal(bad.purchaseScope,'review');assert.ok(bad.issues.length);
 });
+
+test('local confirmation parser recognizes emoji-only replies and common Portuguese confirmations',async()=>{ 
+ const {marketResponse}=await import('../src/infra/market-response.ts');
+ for(const value of ['✅','✅️','confirmo','Confirmo!','eu confirmo','confirmado','confirmo a troca']){
+  const parsed=marketResponse({group:'12345@g.us',messageId:'reply-'+value,participant:'111@lid',proposalMessageId:'proposal',text:value});
+  assert.equal(parsed?.decision,'positive',value);
+ }
+ assert.equal(marketResponse({group:'12345@g.us',messageId:'no',participant:'111@lid',text:'não aceito'})?.decision,'negative');
+});
