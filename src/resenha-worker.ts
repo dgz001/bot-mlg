@@ -49,8 +49,8 @@ const configuredCups=new Set<string>();
 let cupBusy=false,lastCupTick=Date.now(),lastCupSuccessAt=0,cupHealthy=!cupApi,cupTimer:ReturnType<typeof setInterval>|undefined;
 let rosterCaptureEnabled=false;
 let marketSafetySupported=false,marketCaptureSince=0,marketPaused=false,marketDeliveryBlocked=false,lastMarketTick=0,lastMarketSuccessAt=0;
-let marketBusy=false,marketHealthy=!marketApi,marketChannels:MarketChannel[]=[],marketTimer:ReturnType<typeof setInterval>|undefined;
 type MarketBatch={group:string;batch:number;count:number;limit?:number;botLocked:boolean};
+let marketBusy=false,marketHealthy=!marketApi,marketChannels:MarketChannel[]=[],marketBatches:MarketBatch[]=[],marketTimer:ReturnType<typeof setInterval>|undefined;
 type MarketPrivateNotice={id:string;recipient:string;body:string;lease:string};
 let newsBusy=false,newsTimer:ReturnType<typeof setInterval>|undefined;
 const controlPath='/tmp/mlg-bot-control.sock';
@@ -591,7 +591,7 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  }
  if(req.action==='news-status')return {sourceConfigured:Boolean(loadNews),group:auth.data.newsGroup??null,cursor:auth.data.newsCursor??null,paused:!enabled(),pollIntervalSeconds:60};
  if(req.action==='news-config'){if(newsBusy)throw Error('Journal delivery in progress');if(req.group!==null){if(!socket||phase!=='CONNECTED')throw Error('Bot unavailable');const participating=await socket.groupFetchAllParticipating();if(!Object.hasOwn(participating,req.group))throw Error('Bot is not in journal group');}const result=await configureJournal(auth.data,req.group,loadNews,()=>auth.save());log('NEWS_CONTROLS_UPDATED');return {...result,sourceConfigured:Boolean(loadNews)};}
- if(req.action==='status')return {controls:auth.data.controls??{enabled:true,resenha:true,minicamp:true},queued:auth.data.cupInbox?.length??0,phase,authorizedGroups:auth.data.groups.length,minicamp:cupApi?(cupHealthy?'READY':'RETRYING'):'DISABLED',minicampLastSuccessAt:lastCupSuccessAt||null,newsGroup:auth.data.newsGroup??null,newsConfigured:Boolean(loadNews),marketConfigured:Boolean(marketApi),marketHealthy,marketPaused,marketLastSuccessAt:lastMarketSuccessAt||null,marketQueued:auth.data.marketInbox?.length??0,marketChannels:marketChannels.length,marketResponsesQueued:auth.data.marketResponses?.length??0,checkedAt:Date.now()};
+ if(req.action==='status')return {controls:auth.data.controls??{enabled:true,resenha:true,minicamp:true},queued:auth.data.cupInbox?.length??0,phase,authorizedGroups:auth.data.groups.length,minicamp:cupApi?(cupHealthy?'READY':'RETRYING'):'DISABLED',minicampLastSuccessAt:lastCupSuccessAt||null,newsGroup:auth.data.newsGroup??null,newsConfigured:Boolean(loadNews),marketConfigured:Boolean(marketApi),marketHealthy,marketPaused,marketLastSuccessAt:lastMarketSuccessAt||null,marketQueued:auth.data.marketInbox?.length??0,marketChannels:marketChannels.length,marketResponsesQueued:auth.data.marketResponses?.length??0,marketOperations:marketOperationsPayload(auth.data,{phase,enabled:enabled(),healthy:marketHealthy,blocked:marketDeliveryBlocked,groups:[]},marketBatches,marketChannels),marketLastTickAt:lastMarketTick||null,checkedAt:Date.now()};
  if(req.action==='select-context'){
   if(typeof req.group!=='string'||!req.group.endsWith('@g.us')||typeof req.templateId!=='string'||req.templateId.length>100)throw Error('Invalid selection');
   if(phase!=='CONNECTED'||!socket)throw Error('Not connected');
@@ -706,9 +706,10 @@ async function marketTick(){
  marketBusy=true;lastMarketTick=Date.now();
  try{
   const config=await marketApi<{channels:MarketChannel[];batches:MarketBatch[];safety:{paused:boolean};captureSince:string;rosterCollection?:RosterConfig}>('config',{rosterVersion:1});
-  if(!Array.isArray(config.channels))throw Error('Invalid market channel list');
+  if(!Array.isArray(config.channels)||!Array.isArray(config.batches))throw Error('Invalid market configuration');
   rosterCaptureEnabled=Boolean(config.rosterCollection?.enabled&&!config.rosterCollection.opened&&config.rosterCollection.run);
   marketChannels=config.channels.filter(c=>groupMode(auth.data.groupModes,c.group)!=='market-loan');
+  marketBatches=config.batches.filter(b=>typeof b.group==='string'&&Number.isFinite(b.count)&&Number.isFinite(b.batch)).map(b=>({...b,limit:Number.isFinite(b.limit)?b.limit:10,botLocked:Boolean(b.botLocked)}));
   marketSafetySupported=typeof config.safety?.paused==='boolean';marketPaused=config.safety?.paused===true;marketCaptureSince=Date.parse(config.captureSince)||0;marketDeliveryBlocked=(config.batches??[]).some(b=>b.count>=(b.limit??10));
   if(phase!=='CONNECTED'||!socket||!enabled())return;
   const current=socket;
