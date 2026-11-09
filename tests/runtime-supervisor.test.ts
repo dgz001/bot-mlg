@@ -76,10 +76,15 @@ test('worker real: desligar persiste no cofre, reinício preserva pausa e painel
   await until(()=>supervisor.phase==='NEEDS_PAIRING');
   const settings={enabled:false,resenha:true,minicamp:true};
   assert.equal((await call({action:'settings',settings})).updated,true);
-  assert.equal((await call({action:'status'})).controls.enabled,false);
+  const disabledStatus=await call({action:'status'});
+  assert.equal(disabledStatus.controls.enabled,false);
+  assert.equal(disabledStatus.marketOperations.enabled,false);
+  assert.equal(disabledStatus.marketOperations.proposalQueue,0);
   const old=supervisor.pid!;supervisor.restart();
   await until(()=>supervisor.pid!==old&&supervisor.phase==='NEEDS_PAIRING');
-  assert.deepEqual((await call({action:'status'})).controls,settings);
+  const restartedStatus=await call({action:'status'});
+  assert.deepEqual(restartedStatus.controls,settings);
+  assert.equal(restartedStatus.marketOperations.enabled,false);
   assert.equal((await call({action:'settings',settings:{...settings,enabled:true}})).updated,true);
   assert.equal((await call({action:'status'})).controls.enabled,true);
   assert.ok(!JSON.stringify(value).includes('enabled'));
