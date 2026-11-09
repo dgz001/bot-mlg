@@ -182,12 +182,15 @@ async function connect(){
   return;
  }
  if(!group.endsWith('@g.us'))return;
- if(event.type==='notify'&&auth.data.groups.includes(group)&&groupMode(auth.data.groupModes,group)==='transfer'&&isMarketWindowCommand(text)){
+ if(event.type==='notify'&&auth.data.groups.includes(group)&&isMarketWindowCommand(text)&&['controle','transfer','trade'].includes(groupMode(auth.data.groupModes,group))){
   try{
    const actor=await cupAliases(message.key.participant??'',current);
    const adminGroups=adminAuditTargets(auth.data.groups,auth.data.groupModes,auth.data.loanGroups);
+   const commandFromControl=groupMode(auth.data.groupModes,group)==='controle';
+   const marketGroups=auth.data.groups.filter(g=>['transfer','trade'].includes(groupMode(auth.data.groupModes,g))&&!auth.data.loanGroups?.includes(g)).sort();
    let authorized=false;
-   for(const adminGroup of adminGroups){
+   const authorizationGroups=commandFromControl?[group]:adminGroups;
+   for(const adminGroup of authorizationGroups){
     const metadata=await current.groupMetadata(adminGroup);
     for(const member of metadata.participants){
      if(!member.admin)continue;
@@ -196,7 +199,8 @@ async function connect(){
     }
     if(authorized)break;
    }
-   if(!authorized){await sendBotMessage(current,group,{text:'🔒 Somente um ADM geral cadastrado como administrador no Grupo da Administração Bot pode controlar a janela.'});return;}
+   if(!authorized){await sendBotMessage(current,group,{text:'🔒 Somente um administrador do grupo administrativo configurado pode controlar a janela.'});return;}
+   if(commandFromControl&&!marketGroups.length){await sendBotMessage(current,group,{text:'⚠️ Não encontrei nenhum grupo autorizado como transferências/trocas. Configure ao menos um grupo com modo transfer ou trade.'});return;}
    const open=marketWindowCommandAction(text)==='open';
    const previous=auth.data.marketWindow??{open:false,captureSince:0};
    if(open&&previous.open){await sendBotMessage(current,group,{text:'🟢 A janela de transferências do bot já está ligada. Não reiniciei a captura nem recapturei mensagens antigas.'});return;}
@@ -204,8 +208,8 @@ async function connect(){
    auth.data.marketWindow=open?{open:true,captureSince:Date.now()}:{...previous,open:false,closedAt:Date.now()};
    try{await auth.save();}catch(error){auth.data.marketWindow=previous;throw error;}
    const body=open?'🟢 JANELA DE TRANSFERÊNCIAS LIGADA NO BOT. A captura começa agora; mensagens anteriores não serão processadas.':'🔴 JANELA DE TRANSFERÊNCIAS DESLIGADA NO BOT. Novas propostas não serão capturadas.';
-   await sendBotMessage(current,group,{text:body});
-   for(const adminGroup of adminGroups)if(adminGroup!==group)await sendBotMessage(current,adminGroup,{text:body+'\nGrupo de mercado: '+group});
+   await sendBotMessage(current,group,{text:body+(commandFromControl?'\\nGrupos monitorados: '+marketGroups.length:'')});
+   if(!commandFromControl)for(const adminGroup of adminGroups)if(adminGroup!==group)await sendBotMessage(current,adminGroup,{text:body+'\\nGrupo de mercado: '+group});
   }catch{log('LOCAL_MARKET_WINDOW_COMMAND_FAILED');await sendBotMessage(current,group,{text:'⚠️ Não consegui confirmar a alteração. Consulte !statusbot antes de repetir.'}).catch(()=>{});}
   return;
  }
