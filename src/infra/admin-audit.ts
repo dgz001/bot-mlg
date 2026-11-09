@@ -25,5 +25,5 @@ export function adminAuditBody(input:{at:number;destination:string;messageId:str
 }
 
 export function isMarketWindowCommand(text:string):boolean{
- return /^!(?:transligar|transdesligar)\s*$/i.test(text);
+ return /^\s*!(?:transligar|transdesligar)\s*$/i.test(text);
 }
