@@ -1,3 +1,5 @@
+export const MAX_WHATSAPP_MARKET_PROPOSAL_LENGTH = 16000;
+export function isWhatsAppMarketProposalTooLong(text: string): boolean { return text.length > MAX_WHATSAPP_MARKET_PROPOSAL_LENGTH; }
 export type WhatsAppMarketProposal = { kind: "transfer" | "trade"; purchaseScope?: "internal" | "external" | "review" | "trade"; origin: string; destination: string; playersFrom: string[]; playersTo: string[]; amountEuros: string | null; issues: string[] };
 export function marketTextKey(text: string): string { return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); }
 const clean = (text: string) => text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, "").trim();
@@ -15,7 +17,7 @@ export function parseWhatsAppEuros(text: string): string {
   return result.toString();
 }
 export function parseWhatsAppMarketProposal(text: string): WhatsAppMarketProposal | null {
-  if (text.length > 16000) throw Error("Proposta maior que o limite permitido.");
+  if (isWhatsAppMarketProposalTooLong(text)) throw Error("Proposta maior que o limite permitido.");
   const lines = clean(text).split(/\r?\n/).map(line => line.replace(/\*/g, "").trim());
   const header = lines.slice(0,4).map(marketTextKey).join(" ");
   // Only a title identifies a submission; sentences discussing proposals are notices.
