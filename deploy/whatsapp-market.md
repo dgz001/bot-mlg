@@ -11,3 +11,14 @@ Only a signed contract approved by an ADM can settle a proposal. The database at
 External cards use explicit weekly tiers: A EUR 25,000,000; B EUR 15,000,000; C EUR 10,000,000; D EUR 5,000,000; E EUR 2,000,000. OCR reads the bundled, checksum-verified English model. An unclear or conflicting reading requires ADM review; overall and player fame never determine a weekly tier.
 
 The market reaction worker leases the durable database outbox and acknowledges the exact proposal revision after WhatsApp delivery. Orange means pending, green settled, red rejected. It never changes financial data.
+
+
+## Local-only ADM review mode
+
+When the platform bridge is disabled, local transfer proposals are stored in the encrypted session vault and routed to configured ADM groups for manual review. This queue accepts at most 100 unresolved proposals and assigns each one a stable 12-character ticket. ADM commands are available only to WhatsApp group administrators in configured control/market groups:
+
+- `!propostas` — list unresolved proposals (15 per page).
+- `!propostas 2` — show the next page.
+- `!proposta concluir TICKETID` — close a review that ADMs have already handled outside the bot.
+
+Closing a review only removes it from the pending list. It does not approve a transfer, change a balance, alter a roster or consume a quota. The encrypted archive retains up to 500 recently closed local reviews; unresolved proposals are never pruned automatically. When 100 are pending, new proposals are explicitly rejected with a message instead of being silently discarded.
