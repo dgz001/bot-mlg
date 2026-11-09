@@ -4,7 +4,7 @@ import {reconcileMarketGroupGate} from './infra/market-group-gate.ts';
 import {loanWizard} from './infra/loan-wizard.ts';
 import {readMarketCard} from "./infra/market-card.ts";
 import {marketResponse} from "./infra/market-response.ts";
-import {marketBridge,marketEvent,drainMarketInbox,deliverMarketReactions,canRecoverMarketMessage,marketHealthPayload,marketOperationsPayload,type MarketChannel} from "./infra/platform-market.ts";
+import {marketBridge,marketEvent,drainMarketInbox,deliverMarketReactions,canRecoverMarketMessage,marketHealthPayload,marketOperationsPayload,marketNoticeMessageId,type MarketChannel} from "./infra/platform-market.ts";
 import {loanCommand} from './infra/loan-invitation.ts';
 import {minicampClubs} from './minicamp/clubs.ts';
 import {moduleEnabled,parseControls} from './infra/bot-controls.ts';
@@ -748,7 +748,7 @@ async function marketTick(){
   for(const notice of notices){
    let sent=false;
    if(socket===current&&!stopping&&enabled()&&/^[0-9]+@(s\.whatsapp\.net|lid)$/.test(notice.recipient))
-    try{await current.sendMessage(notice.recipient,{text:notice.body});sent=true;}catch{log('MARKET_PRIVATE_NOTICE_RETRY');}
+    try{const result=await current.sendMessage(notice.recipient,{text:notice.body},{messageId:marketNoticeMessageId('private',notice.id)});sent=Boolean(result?.key.id);}catch{log('MARKET_PRIVATE_NOTICE_RETRY');}
    await marketApi('ack_private',{id:notice.id,lease:notice.lease,sent});
   }
   const adminGroups=marketAdminGroups(auth.data.groups,auth.data.groupModes,auth.data.loanGroups,config.rosterCollection?.group);
@@ -777,7 +777,7 @@ async function marketTick(){
   if(adminGroups.length){
    const {notices:adminNotices}=await marketApi<{notices:{id:string;lease:string;group:string;body:string}[]}>('claim_admin',{groups:adminGroups});
    for(const notice of adminNotices??[]){let sent=false;
-    if(adminGroups.includes(notice.group)&&socket===current&&!stopping&&enabled())try{await current.sendMessage(notice.group,{text:notice.body});sent=true;}catch{log('MARKET_ADMIN_NOTICE_RETRY');}
+    if(adminGroups.includes(notice.group)&&socket===current&&!stopping&&enabled())try{const result=await current.sendMessage(notice.group,{text:notice.body},{messageId:marketNoticeMessageId('admin',notice.id)});sent=Boolean(result?.key.id);}catch{log('MARKET_ADMIN_NOTICE_RETRY');}
     await marketApi('ack_admin',{id:notice.id,lease:notice.lease,sent});
    }
   }
