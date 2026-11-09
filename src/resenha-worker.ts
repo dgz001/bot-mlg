@@ -211,6 +211,10 @@ async function connect(){
  }
  if(['transfer','trade'].includes(groupMode(auth.data.groupModes,group))&&!auth.data.marketWindow?.open)return;
  if(enabled()&&auth.data.groups.includes(group)&&message.key.participant&&['transfer','trade'].includes(groupMode(auth.data.groupModes,group))){
+  if(isWhatsAppMarketProposalTooLong(text)){
+   await sendBotMessage(current,group,{text:'❌ Mensagem não processada: o limite é de 16.000 caracteres. Divida a proposta em uma mensagem menor. O bot continua funcionando.'});
+   return;
+  }
   const channels:MarketChannel[]=auth.data.groups.filter(g=>['transfer','trade'].includes(groupMode(auth.data.groupModes,g))).map(g=>({group:g,kind:groupMode(auth.data.groupModes,g) as 'transfer'|'trade'}));
   const localProposal=marketEvent(group,id,message.key.participant,text,channels);
   if(localProposal){
