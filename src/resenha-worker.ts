@@ -1,5 +1,5 @@
 import {rosterTick,rosterTextReady,rosterMessageId,type RosterConfig} from "./infra/roster-collection.ts";
-import {adminAuditTargets,adminAuditBody,auditMessageId} from './infra/admin-audit.ts';
+import {adminAuditTargets,adminAuditBody,auditMessageId,isMarketWindowCommand} from './infra/admin-audit.ts';
 import {loanJoinBatch} from './infra/loan-join-batch.ts';
 import {reconcileMarketGroupGate} from './infra/market-group-gate.ts';
 import {loanWizard} from './infra/loan-wizard.ts';
@@ -177,7 +177,7 @@ async function connect(){
   return;
  }
  if(!group.endsWith('@g.us'))return;
- if(event.type==='notify'&&auth.data.groups.includes(group)&&groupMode(auth.data.groupModes,group)==='transfer'&&/^!(?:transligar|transdesligar)\\s*$/i.test(text)){
+ if(event.type==='notify'&&auth.data.groups.includes(group)&&groupMode(auth.data.groupModes,group)==='transfer'&&isMarketWindowCommand(text)){
   try{
    const actor=await cupAliases(message.key.participant??'',current);
    const adminGroups=adminAuditTargets(auth.data.groups,auth.data.groupModes,auth.data.loanGroups);
@@ -200,7 +200,7 @@ async function connect(){
    try{await auth.save();}catch(error){auth.data.marketWindow=previous;throw error;}
    const body=open?'🟢 JANELA DE TRANSFERÊNCIAS LIGADA NO BOT. A captura começa agora; mensagens anteriores não serão processadas.':'🔴 JANELA DE TRANSFERÊNCIAS DESLIGADA NO BOT. Novas propostas não serão capturadas.';
    await sendBotMessage(current,group,{text:body});
-   for(const adminGroup of adminGroups)if(adminGroup!==group)await sendBotMessage(current,adminGroup,{text:body+'\\nGrupo de mercado: '+group});
+   for(const adminGroup of adminGroups)if(adminGroup!==group)await sendBotMessage(current,adminGroup,{text:body+'\nGrupo de mercado: '+group});
   }catch{log('LOCAL_MARKET_WINDOW_COMMAND_FAILED');await sendBotMessage(current,group,{text:'⚠️ Não consegui confirmar a alteração. Consulte !statusbot antes de repetir.'}).catch(()=>{});}
   return;
  }
