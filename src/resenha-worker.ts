@@ -317,6 +317,36 @@ async function connect(){
    void localMarketAuditTick();return;
   }
  }
+ // Local confirmations are captured independently of the optional platform bridge.
+ // A quoted reply is linked by stanzaId; an unquoted reply is accepted only when
+ // the sender was explicitly mentioned on exactly one pending proposal in this group.
+ if(event.type==='notify'&&enabled()&&auth.data.groups.includes(group)&&auth.data.marketWindow?.open&&['transfer','trade'].includes(groupMode(auth.data.groupModes,group))){
+  const reactionMessage=body?.reactionMessage;
+  const responseEvent=marketResponse({group,messageId:id,participant:message.key.participant??(message.key as typeof message.key & {participantAlt?:string}).participantAlt??'',proposalMessageId:reactionMessage?.key?.id??context?.stanzaId,text:reactionMessage?undefined:text,reaction:reactionMessage?.text??undefined});
+  if(responseEvent){
+   const candidates=(auth.data.marketInbox??[]).filter(item=>item.localOnly&&item.group===group&&typeof item.reviewedAt!=='number'&&(!responseEvent.proposalMessageId||item.messageId===responseEvent.proposalMessageId));
+   let target=candidates.length===1?candidates[0]:undefined;
+   if(!responseEvent.proposalMessageId&&candidates.length===0){
+    const sender=message.key.participant??(message.key as typeof message.key & {participantAlt?:string}).participantAlt;
+    if(sender){
+     const aliases=await cupAliases(sender,current).catch(()=>[sender]);
+     const mentioned=(auth.data.marketInbox??[]).filter(item=>item.localOnly&&item.group===group&&typeof item.reviewedAt!=='number'&&(item.mentions??[]).some(jid=>aliases.includes(jid)));
+     if(mentioned.length===1)target=mentioned[0];
+    }
+   }
+   if(target){
+    target.responses??=[];
+    if(!target.responses.some(item=>item.messageId===id)){
+     const previous=target.responses.slice();
+     target.responses.push({...responseEvent,proposalMessageId:target.messageId});
+     try{await auth.save();log(responseEvent.decision==='positive'?'LOCAL_MARKET_CONFIRMATION_CAPTURED':responseEvent.decision==='negative'?'LOCAL_MARKET_REJECTION_CAPTURED':'LOCAL_MARKET_RESPONSE_CAPTURED');}
+     catch{target.responses=previous;log('LOCAL_MARKET_CONFIRMATION_SAVE_FAILED');}
+    }
+    return;
+   }
+   log('LOCAL_MARKET_CONFIRMATION_UNMATCHED');
+  }
+ }
  if(marketApi&&enabled()&&message.key.participant&&auth.data.groups.includes(group)){
   if(marketChannels.some(c=>c.group===group)){
    const reaction=body?.reactionMessage;
