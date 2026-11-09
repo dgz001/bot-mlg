@@ -239,7 +239,7 @@ async function connect(){
    const lines=page.items.map(item=>{
     const amount=item.parsed.amountEuros===null?'valor não informado':'€'+Number(item.parsed.amountEuros).toLocaleString('pt-BR',{maximumFractionDigits:0});
     const pending=item.parsed.issues.length?' ⚠️ '+item.parsed.issues.join('; '):'';
-    return (item.ticketId??'SEM-ID')+' | '+(item.parsed.kind==='trade'?'TROCA':'COMPRA')+' | '+item.parsed.origin+' → '+item.parsed.destination+' | '+amount+' | '+item.parsed.playersFrom.join(', ')+(item.parsed.playersTo.length?' ↔ '+item.parsed.playersTo.join(', '):'')+pending;
+    return (item.ticketId??'SEM-ID')+' | '+(item.parsed.kind==='trade'?'TROCA':'COMPRA')+' | '+item.parsed.origin+' → '+item.parsed.destination+' | '+amount+' | '+item.parsed.playersFrom.join(', ')+(item.parsed.playersTo.length?' ↔ '+item.parsed.playersTo.join(', '):'')+' | Confirmações: '+(item.responses?.filter(r=>r.decision==='positive').length??0)+' positivas / '+(item.responses?.filter(r=>r.decision==='negative').length??0)+' negativas'+pending;
    });
    const body=['📥 FILA LOCAL DE REVISÃO — MLG','Pendentes: '+page.total+' | Página '+page.page+'/'+page.pageCount,...(lines.length?lines:['Nenhuma proposta pendente.']),'Para encerrar uma revisão já conferida: !proposta concluir <ID>','Encerrar a revisão não aprova contrato nem altera saldo, elenco ou cotas.'].join('\n');
    await sendBotMessage(current,group,{text:body});return;
