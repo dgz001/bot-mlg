@@ -186,10 +186,11 @@ async function connect(){
  if(!group.endsWith('@g.us'))return;
  const reviewCommand=event.type==='notify'?parseLocalMarketReviewCommand(text):null;
  const reviewGroupMode=groupMode(auth.data.groupModes,group);
- if(reviewCommand&&auth.data.groups.includes(group)&&['controle','transfer','trade'].includes(reviewGroupMode)&&message.key.participant){
+ const reviewActor=message.key.participant;
+ if(reviewCommand&&auth.data.groups.includes(group)&&['controle','transfer','trade'].includes(reviewGroupMode)&&reviewActor){
   const current=socket;
   if(!current)return;
-  const actor=await cupAliases(message.key.participant,current).catch(()=>[]);
+  const actor:string[]=await cupAliases(reviewActor,current).catch(()=>[] as string[]);
   const authorizationGroups=reviewGroupMode==='controle'?[group]:adminAuditTargets(auth.data.groups,auth.data.groupModes,auth.data.loanGroups);
   let authorized=false;
   for(const adminGroup of authorizationGroups){
