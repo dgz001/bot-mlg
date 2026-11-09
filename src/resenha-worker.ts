@@ -236,9 +236,14 @@ async function connect(){
   await sendBotMessage(current,group,{text:'✅ Protocolo '+reviewCommand.ticketId+' marcado como revisão encerrada pelo ADM. Isso apenas arquiva a pendência local: não aprova contrato, não altera saldo, elenco nem cotas.'});
   return;
  }
- if(windowDelivery==='execute'&&auth.data.groups.includes(group)){
+ if(windowDelivery==='execute'){
   const commandMode=groupMode(auth.data.groupModes,group);
   log('LOCAL_MARKET_WINDOW_COMMAND_RECEIVED');
+  if(!auth.data.groups.includes(group)){
+   log('LOCAL_MARKET_WINDOW_GROUP_NOT_AUTHORIZED');
+   await sendBotMessage(current,group,{text:'🔒 Este grupo recebeu o comando, mas não está cadastrado como grupo autorizado do bot. Confira o cadastro no painel antes de tentar novamente.'}).catch(()=>log('LOCAL_MARKET_WINDOW_REPLY_FAILED'));
+   return;
+  }
   if(!['controle','transfer','trade'].includes(commandMode)){
    log('LOCAL_MARKET_WINDOW_GROUP_MODE_REJECTED');
    await sendBotMessage(current,group,{text:'⚠️ O comando chegou ao bot, mas este grupo está configurado no modo "'+commandMode+'". Para controlar a janela, configure Administração Bot como "controle" no painel do Render.'}).catch(()=>log('LOCAL_MARKET_WINDOW_REPLY_FAILED'));
