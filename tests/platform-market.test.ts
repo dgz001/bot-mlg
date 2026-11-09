@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {marketBridge,marketEvent,drainMarketInbox,deliverMarketReactions,canRecoverMarketMessage,marketHealthPayload,marketOperationsPayload} from '../src/infra/platform-market.ts';
+import {marketBridge,marketEvent,drainMarketInbox,deliverMarketReactions,canRecoverMarketMessage,marketHealthPayload,marketOperationsPayload,marketNoticeMessageId} from '../src/infra/platform-market.ts';
 const text='💰 PROPOSTA DE COMPRA\nClube de origem: Manchester City\nJogador: Mateus Nunes\nClube de destino: Galatasaray\nValor da transferência: €5 milhões';
 const event=marketEvent('12345@g.us','MESSAGE','123456789@s.whatsapp.net',text,[{kind:'transfer',group:'12345@g.us'}])!;
 test('reconnect history recovers only configured market messages from the current cycle',()=>{
@@ -34,6 +34,13 @@ test('operations status exposes remaining capacity and full batches without leak
  assert.equal(status.proposalQueue,1);
  assert.ok(!JSON.stringify(status).includes(event.text));
  assert.ok(!JSON.stringify(status).includes(event.participant));
+});
+test('private and admin notices use stable, distinct WhatsApp message identifiers',()=>{
+ const id='01234567-89ab-4cde-8fab-0123456789ab';
+ assert.equal(marketNoticeMessageId('private',id),'MLGPRIV0123456789AB4CDE8FAB0123456789AB');
+ assert.equal(marketNoticeMessageId('admin',id),'MLGADMIN0123456789AB4CDE8FAB0123456789AB');
+ assert.equal(marketNoticeMessageId('private',id),marketNoticeMessageId('private',id));
+ assert.throws(()=>marketNoticeMessageId('admin','not-a-uuid'));
 });
 test('capture only configured groups and flag a wrong template',()=>{assert.equal(marketEvent('other@g.us','id','123@lid',text,[{kind:'transfer',group:'12345@g.us'}]),null);assert.equal(event.parsed.amountEuros,'5000000');assert.ok(marketEvent('12345@g.us','id','123@lid',text,[{kind:'trade',group:'12345@g.us'}])!.parsed.issues.length);});
 test('bridge sends token only to configured TLS Supabase endpoint',async()=>{let request:any;const api=marketBridge('https://fixture.supabase.co','public','a'.repeat(64),async(url,options)=>{request={url:String(url),options};return new Response('{"success":true}',{status:200});});await api('ingest',event);assert.equal(request.url,'https://fixture.supabase.co/rest/v1/rpc/bot_whatsapp_market_gate');assert.equal(JSON.parse(request.options.body).p_payload.messageId,'MESSAGE');assert.throws(()=>marketBridge('https://malicious.invalid','key','a'.repeat(64)));});
