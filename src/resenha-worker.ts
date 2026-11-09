@@ -2,7 +2,7 @@ import {rosterTick,rosterTextReady,rosterMessageId,type RosterConfig} from "./in
 import {adminAuditTargets,adminAuditBody,auditMessageId,isMarketWindowCommand,marketWindowCommandAction} from './infra/admin-audit.ts';
 import {isWhatsAppMarketProposalTooLong} from './infra/market-proposal.ts';
 import {INITIAL_MARKET_FINANCE,assessLocalMarketFinance} from './infra/market-finance.ts';
-import {enqueueLocalMarketProposal,ensureLocalMarketTicketIds,localMarketProposalPage,completeLocalMarketProposal,parseLocalMarketReviewCommand,MAX_PENDING_LOCAL_MARKET_PROPOSALS} from './infra/local-market-review.ts';
+import {enqueueLocalMarketProposal,ensureLocalMarketTicketIds,localMarketProposalPage,pendingLocalMarketProposals,completeLocalMarketProposal,parseLocalMarketReviewCommand,MAX_PENDING_LOCAL_MARKET_PROPOSALS} from './infra/local-market-review.ts';
 import {loanJoinBatch} from './infra/loan-join-batch.ts';
 import {reconcileMarketGroupGate} from './infra/market-group-gate.ts';
 import {loanWizard} from './infra/loan-wizard.ts';
@@ -68,7 +68,7 @@ async function localMarketAuditTick(){
  localMarketAuditBusy=true;
  try{
   const groups=adminAuditTargets(auth.data.groups,auth.data.groupModes,auth.data.loanGroups);
-  if(!groups.length){if((auth.data.marketInbox??[]).some(e=>e.localOnly&&!e.adminNotified))log('LOCAL_MARKET_ADMIN_GROUP_NOT_CONFIGURED');return;}
+  if(!groups.length){if((auth.data.marketInbox??[]).some(e=>e.localOnly&&!e.adminNotified&&typeof e.reviewedAt!=='number'))log('LOCAL_MARKET_ADMIN_GROUP_NOT_CONFIGURED');return;}
   for(const event of (auth.data.marketInbox??[]).filter(e=>e.localOnly&&!e.adminNotified&&typeof e.reviewedAt!=='number').slice(0,10)){
    const body=['📥 NOVA PROPOSTA RECEBIDA — REVISÃO DOS ADMs','Protocolo: '+(event.ticketId??'indisponível'),'Grupo: '+event.group,'Remetente: '+event.participant,'Mensagem: '+event.messageId,'Tipo: '+(event.parsed.kind==='trade'?'Troca':'Transferência'),'Origem: '+event.parsed.origin,'Destino: '+event.parsed.destination,'Jogadores: '+event.parsed.playersFrom.join(', '),'Jogadores recebidos: '+(event.parsed.playersTo.join(', ')||'—'),'Valor informado: '+(event.parsed.amountEuros??'não informado'),'Alertas do livro-caixa: '+(assessLocalMarketFinance(event.parsed,auth.data.marketFinance??INITIAL_MARKET_FINANCE).join(' | ')||'Nenhum alerta automático.'),'Pendências: '+(event.parsed.issues.join('; ')||'Nenhuma detectada pelo parser'),'Status: aguardando conferência manual. Alertas são preventivos; o bot não aprova nem altera saldos ou elencos.'].join('\n');
    let delivered=true;
@@ -219,7 +219,7 @@ async function connect(){
   if(!target){await sendBotMessage(current,group,{text:'⚠️ Protocolo não encontrado. Consulte !propostas para copiar um ID válido.'});return;}
   if(typeof target.reviewedAt==='number'){await sendBotMessage(current,group,{text:'ℹ️ A proposta '+reviewCommand.ticketId+' já foi encerrada na fila em '+new Date(target.reviewedAt).toLocaleString('pt-BR')+'.'});return;}
   const previousInbox=auth.data.marketInbox?.map(item=>({...item}));
-  const result=completeLocalMarketProposal(auth.data,reviewCommand.ticketId,actor[0]??message.key.participant);
+  const result=completeLocalMarketProposal(auth.data,reviewCommand.ticketId,actor[0]??reviewActor);
   if(result.status!=='reviewed'){await sendBotMessage(current,group,{text:'⚠️ Não consegui alterar o estado desta revisão. Consulte !propostas e tente novamente.'});return;}
   try{await auth.save();}
   catch{auth.data.marketInbox=previousInbox;await sendBotMessage(current,group,{text:'⚠️ Não consegui salvar a revisão. Nenhuma alteração financeira foi realizada; tente novamente.'});return;}
@@ -729,7 +729,7 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  }
  if(req.action==='news-status')return {sourceConfigured:Boolean(loadNews),group:auth.data.newsGroup??null,cursor:auth.data.newsCursor??null,paused:!enabled(),pollIntervalSeconds:60};
  if(req.action==='news-config'){if(newsBusy)throw Error('Journal delivery in progress');if(req.group!==null){if(!socket||phase!=='CONNECTED')throw Error('Bot unavailable');const participating=await socket.groupFetchAllParticipating();if(!Object.hasOwn(participating,req.group))throw Error('Bot is not in journal group');}const result=await configureJournal(auth.data,req.group,loadNews,()=>auth.save());log('NEWS_CONTROLS_UPDATED');return {...result,sourceConfigured:Boolean(loadNews)};}
- if(req.action==='status')return {controls:auth.data.controls??{enabled:true,resenha:true,minicamp:true},queued:auth.data.cupInbox?.length??0,phase,authorizedGroups:auth.data.groups.length,minicamp:cupApi?(cupHealthy?'READY':'RETRYING'):'DISABLED',minicampLastSuccessAt:lastCupSuccessAt||null,newsGroup:auth.data.newsGroup??null,newsConfigured:Boolean(loadNews),marketConfigured:Boolean(marketApi),marketHealthy,marketPaused,marketLastSuccessAt:lastMarketSuccessAt||null,marketQueued:auth.data.marketInbox?.length??0,marketChannels:marketChannels.length,marketResponsesQueued:auth.data.marketResponses?.length??0,marketOperations:marketOperationsPayload(auth.data,{phase,enabled:enabled(),healthy:marketHealthy,blocked:marketDeliveryBlocked,groups:[]},marketBatches,marketChannels),marketLastTickAt:lastMarketTick||null,checkedAt:Date.now()};
+ if(req.action==='status')return {controls:auth.data.controls??{enabled:true,resenha:true,minicamp:true},queued:auth.data.cupInbox?.length??0,phase,authorizedGroups:auth.data.groups.length,minicamp:cupApi?(cupHealthy?'READY':'RETRYING'):'DISABLED',minicampLastSuccessAt:lastCupSuccessAt||null,newsGroup:auth.data.newsGroup??null,newsConfigured:Boolean(loadNews),marketConfigured:Boolean(marketApi),marketHealthy,marketPaused,marketLastSuccessAt:lastMarketSuccessAt||null,marketQueued:pendingLocalMarketProposals(auth.data).length,marketChannels:marketChannels.length,marketResponsesQueued:auth.data.marketResponses?.length??0,marketOperations:marketOperationsPayload(auth.data,{phase,enabled:enabled(),healthy:marketHealthy,blocked:marketDeliveryBlocked,groups:[]},marketBatches,marketChannels),marketLastTickAt:lastMarketTick||null,checkedAt:Date.now()};
  if(req.action==='select-context'){
   if(typeof req.group!=='string'||!req.group.endsWith('@g.us')||typeof req.templateId!=='string'||req.templateId.length>100)throw Error('Invalid selection');
   if(phase!=='CONNECTED'||!socket)throw Error('Not connected');
