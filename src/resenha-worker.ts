@@ -66,7 +66,7 @@ async function localMarketAuditTick(){
  for(const event of (auth.data.marketInbox??[]).filter(e=>e.localOnly&&!e.adminNotified).slice(0,10)){
   const body=['📥 NOVA PROPOSTA RECEBIDA — REVISÃO DOS ADMs','Grupo: '+event.group,'Remetente: '+event.participant,'Mensagem: '+event.messageId,'Tipo: '+(event.parsed.kind==='trade'?'Troca':'Transferência'),'Origem: '+event.parsed.origin,'Destino: '+event.parsed.destination,'Jogadores: '+event.parsed.playersFrom.join(', '),'Jogadores recebidos: '+(event.parsed.playersTo.join(', ')||'—'),'Valor informado: '+(event.parsed.amountEuros??'não informado'),'Pendências: '+(event.parsed.issues.join('; ')||'Nenhuma detectada pelo parser'),'Status: aguardando conferência manual. O bot não consultou saldos/plantéis, não aprovou e não alterou finanças ou elencos.'].join('\n');
   let delivered=true;
-  for(const group of groups)try{await sendBotMessage(socket,group,{text:body},{messageId:auditMessageId(event.messageId,group)});}catch{delivered=false;log('LOCAL_MARKET_ADMIN_NOTICE_RETRY');}
+  for(const group of groups)try{const sent=await socket.sendMessage(group,{text:body},{messageId:auditMessageId(event.messageId,group)});if(!sent?.key.id)throw Error('Admin notice not confirmed');}catch{delivered=false;log('LOCAL_MARKET_ADMIN_NOTICE_RETRY');}
   if(delivered){event.adminNotified=true;await auth.save();}
  }
 }
@@ -77,7 +77,7 @@ async function sendBotMessage(current:ReturnType<typeof makeWASocket>,recipient:
  const body=adminAuditBody({at:Date.now(),destination:recipient,messageId:sent.key.id,content});
  for(const group of targets){
   if(group===recipient)continue;
-  try{await sendBotMessage(current,group,{text:body},{messageId:auditMessageId(sent.key.id,group)});}
+  try{await current.sendMessage(group,{text:body},{messageId:auditMessageId(sent.key.id,group)});}
   catch{log('ADMIN_AUDIT_DELIVERY_FAILED');}
  }
  if(!targets.length)log('ADMIN_AUDIT_GROUP_NOT_CONFIGURED');
