@@ -136,7 +136,8 @@ async function connect(){
    const group=event.key.remoteJid,id=event.key.id,participant=event.key.participant??(event.key as typeof event.key & {participantAlt?:string}).participantAlt;
    const proposalMessageId=event.reaction.key?.id;
    if(!group||!id||!participant||event.key.fromMe||!enabled()||!auth.data.groups.includes(group))return;
-   const response=marketResponse({group,messageId:id,participant,proposalMessageId,reaction:event.reaction.text??undefined});
+   const linkedProposal=(auth.data.marketInbox??[]).find(item=>item.localOnly&&item.group===group&&item.messageId===proposalMessageId);
+   const response=marketResponse({group,messageId:id,participant,proposalMessageId,reaction:event.reaction.text??undefined,proposalKind:linkedProposal?.parsed.kind});
    if(!response)return;
    if(auth.data.marketWindow?.open&&['transfer','trade','market-loan'].includes(groupMode(auth.data.groupModes,group))){
     const target=(auth.data.marketInbox??[]).find(item=>item.localOnly&&item.group===group&&item.messageId===proposalMessageId&&typeof item.reviewedAt!=='number');
