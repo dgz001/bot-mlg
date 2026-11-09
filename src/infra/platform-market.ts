@@ -21,24 +21,34 @@ export function marketBridge(url:string,key:string,token:string,fetcher:typeof f
  const source=new URL(url);
  if(source.protocol!=='https:'||!/^([a-z0-9-]+)\.supabase\.co$/.test(source.hostname)||!key||!/^[a-f0-9]{64}$/.test(token))throw Error('Invalid market bridge configuration');
  return async<T=Record<string,unknown>>(action:string,payload:unknown={}):Promise<T>=>{
-  const response=await fetcher(new URL('/rest/v1/rpc/bot_whatsapp_market_gate',source),{method:'POST',headers:{apikey:key,Authorization:'Bearer '+key,'Content-Type':'application/json'},body:JSON.stringify({p_token:token,p_action:action,p_payload:payload}),signal:AbortSignal.timeout(15000)});
+  const endpoint=action==='prepare'?'/rest/v1/rpc/bot_whatsapp_market_prepare':'/rest/v1/rpc/bot_whatsapp_market_gate';
+  const body=action==='prepare'?{p_token:token,p_payload:payload}:{p_token:token,p_action:action,p_payload:payload};
+  const response=await fetcher(new URL(endpoint,source),{method:'POST',headers:{apikey:key,Authorization:'Bearer '+key,'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(15000)});
   if(!response.ok)throw Error('Market bridge unavailable');
   const value=await response.json();if(!value||typeof value!=='object'||Array.isArray(value))throw Error('Invalid market bridge response');return value as T;
  };
 }
-export async function drainMarketInbox(state:{marketInbox?:MarketEvent[]},api:ReturnType<typeof marketBridge>,save:()=>Promise<void>){
+export async function drainMarketInbox(state:{marketInbox?:MarketEvent[]},api:ReturnType<typeof marketBridge>,save:()=>Promise<void>,eligible:(event:MarketEvent)=>boolean=()=>true){
  for(const event of [...(state.marketInbox??[])].slice(0,20)){
-  const result=await api<{success:boolean;reason?:string}>('ingest',event);
+  if(!eligible(event))continue;
+  const result=await api<{success:boolean;reason?:string;id?:string}>('ingest',event);
   if(result.success!==true&&result.reason==='batch_closed')continue;
   if(result.success!==true)throw Error('Market proposal not confirmed');
+  // Transfer requests are promoted only to the platform-signature stage.
+  // Settlement and roster/balance changes remain behind the existing signed ADM path.
+  if(event.parsed.kind==='transfer'&&result.id){
+   const prepared=await api<{success:boolean}>('prepare',{id:result.id});
+   if(prepared.success!==true)throw Error('Market transfer validation not confirmed');
+  }
   const previous=state.marketInbox;state.marketInbox=state.marketInbox?.filter(e=>!(e.group===event.group&&e.messageId===event.messageId&&e.text===event.text));
   try{await save();}catch(error){state.marketInbox=previous;throw error;}
  }
 }
-export async function deliverMarketReactions(api:ReturnType<typeof marketBridge>,send:(reaction:MarketReaction)=>Promise<void>,alive:()=>boolean){
+export async function deliverMarketReactions(api:ReturnType<typeof marketBridge>,send:(reaction:MarketReaction)=>Promise<void>,alive:()=>boolean,eligible:(reaction:MarketReaction)=>boolean=()=>true){
  const {reactions}=await api<{reactions:MarketReaction[]}>('claim_reactions');
  if(!Array.isArray(reactions))throw Error('Invalid reaction list');
  for(const reaction of reactions){let sent=false;
+  if(!eligible(reaction)){await api('ack_reaction',{id:reaction.id,revision:reaction.revision,emoji:reaction.emoji,lease:reaction.lease,sent:true});continue;}
   if(alive())try{await send(reaction);sent=true;}catch{}
   await api('ack_reaction',{id:reaction.id,revision:reaction.revision,emoji:reaction.emoji,lease:reaction.lease,sent});
  }

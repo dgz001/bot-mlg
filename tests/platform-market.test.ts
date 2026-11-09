@@ -23,8 +23,32 @@ test('health signal records backlog age without message contents or personal num
 });
 test('capture only configured groups and flag a wrong template',()=>{assert.equal(marketEvent('other@g.us','id','123@lid',text,[{kind:'transfer',group:'12345@g.us'}]),null);assert.equal(event.parsed.amountEuros,'5000000');assert.ok(marketEvent('12345@g.us','id','123@lid',text,[{kind:'trade',group:'12345@g.us'}])!.parsed.issues.length);});
 test('bridge sends token only to configured TLS Supabase endpoint',async()=>{let request:any;const api=marketBridge('https://fixture.supabase.co','public','a'.repeat(64),async(url,options)=>{request={url:String(url),options};return new Response('{"success":true}',{status:200});});await api('ingest',event);assert.equal(request.url,'https://fixture.supabase.co/rest/v1/rpc/bot_whatsapp_market_gate');assert.equal(JSON.parse(request.options.body).p_payload.messageId,'MESSAGE');assert.throws(()=>marketBridge('https://malicious.invalid','key','a'.repeat(64)));});
+test('prepare action uses the dedicated protected platform RPC',async()=>{
+ let request:any;
+ const api=marketBridge('https://fixture.supabase.co','public','a'.repeat(64),async(url,options)=>{
+  request={url:String(url),body:JSON.parse(String(options?.body))};
+  return new Response('{"success":true}',{status:200});
+ });
+ await api('prepare',{id:'00000000-0000-0000-0000-000000000001'});
+ assert.equal(request.url,'https://fixture.supabase.co/rest/v1/rpc/bot_whatsapp_market_prepare');
+ assert.equal(request.body.p_payload.id,'00000000-0000-0000-0000-000000000001');
+ assert.equal(request.body.p_action,undefined);
+});
+test('transfer ingest is promoted exactly once to the official signing stage',async()=>{
+ const state={marketInbox:[event]};const calls:string[]=[];
+ const api=(async(action:string,payload:any)=>{calls.push(action);if(action==='ingest')return {success:true,id:'inbox-id'};if(action==='prepare')return {success:true,status:'awaiting_signatures'};return {success:true};}) as any;
+ await drainMarketInbox(state,api,async()=>{});
+ assert.deepEqual(calls,['ingest','prepare']);assert.equal(state.marketInbox.length,0);
+});
+test('disabled capture leaves old transfer messages queued and unprocessed',async()=>{
+ const state={marketInbox:[event]};const calls:string[]=[];
+ const api=(async(action:string)=>{calls.push(action);return {success:true,id:'inbox-id'};}) as any;
+ await drainMarketInbox(state,api,async()=>{},()=>false);
+ assert.deepEqual(calls,[]);assert.equal(state.marketInbox.length,1);
+});
 test('failed ingestion and failed persistence preserve exact message for retry',async()=>{const state={marketInbox:[event]};await assert.rejects(drainMarketInbox(state,(async()=>{throw Error('offline');}) as any,async()=>{}));assert.equal(state.marketInbox.length,1);await assert.rejects(drainMarketInbox(state,(async()=>({success:true})) as any,async()=>{throw Error('vault failed');}));assert.equal(state.marketInbox.length,1);await drainMarketInbox(state,(async()=>({success:true})) as any,async()=>{});assert.equal(state.marketInbox.length,0);});
 test('reaction transport targets original message and ack failure never reruns financial operation',async()=>{const calls:any[]=[];const reaction={id:'uuid',revision:2,emoji:'🟢',lease:'lease',group:event.group,messageId:event.messageId,participant:event.participant};const api=(async(action:string,payload:any)=>{calls.push({action,payload});return action==='claim_reactions'?{reactions:[reaction]}:{success:true};}) as any;await deliverMarketReactions(api,async value=>assert.equal(value.messageId,'MESSAGE'),()=>true);assert.deepEqual(calls.map(c=>c.action),['claim_reactions','ack_reaction']);assert.equal(calls[1].payload.sent,true);calls.length=0;await deliverMarketReactions(api,async()=>{throw Error('WhatsApp offline');},()=>true);assert.equal(calls[1].payload.sent,false);});
+test('stale transfer reactions are acknowledged without being sent',async()=>{const calls:any[]=[];const reaction={id:'uuid',revision:1,emoji:'🟠',lease:'lease',group:event.group,messageId:'OLD-MESSAGE',participant:event.participant};const api=(async(action:string,payload:any)=>{calls.push({action,payload});return action==='claim_reactions'?{reactions:[reaction]}:{success:true};}) as any;let sent=0;await deliverMarketReactions(api,async()=>{sent++;},()=>true,()=>false);assert.equal(sent,0);assert.equal(calls[1].payload.sent,true);});
 
 test('admin and member submissions use the same batch path; notices and examples are ignored',()=>{
  const channels=[{kind:'transfer' as const,group:'12345@g.us'}];
