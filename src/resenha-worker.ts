@@ -176,7 +176,7 @@ async function connect(){
    const activation=activateMarketTransfers(auth.data,Date.now());
    if(activation.activated){
     const startedAt=activation.activatedAt;
-    auth.data.marketInbox=(auth.data.marketInbox??[]).filter(event=>event.parsed.kind!=='transfer'&&(event.queuedAt??0)>=startedAt||event.parsed.kind==='trade');
+    auth.data.marketInbox=(auth.data.marketInbox??[]).filter(event=>event.parsed.kind==='trade'||(event.parsed.kind==='transfer'&&(event.queuedAt??0)>=startedAt));
     auth.data.marketResponses=(auth.data.marketResponses??[]).filter(response=>{
      const responseGroup=marketChannels.find(c=>c.group===response.group);
      return responseGroup?.kind!=='transfer'||response.at>=startedAt;
