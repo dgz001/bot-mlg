@@ -38,6 +38,8 @@ test('review completion archives the item but does not mutate the proposal or fi
  assert.equal(item.parsed.amountEuros,'1000000');
  assert.equal(item.parsed.origin,'Aston Villa');
  assert.equal(completeLocalMarketProposal(state,ticket,'another-adm',2000).status,'already_reviewed');
+ const page=localMarketProposalPage(state,1,1);
+ assert.equal(page.total,0);assert.equal(page.pageCount,1);assert.equal(page.items.length,0);
 });
 
 test('completed history is bounded while pending proposals are never pruned',()=>{
