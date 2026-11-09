@@ -40,7 +40,8 @@ const cupApi=process.env.MINICAMP_URL&&process.env.MINICAMP_TOKEN?minicampClient
 // Live messages are always handled normally; enable this only during an intentional archive import.
 const syncFullWhatsAppHistory=process.env.WA_SYNC_FULL_HISTORY==='true';
 const loadNews=process.env.MLG_NEWS_SUPABASE_URL&&process.env.MLG_NEWS_SUPABASE_KEY?newsSource(process.env.MLG_NEWS_SUPABASE_URL,process.env.MLG_NEWS_SUPABASE_KEY):undefined;
-const marketApi=process.env.MLG_MARKET_BRIDGE_TOKEN&&process.env.MLG_NEWS_SUPABASE_URL&&process.env.MLG_NEWS_SUPABASE_KEY?marketBridge(process.env.MLG_NEWS_SUPABASE_URL,process.env.MLG_NEWS_SUPABASE_KEY,process.env.MLG_MARKET_BRIDGE_TOKEN):undefined;
+const marketBridgeConfigured=Boolean(process.env.MLG_MARKET_BRIDGE_TOKEN&&process.env.MLG_NEWS_SUPABASE_URL&&process.env.MLG_NEWS_SUPABASE_KEY);
+const marketApi=marketBridgeConfigured?marketBridge(process.env.MLG_NEWS_SUPABASE_URL!,process.env.MLG_NEWS_SUPABASE_KEY!,process.env.MLG_MARKET_BRIDGE_TOKEN!):undefined;
 delete process.env.MLG_MARKET_BRIDGE_TOKEN;
 delete process.env.MLG_NEWS_SUPABASE_KEY;
 delete process.env.MINICAMP_TOKEN;
@@ -679,7 +680,7 @@ const health=httpServer((req,res)=>{if(req.url==='/livez'||req.url==='/readyz'){
 function fail(event:string){log(event);void shutdown(1);}
 async function shutdown(code:number){if(stopping)return;stopping=true;if(cupTimer)clearInterval(cupTimer);if(newsTimer)clearInterval(newsTimer);if(marketTimer)clearInterval(marketTimer);if(timer)clearTimeout(timer);if(stable)clearTimeout(stable);const deadline=setTimeout(()=>process.exit(code),12000);deadline.unref();controls.close();health.close();socket?.end(undefined);await queue;while(cupBusy||newsBusy||marketBusy||loanJoinBusy)await new Promise(r=>setTimeout(r,50));await auth?.flush();key.fill(0);process.exit(code);}
 process.on('SIGTERM',()=>{void shutdown(0);});process.on('SIGINT',()=>{void shutdown(0);});process.on('uncaughtException',()=>fail('UNCAUGHT_ERROR'));process.on('unhandledRejection',()=>fail('UNHANDLED_REJECTION'));
-async function main(){auth=await vaultAuth(endpoint!,token!,key);auth.data.replyHistory??={};auth.data.cupInbox??=[];auth.data.marketInbox??=[];for(const event of auth.data.marketInbox)event.queuedAt??=Date.now();auth.data.marketResponses??=[];if(marketApi){await marketTick();marketTimer=setInterval(()=>{void marketTick();},15000);}if(cupApi){try{await cupApi({action:'health'});cupHealthy=true;}catch{cupHealthy=false;log('MINICAMP_RETRY');}cupTimer=setInterval(()=>{void cupTick();void loanJoinTick();},15000);}if(loadNews)newsTimer=setInterval(()=>{void newsTick();},60000);banterReply=createBanterReply(auth.data.replyHistory);await auth.save();await unlink(controlPath).catch(()=>undefined);controls.listen(controlPath,()=>{void chmod(controlPath,0o600).catch(()=>fail('CONTROL_PERMISSIONS_FAILED'));});if(!process.send)health.listen(Number(process.env.PORT??3000),'0.0.0.0');if(auth.state.creds.registered&&!auth.data.sessionRevoked)await connect();else {phase='NEEDS_PAIRING';log(phase);}}
+async function main(){log(marketBridgeConfigured?'MARKET_BRIDGE_CONFIGURED':'MARKET_BRIDGE_DISABLED_MISSING_ENV');auth=await vaultAuth(endpoint!,token!,key);auth.data.replyHistory??={};auth.data.cupInbox??=[];auth.data.marketInbox??=[];for(const event of auth.data.marketInbox)event.queuedAt??=Date.now();auth.data.marketResponses??=[];if(marketApi){await marketTick();marketTimer=setInterval(()=>{void marketTick();},15000);}if(cupApi){try{await cupApi({action:'health'});cupHealthy=true;}catch{cupHealthy=false;log('MINICAMP_RETRY');}cupTimer=setInterval(()=>{void cupTick();void loanJoinTick();},15000);}if(loadNews)newsTimer=setInterval(()=>{void newsTick();},60000);banterReply=createBanterReply(auth.data.replyHistory);await auth.save();await unlink(controlPath).catch(()=>undefined);controls.listen(controlPath,()=>{void chmod(controlPath,0o600).catch(()=>fail('CONTROL_PERMISSIONS_FAILED'));});if(!process.send)health.listen(Number(process.env.PORT??3000),'0.0.0.0');if(auth.state.creds.registered&&!auth.data.sessionRevoked)await connect();else {phase='NEEDS_PAIRING';log(phase);}}
 async function newsTick(){
  if(!loadNews||newsBusy||stopping||phase!=='CONNECTED'||!socket||!enabled()||!auth.data.newsGroup)return;
  newsBusy=true;const current=socket,group=auth.data.newsGroup;
@@ -788,7 +789,7 @@ async function marketTick(){
   }
   marketHealthy=gateHealthy;if(gateHealthy)lastMarketSuccessAt=Date.now();
  }catch{marketHealthy=false;log('MARKET_BRIDGE_RETRY');}finally{
-  try{if(marketSafetySupported){const groups=auth.data.groups.filter(g=>groupMode(auth.data.groupModes,g)==='controle'&&!auth.data.loanGroups?.includes(g));await marketApi('heartbeat',marketHealthPayload(auth.data,{phase,enabled:enabled(),healthy:marketHealthy,blocked:marketDeliveryBlocked,groups}));}}catch{log('MARKET_HEALTH_RETRY');}
+  try{if(marketApi){const groups=auth.data.groups.filter(g=>groupMode(auth.data.groupModes,g)==='controle'&&!auth.data.loanGroups?.includes(g));await marketApi('heartbeat',marketHealthPayload(auth.data,{phase,enabled:enabled(),healthy:marketHealthy,blocked:marketDeliveryBlocked,groups}));}}catch{log('MARKET_HEALTH_RETRY');}
   marketBusy=false;}
 }
 
