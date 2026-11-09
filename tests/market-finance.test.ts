@@ -34,3 +34,12 @@ test('external purchases do not consume a MLG club sales quota and trades do not
  const trade=assessLocalMarketFinance({kind:'trade',purchaseScope:'trade',origin:'Napoli',destination:'Porto',amountEuros:'0'},INITIAL_MARKET_FINANCE);
  assert.ok(trade.some(a=>a.includes('Troca: cotas')));
 });
+
+test('finance assessment never silently skips an unknown destination club',()=>{
+ const alerts=assessLocalMarketFinance({kind:'transfer',purchaseScope:'internal',origin:'Aston Villa',destination:'Unknown Club',amountEuros:'1000000'},INITIAL_MARKET_FINANCE);
+ assert.ok(alerts.some(a=>a.includes('Clube de destino não localizado')));
+});
+test('trades explicitly flag clubs missing from the local ledger',()=>{
+ const alerts=assessLocalMarketFinance({kind:'trade',purchaseScope:'trade',origin:'Unknown Origin',destination:'Porto',amountEuros:'0'},INITIAL_MARKET_FINANCE);
+ assert.ok(alerts.some(a=>a.includes('Clube de origem da troca não localizado')));
+});

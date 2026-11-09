@@ -2,6 +2,7 @@ import {rosterTick,rosterTextReady,rosterMessageId,type RosterConfig} from "./in
 import {adminAuditTargets,adminAuditBody,auditMessageId,isMarketWindowCommand,marketWindowCommandAction} from './infra/admin-audit.ts';
 import {isWhatsAppMarketProposalTooLong} from './infra/market-proposal.ts';
 import {INITIAL_MARKET_FINANCE,assessLocalMarketFinance} from './infra/market-finance.ts';
+import {enqueueLocalMarketProposal,ensureLocalMarketTicketIds,localMarketProposalPage,pendingLocalMarketProposals,completeLocalMarketProposal,parseLocalMarketReviewCommand,MAX_PENDING_LOCAL_MARKET_PROPOSALS} from './infra/local-market-review.ts';
 import {loanJoinBatch} from './infra/loan-join-batch.ts';
 import {reconcileMarketGroupGate} from './infra/market-group-gate.ts';
 import {loanWizard} from './infra/loan-wizard.ts';
@@ -67,9 +68,9 @@ async function localMarketAuditTick(){
  localMarketAuditBusy=true;
  try{
   const groups=adminAuditTargets(auth.data.groups,auth.data.groupModes,auth.data.loanGroups);
-  if(!groups.length){if((auth.data.marketInbox??[]).some(e=>e.localOnly&&!e.adminNotified))log('LOCAL_MARKET_ADMIN_GROUP_NOT_CONFIGURED');return;}
-  for(const event of (auth.data.marketInbox??[]).filter(e=>e.localOnly&&!e.adminNotified).slice(0,10)){
-   const body=['📥 NOVA PROPOSTA RECEBIDA — REVISÃO DOS ADMs','Grupo: '+event.group,'Remetente: '+event.participant,'Mensagem: '+event.messageId,'Tipo: '+(event.parsed.kind==='trade'?'Troca':'Transferência'),'Origem: '+event.parsed.origin,'Destino: '+event.parsed.destination,'Jogadores: '+event.parsed.playersFrom.join(', '),'Jogadores recebidos: '+(event.parsed.playersTo.join(', ')||'—'),'Valor informado: '+(event.parsed.amountEuros??'não informado'),'Alertas do livro-caixa: '+(assessLocalMarketFinance(event.parsed,auth.data.marketFinance??INITIAL_MARKET_FINANCE).join(' | ')||'Nenhum alerta automático.'),'Pendências: '+(event.parsed.issues.join('; ')||'Nenhuma detectada pelo parser'),'Status: aguardando conferência manual. Alertas são preventivos; o bot não aprova nem altera saldos ou elencos.'].join('\n');
+  if(!groups.length){if((auth.data.marketInbox??[]).some(e=>e.localOnly&&!e.adminNotified&&typeof e.reviewedAt!=='number'))log('LOCAL_MARKET_ADMIN_GROUP_NOT_CONFIGURED');return;}
+  for(const event of (auth.data.marketInbox??[]).filter(e=>e.localOnly&&!e.adminNotified&&typeof e.reviewedAt!=='number').slice(0,10)){
+   const body=['📥 NOVA PROPOSTA RECEBIDA — REVISÃO DOS ADMs','Protocolo: '+(event.ticketId??'indisponível'),'Grupo: '+event.group,'Remetente: '+event.participant,'Mensagem: '+event.messageId,'Tipo: '+(event.parsed.kind==='trade'?'Troca':'Transferência'),'Origem: '+event.parsed.origin,'Destino: '+event.parsed.destination,'Jogadores: '+event.parsed.playersFrom.join(', '),'Jogadores recebidos: '+(event.parsed.playersTo.join(', ')||'—'),'Valor informado: '+(event.parsed.amountEuros??'não informado'),'Alertas do livro-caixa: '+(assessLocalMarketFinance(event.parsed,auth.data.marketFinance??INITIAL_MARKET_FINANCE).join(' | ')||'Nenhum alerta automático.'),'Pendências: '+(event.parsed.issues.join('; ')||'Nenhuma detectada pelo parser'),'Status: aguardando conferência manual. Alertas são preventivos; o bot não aprova nem altera saldos ou elencos.'].join('\n');
    let delivered=true;
    for(const group of groups)try{const sent=await socket.sendMessage(group,{text:body},{messageId:auditMessageId(event.messageId,group)});if(!sent?.key.id)throw Error('Admin notice not confirmed');}catch{delivered=false;log('LOCAL_MARKET_ADMIN_NOTICE_RETRY');}
    if(delivered){event.adminNotified=true;try{await auth.save();}catch{event.adminNotified=false;log('LOCAL_MARKET_AUDIT_STATE_SAVE_FAILED');}}
@@ -183,6 +184,48 @@ async function connect(){
   return;
  }
  if(!group.endsWith('@g.us'))return;
+ const reviewCommand=event.type==='notify'?parseLocalMarketReviewCommand(text):null;
+ const reviewGroupMode=groupMode(auth.data.groupModes,group);
+ if(reviewCommand&&auth.data.groups.includes(group)&&['controle','transfer','trade'].includes(reviewGroupMode)&&message.key.participant){
+  const current=socket;
+  if(!current)return;
+  const actor=await cupAliases(message.key.participant,current).catch(()=>[]);
+  const authorizationGroups=reviewGroupMode==='controle'?[group]:adminAuditTargets(auth.data.groups,auth.data.groupModes,auth.data.loanGroups);
+  let authorized=false;
+  for(const adminGroup of authorizationGroups){
+   try{
+    const metadata=await current.groupMetadata(adminGroup);
+    for(const member of metadata.participants){
+     if(!member.admin)continue;
+     const aliases=await cupAliases(member.id,current).catch(()=>[]);
+     if(aliases.some(alias=>actor.includes(alias))){authorized=true;break;}
+    }
+   }catch{log('LOCAL_MARKET_REVIEW_AUTH_RETRY');}
+   if(authorized)break;
+  }
+  if(!authorized){await sendBotMessage(current,group,{text:'🔒 Somente um administrador do grupo administrativo configurado pode consultar ou encerrar revisões locais.'});return;}
+  if(reviewCommand.action==='list'){
+   const page=localMarketProposalPage(auth.data,reviewCommand.page,15);
+   if(reviewCommand.page>page.pageCount){await sendBotMessage(current,group,{text:'Página inexistente. Há '+page.pageCount+' página(s) de propostas pendentes.'});return;}
+   const lines=page.items.map(item=>{
+    const amount=item.parsed.amountEuros===null?'valor não informado':'€'+Number(item.parsed.amountEuros).toLocaleString('pt-BR',{maximumFractionDigits:0});
+    const pending=item.parsed.issues.length?' ⚠️ '+item.parsed.issues.join('; '):'';
+    return (item.ticketId??'SEM-ID')+' | '+(item.parsed.kind==='trade'?'TROCA':'COMPRA')+' | '+item.parsed.origin+' → '+item.parsed.destination+' | '+amount+' | '+item.parsed.playersFrom.join(', ')+(item.parsed.playersTo.length?' ↔ '+item.parsed.playersTo.join(', '):'')+pending;
+   });
+   const body=['📥 FILA LOCAL DE REVISÃO — MLG','Pendentes: '+page.total+' | Página '+page.page+'/'+page.pageCount,...(lines.length?lines:['Nenhuma proposta pendente.']),'Para encerrar uma revisão já conferida: !proposta concluir <ID>','Encerrar a revisão não aprova contrato nem altera saldo, elenco ou cotas.'].join('\n');
+   await sendBotMessage(current,group,{text:body});return;
+  }
+  const target=(auth.data.marketInbox??[]).find(item=>item.localOnly&&item.ticketId===reviewCommand.ticketId);
+  if(!target){await sendBotMessage(current,group,{text:'⚠️ Protocolo não encontrado. Consulte !propostas para copiar um ID válido.'});return;}
+  if(typeof target.reviewedAt==='number'){await sendBotMessage(current,group,{text:'ℹ️ A proposta '+reviewCommand.ticketId+' já foi encerrada na fila em '+new Date(target.reviewedAt).toLocaleString('pt-BR')+'.'});return;}
+  const previousInbox=auth.data.marketInbox?.map(item=>({...item}));
+  const result=completeLocalMarketProposal(auth.data,reviewCommand.ticketId,actor[0]??reviewActor);
+  if(result.status!=='reviewed'){await sendBotMessage(current,group,{text:'⚠️ Não consegui alterar o estado desta revisão. Consulte !propostas e tente novamente.'});return;}
+  try{await auth.save();}
+  catch{auth.data.marketInbox=previousInbox;await sendBotMessage(current,group,{text:'⚠️ Não consegui salvar a revisão. Nenhuma alteração financeira foi realizada; tente novamente.'});return;}
+  await sendBotMessage(current,group,{text:'✅ Protocolo '+reviewCommand.ticketId+' marcado como revisão encerrada pelo ADM. Isso apenas arquiva a pendência local: não aprova contrato, não altera saldo, elenco nem cotas.'});
+  return;
+ }
  if(event.type==='notify'&&auth.data.groups.includes(group)&&isMarketWindowCommand(text)&&['controle','transfer','trade'].includes(groupMode(auth.data.groupModes,group))){
   try{
    const actor=await cupAliases(message.key.participant??'',current);
@@ -224,14 +267,22 @@ async function connect(){
   const localProposal=marketEvent(group,id,message.key.participant,text,channels);
   if(localProposal){
    auth.data.marketInbox??=[];
-   if(!auth.data.marketInbox.some(e=>e.localOnly&&e.group===group&&e.messageId===id)){
-    auth.data.marketInbox.push({...localProposal,localOnly:true,adminNotified:false});await auth.save();
+   const previousInbox=[...auth.data.marketInbox];
+   const queueResult=enqueueLocalMarketProposal(auth.data,{...localProposal,localOnly:true,adminNotified:false});
+   if(queueResult==='full'){
+    await sendBotMessage(current,group,{text:'🚨 FILA DE REVISÃO CHEIA: existem '+MAX_PENDING_LOCAL_MARKET_PROPOSALS+' propostas pendentes. Esta proposta NÃO foi registrada. Aguarde um ADM consultar !propostas e encerrar uma revisão já conferida. Não reenvie repetidamente.'});
+    return;
+   }
+   if(queueResult==='queued'){
+    try{await auth.save();}catch(error){auth.data.marketInbox=previousInbox;throw error;}
+    const accepted=auth.data.marketInbox.find(e=>e.localOnly&&e.group===group&&e.messageId===id);
+    const ticket=accepted?.ticketId??'indisponível';
     const issues=localProposal.parsed.issues;
-    const reaction=issues.length?'❌':localProposal.parsed.purchaseScope==='review'?'🟠':'🟠';
+    const reaction=issues.length?'❌':'🟠';
     try{await sendBotMessage(current,group,{react:{text:reaction,key:{remoteJid:group,participant:message.key.participant,id,fromMe:false}}});}catch{log('LOCAL_MARKET_REACTION_RETRY');}
     const phone=(await cupAliases(message.key.participant,current).catch(()=>[])).find(a=>a.endsWith('@s.whatsapp.net'));
     if(phone){
-     const dm=issues.length?'❌ Sua proposta foi recebida, mas há pendências: '+issues.join('; ')+'. Corrija os campos e envie novamente no grupo.':localProposal.parsed.purchaseScope==='review'?'🟠 Sua proposta foi recebida, mas o tipo ainda não está claro. Identifique se é COMPRA INTERNA (de outro clube da MLG) ou COMPRA EXTERNA (jogador de fora da MLG). A proposta ficará aguardando os ADMs.':'🟠 Sua proposta foi recebida. O bot ainda precisa conferir elenco, saldo e cotas com a base oficial local; ela não está aprovada nem concluída.';
+     const dm=issues.length?'❌ Protocolo '+ticket+' recebido, mas há pendências: '+issues.join('; ')+'. Corrija os campos e envie uma nova proposta.':localProposal.parsed.purchaseScope==='review'?'🟠 Protocolo '+ticket+' recebido, mas o tipo ainda não está claro. Identifique se é COMPRA INTERNA (de outro clube da MLG) ou COMPRA EXTERNA (jogador de fora da MLG). A proposta ficará aguardando os ADMs.':'🟠 Protocolo '+ticket+' recebido e encaminhado para revisão dos ADMs. Ainda não está aprovado nem concluído.';
      await sendBotMessage(current,phone,{text:dm}).catch(()=>log('LOCAL_MARKET_PRIVATE_NOTICE_RETRY'));
     }
    }
@@ -678,7 +729,7 @@ const controls=createServer(client=>{let buffer='';client.setTimeout(45000,()=>c
  }
  if(req.action==='news-status')return {sourceConfigured:Boolean(loadNews),group:auth.data.newsGroup??null,cursor:auth.data.newsCursor??null,paused:!enabled(),pollIntervalSeconds:60};
  if(req.action==='news-config'){if(newsBusy)throw Error('Journal delivery in progress');if(req.group!==null){if(!socket||phase!=='CONNECTED')throw Error('Bot unavailable');const participating=await socket.groupFetchAllParticipating();if(!Object.hasOwn(participating,req.group))throw Error('Bot is not in journal group');}const result=await configureJournal(auth.data,req.group,loadNews,()=>auth.save());log('NEWS_CONTROLS_UPDATED');return {...result,sourceConfigured:Boolean(loadNews)};}
- if(req.action==='status')return {controls:auth.data.controls??{enabled:true,resenha:true,minicamp:true},queued:auth.data.cupInbox?.length??0,phase,authorizedGroups:auth.data.groups.length,minicamp:cupApi?(cupHealthy?'READY':'RETRYING'):'DISABLED',minicampLastSuccessAt:lastCupSuccessAt||null,newsGroup:auth.data.newsGroup??null,newsConfigured:Boolean(loadNews),marketConfigured:Boolean(marketApi),marketHealthy,marketPaused,marketLastSuccessAt:lastMarketSuccessAt||null,marketQueued:auth.data.marketInbox?.length??0,marketChannels:marketChannels.length,marketResponsesQueued:auth.data.marketResponses?.length??0,marketOperations:marketOperationsPayload(auth.data,{phase,enabled:enabled(),healthy:marketHealthy,blocked:marketDeliveryBlocked,groups:[]},marketBatches,marketChannels),marketLastTickAt:lastMarketTick||null,checkedAt:Date.now()};
+ if(req.action==='status')return {controls:auth.data.controls??{enabled:true,resenha:true,minicamp:true},queued:auth.data.cupInbox?.length??0,phase,authorizedGroups:auth.data.groups.length,minicamp:cupApi?(cupHealthy?'READY':'RETRYING'):'DISABLED',minicampLastSuccessAt:lastCupSuccessAt||null,newsGroup:auth.data.newsGroup??null,newsConfigured:Boolean(loadNews),marketConfigured:Boolean(marketApi),marketHealthy,marketPaused,marketLastSuccessAt:lastMarketSuccessAt||null,marketQueued:pendingLocalMarketProposals(auth.data).length,marketChannels:marketChannels.length,marketResponsesQueued:auth.data.marketResponses?.length??0,marketOperations:marketOperationsPayload(auth.data,{phase,enabled:enabled(),healthy:marketHealthy,blocked:marketDeliveryBlocked,groups:[]},marketBatches,marketChannels),marketLastTickAt:lastMarketTick||null,checkedAt:Date.now()};
  if(req.action==='select-context'){
   if(typeof req.group!=='string'||!req.group.endsWith('@g.us')||typeof req.templateId!=='string'||req.templateId.length>100)throw Error('Invalid selection');
   if(phase!=='CONNECTED'||!socket)throw Error('Not connected');
@@ -766,7 +817,7 @@ const health=httpServer((req,res)=>{if(req.url==='/livez'||req.url==='/readyz'){
 function fail(event:string){log(event);void shutdown(1);}
 async function shutdown(code:number){if(stopping)return;stopping=true;if(cupTimer)clearInterval(cupTimer);if(newsTimer)clearInterval(newsTimer);if(marketTimer)clearInterval(marketTimer);if(localMarketTimer)clearInterval(localMarketTimer);if(timer)clearTimeout(timer);if(stable)clearTimeout(stable);const deadline=setTimeout(()=>process.exit(code),12000);deadline.unref();controls.close();health.close();socket?.end(undefined);await queue;while(cupBusy||newsBusy||marketBusy||loanJoinBusy)await new Promise(r=>setTimeout(r,50));await auth?.flush();key.fill(0);process.exit(code);}
 process.on('SIGTERM',()=>{void shutdown(0);});process.on('SIGINT',()=>{void shutdown(0);});process.on('uncaughtException',()=>fail('UNCAUGHT_ERROR'));process.on('unhandledRejection',()=>fail('UNHANDLED_REJECTION'));
-async function main(){log('MARKET_BRIDGE_DISABLED_BOT_LOCAL_TRANSFER');auth=await vaultAuth(endpoint!,token!,key);marketChannels=auth.data.groups.filter(g=>['transfer','trade'].includes(groupMode(auth.data.groupModes,g))).map(g=>({group:g,kind:groupMode(auth.data.groupModes,g) as 'transfer'|'trade'}));marketCaptureSince=auth.data.marketWindow?.captureSince??0;auth.data.replyHistory??={};auth.data.marketFinance??=structuredClone(INITIAL_MARKET_FINANCE);auth.data.cupInbox??=[];auth.data.marketInbox??=[];for(const event of auth.data.marketInbox)event.queuedAt??=Date.now();auth.data.marketResponses??=[];if(marketApi){await marketTick();marketTimer=setInterval(()=>{void marketTick();},15000);}localMarketTimer=setInterval(()=>{void localMarketAuditTick();},15000);if(cupApi){try{await cupApi({action:'health'});cupHealthy=true;}catch{cupHealthy=false;log('MINICAMP_RETRY');}cupTimer=setInterval(()=>{void cupTick();void loanJoinTick();},15000);}if(loadNews)newsTimer=setInterval(()=>{void newsTick();},60000);banterReply=createBanterReply(auth.data.replyHistory);await auth.save();await unlink(controlPath).catch(()=>undefined);controls.listen(controlPath,()=>{void chmod(controlPath,0o600).catch(()=>fail('CONTROL_PERMISSIONS_FAILED'));});if(!process.send)health.listen(Number(process.env.PORT??3000),'0.0.0.0');if(auth.state.creds.registered&&!auth.data.sessionRevoked)await connect();else {phase='NEEDS_PAIRING';log(phase);}}
+async function main(){log('MARKET_BRIDGE_DISABLED_BOT_LOCAL_TRANSFER');auth=await vaultAuth(endpoint!,token!,key);marketChannels=auth.data.groups.filter(g=>['transfer','trade'].includes(groupMode(auth.data.groupModes,g))).map(g=>({group:g,kind:groupMode(auth.data.groupModes,g) as 'transfer'|'trade'}));marketCaptureSince=auth.data.marketWindow?.captureSince??0;auth.data.replyHistory??={};auth.data.marketFinance??=structuredClone(INITIAL_MARKET_FINANCE);auth.data.cupInbox??=[];auth.data.marketInbox??=[];for(const event of auth.data.marketInbox)event.queuedAt??=Date.now();ensureLocalMarketTicketIds(auth.data);auth.data.marketResponses??=[];if(marketApi){await marketTick();marketTimer=setInterval(()=>{void marketTick();},15000);}localMarketTimer=setInterval(()=>{void localMarketAuditTick();},15000);if(cupApi){try{await cupApi({action:'health'});cupHealthy=true;}catch{cupHealthy=false;log('MINICAMP_RETRY');}cupTimer=setInterval(()=>{void cupTick();void loanJoinTick();},15000);}if(loadNews)newsTimer=setInterval(()=>{void newsTick();},60000);banterReply=createBanterReply(auth.data.replyHistory);await auth.save();await unlink(controlPath).catch(()=>undefined);controls.listen(controlPath,()=>{void chmod(controlPath,0o600).catch(()=>fail('CONTROL_PERMISSIONS_FAILED'));});if(!process.send)health.listen(Number(process.env.PORT??3000),'0.0.0.0');if(auth.state.creds.registered&&!auth.data.sessionRevoked)await connect();else {phase='NEEDS_PAIRING';log(phase);}}
 async function newsTick(){
  if(!loadNews||newsBusy||stopping||phase!=='CONNECTED'||!socket||!enabled()||!auth.data.newsGroup)return;
  newsBusy=true;const current=socket,group=auth.data.newsGroup;
