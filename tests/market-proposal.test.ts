@@ -26,5 +26,5 @@ test('synthetic transfer scenarios preserve classification without executing a d
  assert.equal(trade.kind,'trade');
  assert.deepEqual(trade.playersTo,['Player Two']);
  assert.equal(trade.amountEuros,'0');
- assert.deepEqual({balancesChanged:false,rostersChanged:false,approved:false},{balancesChanged:false,rostersChanged:false,approved:false});
+ assert.equal('approved' in internal,false);
 });
