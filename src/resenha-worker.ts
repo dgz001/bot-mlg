@@ -234,7 +234,7 @@ async function connect(){
    const commandFromControl=groupMode(auth.data.groupModes,group)==='controle';
    const marketGroups=auth.data.groups.filter(g=>['transfer','trade'].includes(groupMode(auth.data.groupModes,g))&&!auth.data.loanGroups?.includes(g)).sort();
    let authorized=false;
-   const authorizationGroups=commandFromControl?[group]:adminGroups;
+   const authorizationGroups=commandFromControl?[group]:[...new Set([group,...adminGroups])];
    for(const adminGroup of authorizationGroups){
     const metadata=await current.groupMetadata(adminGroup);
     for(const member of metadata.participants){
