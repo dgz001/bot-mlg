@@ -44,3 +44,20 @@ test('failed send retains pacing lease and retries only after interval with same
  assert.equal(sends[1],failedId);
  assert.equal(holder.rosterCollection.entries[0].requested,true);
 });
+
+
+test('three failed attempts defer one club and allow the remaining directory to progress',async()=>{
+ const holder:any={},sends:string[]=[];
+ for(let attempt=0;attempt<3;attempt++){
+  await assert.rejects(tick(holder,20_000+attempt*ROSTER_REQUEST_INTERVAL_MS,sends,true),/Roster deliveries awaiting retry/);
+ }
+ const first=holder.rosterCollection.entries[0];
+ assert.equal(first.requestFailures,3);
+ assert.equal(first.requestDeferred,true);
+ await tick(holder,20_000+3*ROSTER_REQUEST_INTERVAL_MS,sends,false);
+ assert.equal(holder.rosterCollection.entries[1].requested,true);
+ assert.equal(holder.rosterCollection.entries[0].requested,undefined);
+ assert.equal(sends.length,4);
+ assert.notEqual(sends[3],sends[0]);
+ assert.match(holder.rosterCollection.summary,/Solicitação não enviada após 3 tentativas/);
+});
