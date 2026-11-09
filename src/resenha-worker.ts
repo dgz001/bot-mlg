@@ -204,7 +204,7 @@ async function connect(){
   }catch{log('LOCAL_MARKET_WINDOW_COMMAND_FAILED');await sendBotMessage(current,group,{text:'⚠️ Não consegui confirmar a alteração. Consulte !statusbot antes de repetir.'}).catch(()=>{});}
   return;
  }
- if(!auth.data.marketWindow?.open)return;
+ if(['transfer','trade'].includes(groupMode(auth.data.groupModes,group))&&!auth.data.marketWindow?.open)return;
  if(enabled()&&auth.data.groups.includes(group)&&message.key.participant&&['transfer','trade'].includes(groupMode(auth.data.groupModes,group))){
   const channels:MarketChannel[]=auth.data.groups.filter(g=>['transfer','trade'].includes(groupMode(auth.data.groupModes,g))).map(g=>({group:g,kind:groupMode(auth.data.groupModes,g) as 'transfer'|'trade'}));
   const localProposal=marketEvent(group,id,message.key.participant,text,channels);
