@@ -41,7 +41,8 @@ const cupApi=process.env.MINICAMP_URL&&process.env.MINICAMP_TOKEN?minicampClient
 // Live messages are always handled normally; enable this only during an intentional archive import.
 const syncFullWhatsAppHistory=process.env.WA_SYNC_FULL_HISTORY==='true';
 const loadNews=process.env.MLG_NEWS_SUPABASE_URL&&process.env.MLG_NEWS_SUPABASE_KEY?newsSource(process.env.MLG_NEWS_SUPABASE_URL,process.env.MLG_NEWS_SUPABASE_KEY):undefined;
-const marketApi=process.env.MLG_MARKET_BRIDGE_TOKEN&&process.env.MLG_NEWS_SUPABASE_URL&&process.env.MLG_NEWS_SUPABASE_KEY?marketBridge(process.env.MLG_NEWS_SUPABASE_URL,process.env.MLG_NEWS_SUPABASE_KEY,process.env.MLG_MARKET_BRIDGE_TOKEN):undefined;
+// Transfer proposals remain bot-local until the user explicitly authorizes platform integration.
+const marketApi:ReturnType<typeof marketBridge>|undefined=undefined;
 delete process.env.MLG_MARKET_BRIDGE_TOKEN;
 delete process.env.MLG_NEWS_SUPABASE_KEY;
 delete process.env.MINICAMP_TOKEN;
@@ -50,7 +51,7 @@ const configuredCups=new Set<string>();
 let cupBusy=false,lastCupTick=Date.now(),lastCupSuccessAt=0,cupHealthy=!cupApi,cupTimer:ReturnType<typeof setInterval>|undefined;
 let rosterCaptureEnabled=false;
 let marketSafetySupported=false,marketCaptureSince=0,marketPaused=false,marketDeliveryBlocked=false,lastMarketTick=0,lastMarketSuccessAt=0;
-let marketBusy=false,marketHealthy=!marketApi,marketChannels:MarketChannel[]=[],marketTimer:ReturnType<typeof setInterval>|undefined;
+let marketBusy=false,marketHealthy=!marketApi,marketChannels:MarketChannel[]=[],marketTimer:ReturnType<typeof setInterval>|undefined,localMarketTimer:ReturnType<typeof setInterval>|undefined;
 type MarketBatch={group:string;batch:number;count:number;limit?:number;botLocked:boolean};
 type MarketPrivateNotice={id:string;recipient:string;body:string;lease:string};
 let newsBusy=false,newsTimer:ReturnType<typeof setInterval>|undefined;
@@ -58,6 +59,17 @@ const controlPath='/tmp/mlg-bot-control.sock';
 const portal=privateControl({secret:process.env.CONTROL_PASSWORD,origin:process.env.CONTROL_ORIGIN,socketPath:controlPath,resenha:true});
 for(const name of ['AUTH_ENCRYPTION_KEY','CONTROL_PASSWORD','SESSION_VAULT_TOKEN','DATABASE_URL','APP_DATABASE_PASSWORD'])delete process.env[name];
 const log=(event:string)=>console.log(JSON.stringify({event,at:new Date().toISOString()}));
+async function localMarketAuditTick(){
+ if(!auth||!socket||phase!=='CONNECTED'||stopping||!enabled())return;
+ const groups=adminAuditTargets(auth.data.groups,auth.data.groupModes,auth.data.loanGroups);
+ if(!groups.length){if((auth.data.marketInbox??[]).some(e=>e.localOnly&&!e.adminNotified))log('LOCAL_MARKET_ADMIN_GROUP_NOT_CONFIGURED');return;}
+ for(const event of (auth.data.marketInbox??[]).filter(e=>e.localOnly&&!e.adminNotified).slice(0,10)){
+  const body=['📥 NOVA PROPOSTA RECEBIDA — REVISÃO DOS ADMs','Grupo: '+event.group,'Remetente: '+event.participant,'Mensagem: '+event.messageId,'Tipo: '+(event.parsed.kind==='trade'?'Troca':'Transferência'),'Origem: '+event.parsed.origin,'Destino: '+event.parsed.destination,'Jogadores: '+event.parsed.playersFrom.join(', '),'Jogadores recebidos: '+(event.parsed.playersTo.join(', ')||'—'),'Valor informado: '+(event.parsed.amountEuros??'não informado'),'Pendências: '+(event.parsed.issues.join('; ')||'Nenhuma detectada pelo parser'),'Status: aguardando conferência manual. O bot não consultou saldos/plantéis, não aprovou e não alterou finanças ou elencos.'].join('\n');
+  let delivered=true;
+  for(const group of groups)try{await sendBotMessage(socket,group,{text:body},{messageId:auditMessageId(event.messageId,group)});}catch{delivered=false;log('LOCAL_MARKET_ADMIN_NOTICE_RETRY');}
+  if(delivered){event.adminNotified=true;await auth.save();}
+ }
+}
 async function sendBotMessage(current:ReturnType<typeof makeWASocket>,recipient:string,content:any,options?:any){
  const sent=await current.sendMessage(recipient,content,options);
  if(!sent?.key?.id)return sent;
@@ -165,6 +177,17 @@ async function connect(){
   return;
  }
  if(!group.endsWith('@g.us'))return;
+ if(enabled()&&auth.data.groups.includes(group)&&message.key.participant&&['transfer','trade'].includes(groupMode(auth.data.groupModes,group))){
+  const channels:MarketChannel[]=auth.data.groups.filter(g=>['transfer','trade'].includes(groupMode(auth.data.groupModes,g))).map(g=>({group:g,kind:groupMode(auth.data.groupModes,g) as 'transfer'|'trade'}));
+  const localProposal=marketEvent(group,id,message.key.participant,text,channels);
+  if(localProposal){
+   auth.data.marketInbox??=[];
+   if(!auth.data.marketInbox.some(e=>e.localOnly&&e.group===group&&e.messageId===id)){
+    auth.data.marketInbox.push({...localProposal,localOnly:true,adminNotified:false});await auth.save();
+   }
+   void localMarketAuditTick();return;
+  }
+ }
  if(marketApi&&enabled()&&message.key.participant&&auth.data.groups.includes(group)){
   if(marketChannels.some(c=>c.group===group)){
    const reaction=body?.reactionMessage;
@@ -693,7 +716,7 @@ const health=httpServer((req,res)=>{if(req.url==='/livez'||req.url==='/readyz'){
 function fail(event:string){log(event);void shutdown(1);}
 async function shutdown(code:number){if(stopping)return;stopping=true;if(cupTimer)clearInterval(cupTimer);if(newsTimer)clearInterval(newsTimer);if(marketTimer)clearInterval(marketTimer);if(timer)clearTimeout(timer);if(stable)clearTimeout(stable);const deadline=setTimeout(()=>process.exit(code),12000);deadline.unref();controls.close();health.close();socket?.end(undefined);await queue;while(cupBusy||newsBusy||marketBusy||loanJoinBusy)await new Promise(r=>setTimeout(r,50));await auth?.flush();key.fill(0);process.exit(code);}
 process.on('SIGTERM',()=>{void shutdown(0);});process.on('SIGINT',()=>{void shutdown(0);});process.on('uncaughtException',()=>fail('UNCAUGHT_ERROR'));process.on('unhandledRejection',()=>fail('UNHANDLED_REJECTION'));
-async function main(){auth=await vaultAuth(endpoint!,token!,key);auth.data.replyHistory??={};auth.data.cupInbox??=[];auth.data.marketInbox??=[];for(const event of auth.data.marketInbox)event.queuedAt??=Date.now();auth.data.marketResponses??=[];if(marketApi){await marketTick();marketTimer=setInterval(()=>{void marketTick();},15000);}if(cupApi){try{await cupApi({action:'health'});cupHealthy=true;}catch{cupHealthy=false;log('MINICAMP_RETRY');}cupTimer=setInterval(()=>{void cupTick();void loanJoinTick();},15000);}if(loadNews)newsTimer=setInterval(()=>{void newsTick();},60000);banterReply=createBanterReply(auth.data.replyHistory);await auth.save();await unlink(controlPath).catch(()=>undefined);controls.listen(controlPath,()=>{void chmod(controlPath,0o600).catch(()=>fail('CONTROL_PERMISSIONS_FAILED'));});if(!process.send)health.listen(Number(process.env.PORT??3000),'0.0.0.0');if(auth.state.creds.registered&&!auth.data.sessionRevoked)await connect();else {phase='NEEDS_PAIRING';log(phase);}}
+async function main(){auth=await vaultAuth(endpoint!,token!,key);marketChannels=auth.data.groups.filter(g=>['transfer','trade'].includes(groupMode(auth.data.groupModes,g))).map(g=>({group:g,kind:groupMode(auth.data.groupModes,g) as 'transfer'|'trade'}));auth.data.replyHistory??={};auth.data.cupInbox??=[];auth.data.marketInbox??=[];for(const event of auth.data.marketInbox)event.queuedAt??=Date.now();auth.data.marketResponses??=[];if(marketApi){await marketTick();marketTimer=setInterval(()=>{void marketTick();},15000);}localMarketTimer=setInterval(()=>{void localMarketAuditTick();},15000);if(cupApi){try{await cupApi({action:'health'});cupHealthy=true;}catch{cupHealthy=false;log('MINICAMP_RETRY');}cupTimer=setInterval(()=>{void cupTick();void loanJoinTick();},15000);}if(loadNews)newsTimer=setInterval(()=>{void newsTick();},60000);banterReply=createBanterReply(auth.data.replyHistory);await auth.save();await unlink(controlPath).catch(()=>undefined);controls.listen(controlPath,()=>{void chmod(controlPath,0o600).catch(()=>fail('CONTROL_PERMISSIONS_FAILED'));});if(!process.send)health.listen(Number(process.env.PORT??3000),'0.0.0.0');if(auth.state.creds.registered&&!auth.data.sessionRevoked)await connect();else {phase='NEEDS_PAIRING';log(phase);}}
 async function newsTick(){
  if(!loadNews||newsBusy||stopping||phase!=='CONNECTED'||!socket||!enabled()||!auth.data.newsGroup)return;
  newsBusy=true;const current=socket,group=auth.data.newsGroup;
