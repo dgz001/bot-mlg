@@ -23,3 +23,7 @@ export function auditMessageId(messageId:string,group:string):string{
 export function adminAuditBody(input:{at:number;destination:string;messageId:string;content:unknown}):string{
  return ['🧾 REGISTRO DE AÇÃO DO BOT','Horário: '+new Date(input.at).toISOString(),'Destino: '+input.destination,'ID da mensagem: '+input.messageId,'Conteúdo: '+auditContent(input.content)].join('\n');
 }
+
+export function isMarketWindowCommand(text:string):boolean{
+ return /^!(?:transligar|transdesligar)\s*$/i.test(text);
+}
