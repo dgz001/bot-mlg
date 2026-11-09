@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {adminAuditTargets,adminAuditBody,auditContent,auditMessageId} from '../src/infra/admin-audit.ts';
+import {adminAuditTargets,adminAuditBody,auditContent,auditMessageId,isMarketWindowCommand} from '../src/infra/admin-audit.ts';
 test('audit targets include only configured administration groups',()=>{
  assert.deepEqual(adminAuditTargets(['market@g.us','admin@g.us','loan@g.us'],{['admin@g.us']:'controle',['market@g.us']:'transfer',['loan@g.us']:'controle'},['loan@g.us']),['admin@g.us']);
 });
@@ -11,4 +11,13 @@ test('audit body records time, destination, message id and text',()=>{
 test('audit content never serializes image bytes',()=>{
  assert.equal(auditContent({image:Buffer.from('private-image')}),'[imagem enviada]');
  assert.match(auditMessageId('wamid-1','admin@g.us'),/^MLGAUDIT[A-F0-9]{24}$/);
+});
+
+test('transfer window command parser accepts exact commands and surrounding whitespace only',()=>{
+ assert.equal(isMarketWindowCommand('!transligar'),true);
+ assert.equal(isMarketWindowCommand('!transdesligar'),true);
+ assert.equal(isMarketWindowCommand('  !transligar  '),true);
+ assert.equal(isMarketWindowCommand('!transligar agora'),false);
+ assert.equal(isMarketWindowCommand('!transligar\\s'),false);
+ assert.equal(isMarketWindowCommand('transligar'),false);
 });
