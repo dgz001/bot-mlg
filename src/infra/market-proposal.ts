@@ -45,7 +45,7 @@ export function parseWhatsAppMarketProposal(text: string): WhatsAppMarketProposa
   if (!playersFrom.length || (kind === "trade" && !playersTo.length)) issues.push("Faltam jogadores de um dos lados.");
   if(kind==="loan"&&!pick("duracao","duração","tempo").trim())issues.push("Informe a duração do empréstimo.");
   if (playersFrom.length > 12 || playersTo.length > 12) issues.push("Limite de 12 jogadores por lado.");
-  const money = pick("valor da transferencia", "valor da transferencias", "valor", "valor da troca", "valor do emprestimo", "valor de emprestimo");
+  const money = pick("valor da transferencia", "valor da transferencias", "valor", "valor da troca", "valor do emprestimo", "valor de emprestimo", "valor da negociacao", "valor da venda");
   let amountEuros: string | null = kind === "trade" && !money ? "0" : null;
   if (money) { try { amountEuros = parseWhatsAppEuros(money); } catch (e) { issues.push(e instanceof Error ? e.message : "Valor inválido."); } }
   if ((kind === "transfer" || kind === "loan") && (amountEuros === null || amountEuros === "0")) issues.push("A negociação precisa de valor positivo.");
