@@ -148,7 +148,9 @@ async function connect(){
       log(response.decision==='positive'?'LOCAL_MARKET_CONFIRMATION_CAPTURED':response.decision==='negative'?'LOCAL_MARKET_REJECTION_CAPTURED':'LOCAL_MARKET_RESPONSE_CAPTURED');
       const adminGroups=adminAuditTargets(auth.data.groups,auth.data.groupModes,auth.data.loanGroups);
       const status=response.decision==='positive'?'CONFIRMAÇÃO POSITIVA':response.decision==='negative'?'RECUSA REGISTRADA':'RESPOSTA REGISTRADA';
-      const notice=['📌 ATUALIZAÇÃO DE PROPOSTA — MLG','Protocolo: '+(target.ticketId??'indisponível'),status,'Resposta: '+response.text,'Remetente: '+participant,'A proposta continua aguardando conferência dos ADMs; nenhuma operação financeira foi executada.'].join('\n');
+      const kindLabel=target.parsed.kind==='loan'?'EMPRÉSTIMO':target.parsed.kind==='trade'?'TROCA':'TRANSFERÊNCIA';
+      const reason=response.decision==='positive'?'Confirmação registrada pela reação correspondente. Ainda depende da conferência final dos ADMs.':response.decision==='negative'?'Recusa registrada. A reação não informa o motivo; solicite que o responsável explique no grupo antes de encerrar.':'A reação foi removida ou não representa aprovação/rejeição válida.';
+      const notice=['📌 ATUALIZAÇÃO DE PROPOSTA — MLG','Protocolo: '+(target.ticketId??'indisponível'),'Tipo: '+kindLabel,'Negociação: '+target.parsed.origin+' → '+target.parsed.destination,'Jogador(es): '+target.parsed.playersFrom.join(', '),'Valor: '+(target.parsed.amountEuros===null?'não informado':'€'+target.parsed.amountEuros),'Duração: '+(target.parsed.duration??'—'),status,'Resposta: '+response.text,'Remetente: '+participant,'Análise: '+reason,'Nenhum saldo, elenco ou cota foi alterado automaticamente.'].join('\n');
       for(const adminGroup of adminGroups)try{await sendBotMessage(current,adminGroup,{text:notice});}catch{log('LOCAL_MARKET_CONFIRMATION_NOTICE_RETRY');}
      }
      return;
