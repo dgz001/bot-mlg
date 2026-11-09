@@ -45,6 +45,14 @@ export function assessLocalMarketFinance(
  const alerts:string[]=[];
  const buyer=findMarketFinanceClub(state.clubs,proposal.destination);
  const seller=findMarketFinanceClub(state.clubs,proposal.origin);
+ if(proposal.kind==='transfer'){
+  if(!buyer)alerts.push('⚠️ Clube de destino não localizado no livro-caixa: "'+proposal.destination+'". Não foi possível conferir o saldo do comprador.');
+  if(proposal.purchaseScope!=='external'&&!seller)alerts.push('⚠️ Clube de origem não localizado no livro-caixa: "'+proposal.origin+'". Não foi possível conferir a cota de vendas.');
+ }
+ if(proposal.kind==='trade'){
+  if(!seller)alerts.push('⚠️ Clube de origem da troca não localizado no livro-caixa: "'+proposal.origin+'".');
+  if(!buyer)alerts.push('⚠️ Clube de destino da troca não localizado no livro-caixa: "'+proposal.destination+'".');
+ }
  if(proposal.kind==='transfer'&&buyer&&proposal.amountEuros!==null){
   const amountMillions=Number(proposal.amountEuros)/1_000_000;
   if(Number.isFinite(amountMillions)&&amountMillions>0){
