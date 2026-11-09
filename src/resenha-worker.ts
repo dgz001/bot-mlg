@@ -51,9 +51,9 @@ const configuredCups=new Set<string>();
 let cupBusy=false,lastCupTick=Date.now(),lastCupSuccessAt=0,cupHealthy=!cupApi,cupTimer:ReturnType<typeof setInterval>|undefined;
 let rosterCaptureEnabled=false;
 let marketSafetySupported=false,marketCaptureSince=0,marketPaused=false,marketDeliveryBlocked=false,lastMarketTick=0,lastMarketSuccessAt=0;
-let marketBusy=false,marketHealthy=!marketApi,marketChannels:MarketChannel[]=[],marketBatches:MarketBatch[]=[],marketTimer:ReturnType<typeof setInterval>|undefined,localMarketTimer:ReturnType<typeof setInterval>|undefined;
 type MarketBatch={group:string;batch:number;count:number;limit?:number;botLocked:boolean};
-let marketBusy=false,marketHealthy=!marketApi,marketChannels:MarketChannel[]=[],marketBatches:MarketBatch[]=[],marketTimer:ReturnType<typeof setInterval>|undefined;
+let marketBusy=false,marketHealthy=!marketApi,marketChannels:MarketChannel[]=[],marketBatches:MarketBatch[]=[],marketTimer:ReturnType<typeof setInterval>|undefined,localMarketTimer:ReturnType<typeof setInterval>|undefined;
+let localMarketAuditBusy=false;
 type MarketPrivateNotice={id:string;recipient:string;body:string;lease:string};
 let newsBusy=false,newsTimer:ReturnType<typeof setInterval>|undefined;
 const controlPath='/tmp/mlg-bot-control.sock';
@@ -61,15 +61,18 @@ const portal=privateControl({secret:process.env.CONTROL_PASSWORD,origin:process.
 for(const name of ['AUTH_ENCRYPTION_KEY','CONTROL_PASSWORD','SESSION_VAULT_TOKEN','DATABASE_URL','APP_DATABASE_PASSWORD'])delete process.env[name];
 const log=(event:string)=>console.log(JSON.stringify({event,at:new Date().toISOString()}));
 async function localMarketAuditTick(){
- if(!auth||!socket||phase!=='CONNECTED'||stopping||!enabled())return;
- const groups=adminAuditTargets(auth.data.groups,auth.data.groupModes,auth.data.loanGroups);
- if(!groups.length){if((auth.data.marketInbox??[]).some(e=>e.localOnly&&!e.adminNotified))log('LOCAL_MARKET_ADMIN_GROUP_NOT_CONFIGURED');return;}
- for(const event of (auth.data.marketInbox??[]).filter(e=>e.localOnly&&!e.adminNotified).slice(0,10)){
-  const body=['📥 NOVA PROPOSTA RECEBIDA — REVISÃO DOS ADMs','Grupo: '+event.group,'Remetente: '+event.participant,'Mensagem: '+event.messageId,'Tipo: '+(event.parsed.kind==='trade'?'Troca':'Transferência'),'Origem: '+event.parsed.origin,'Destino: '+event.parsed.destination,'Jogadores: '+event.parsed.playersFrom.join(', '),'Jogadores recebidos: '+(event.parsed.playersTo.join(', ')||'—'),'Valor informado: '+(event.parsed.amountEuros??'não informado'),'Pendências: '+(event.parsed.issues.join('; ')||'Nenhuma detectada pelo parser'),'Status: aguardando conferência manual. O bot não consultou saldos/plantéis, não aprovou e não alterou finanças ou elencos.'].join('\n');
-  let delivered=true;
-  for(const group of groups)try{const sent=await socket.sendMessage(group,{text:body},{messageId:auditMessageId(event.messageId,group)});if(!sent?.key.id)throw Error('Admin notice not confirmed');}catch{delivered=false;log('LOCAL_MARKET_ADMIN_NOTICE_RETRY');}
-  if(delivered){event.adminNotified=true;await auth.save();}
- }
+ if(localMarketAuditBusy||!auth||!socket||phase!=='CONNECTED'||stopping||!enabled())return;
+ localMarketAuditBusy=true;
+ try{
+  const groups=adminAuditTargets(auth.data.groups,auth.data.groupModes,auth.data.loanGroups);
+  if(!groups.length){if((auth.data.marketInbox??[]).some(e=>e.localOnly&&!e.adminNotified))log('LOCAL_MARKET_ADMIN_GROUP_NOT_CONFIGURED');return;}
+  for(const event of (auth.data.marketInbox??[]).filter(e=>e.localOnly&&!e.adminNotified).slice(0,10)){
+   const body=['📥 NOVA PROPOSTA RECEBIDA — REVISÃO DOS ADMs','Grupo: '+event.group,'Remetente: '+event.participant,'Mensagem: '+event.messageId,'Tipo: '+(event.parsed.kind==='trade'?'Troca':'Transferência'),'Origem: '+event.parsed.origin,'Destino: '+event.parsed.destination,'Jogadores: '+event.parsed.playersFrom.join(', '),'Jogadores recebidos: '+(event.parsed.playersTo.join(', ')||'—'),'Valor informado: '+(event.parsed.amountEuros??'não informado'),'Pendências: '+(event.parsed.issues.join('; ')||'Nenhuma detectada pelo parser'),'Status: aguardando conferência manual. O bot não consultou saldos/plantéis, não aprovou e não alterou finanças ou elencos.'].join('\n');
+   let delivered=true;
+   for(const group of groups)try{const sent=await socket.sendMessage(group,{text:body},{messageId:auditMessageId(event.messageId,group)});if(!sent?.key.id)throw Error('Admin notice not confirmed');}catch{delivered=false;log('LOCAL_MARKET_ADMIN_NOTICE_RETRY');}
+   if(delivered){event.adminNotified=true;try{await auth.save();}catch{event.adminNotified=false;log('LOCAL_MARKET_AUDIT_STATE_SAVE_FAILED');}}
+  }
+ }finally{localMarketAuditBusy=false;}
 }
 async function sendBotMessage(current:ReturnType<typeof makeWASocket>,recipient:string,content:any,options?:any){
  const sent=await current.sendMessage(recipient,content,options);
