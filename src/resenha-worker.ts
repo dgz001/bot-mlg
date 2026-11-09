@@ -1,5 +1,5 @@
 import {rosterTick,rosterTextReady,rosterMessageId,type RosterConfig} from "./infra/roster-collection.ts";
-import {adminAuditTargets,adminAuditBody,auditMessageId,isMarketWindowCommand,marketWindowCommandAction} from './infra/admin-audit.ts';
+import {adminAuditTargets,adminAuditBody,auditMessageId,marketWindowCommandAction,marketWindowCommandDelivery} from './infra/admin-audit.ts';
 import {isWhatsAppMarketProposalTooLong} from './infra/market-proposal.ts';
 import {INITIAL_MARKET_FINANCE,assessLocalMarketFinance} from './infra/market-finance.ts';
 import {enqueueLocalMarketProposal,ensureLocalMarketTicketIds,localMarketProposalPage,pendingLocalMarketProposals,completeLocalMarketProposal,parseLocalMarketReviewCommand,MAX_PENDING_LOCAL_MARKET_PROPOSALS} from './infra/local-market-review.ts';
@@ -145,8 +145,17 @@ async function connect(){
  if(!['notify','append'].includes(event.type)||socket!==current)return;
  for(const message of orderMessages(event.messages)){queue=queue.then(async()=>{
  const group=message.key.remoteJid,id=message.key.id;if(stopping||!group||!id||message.key.fromMe)return;
- if(event.type==='append'&&!canRecoverMarketMessage(event.type,group,message.messageTimestamp,auth.data.marketWindow?.captureSince??0,marketChannels))return;
  const body=extractMessageContent(message.message);const text=loanCommand((body?.conversation??body?.extendedTextMessage?.text??body?.imageMessage?.caption??'').trim());const context=body?.extendedTextMessage?.contextInfo??body?.imageMessage?.contextInfo;
+ const windowDelivery=marketWindowCommandDelivery(event.type,text);
+ if(windowDelivery==='retry'&&group.endsWith('@g.us')&&auth.data.groups.includes(group)){
+  const receivedAt=Number(message.messageTimestamp)*1000;
+  if(Number.isFinite(receivedAt)&&receivedAt>Date.now()-2*60*1000&&receivedAt<Date.now()+60000){
+   log('LOCAL_MARKET_WINDOW_APPEND_REQUIRES_RETRY');
+   await sendBotMessage(current,group,{text:'⚠️ Recebi o comando durante a sincronização do histórico, mas não executei para evitar reabrir a janela por uma mensagem antiga. Reenvie !transligar ou !transdesligar agora.'}).catch(()=>log('LOCAL_MARKET_WINDOW_APPEND_REPLY_FAILED'));
+  }
+  return;
+ }
+ if(event.type==='append'&&!canRecoverMarketMessage(event.type,group,message.messageTimestamp,auth.data.marketWindow?.captureSince??0,marketChannels))return;
  if(/^[0-9]+@(s\.whatsapp\.net|lid)$/.test(group)){
   if(marketApi&&enabled()&&event.type==='notify'&&/^(sim|não|nao)$/i.test(text)){
    const aliases=await cupAliases(group,current);const groups=marketAdminGroups(auth.data.groups,auth.data.groupModes,auth.data.loanGroups,auth.data.rosterCollection?.group);
@@ -227,11 +236,29 @@ async function connect(){
   await sendBotMessage(current,group,{text:'✅ Protocolo '+reviewCommand.ticketId+' marcado como revisão encerrada pelo ADM. Isso apenas arquiva a pendência local: não aprova contrato, não altera saldo, elenco nem cotas.'});
   return;
  }
- if(event.type==='notify'&&auth.data.groups.includes(group)&&isMarketWindowCommand(text)&&['controle','transfer','trade'].includes(groupMode(auth.data.groupModes,group))){
+ if(windowDelivery==='execute'){
+  const commandMode=groupMode(auth.data.groupModes,group);
+  log('LOCAL_MARKET_WINDOW_COMMAND_RECEIVED');
+  if(!auth.data.groups.includes(group)){
+   log('LOCAL_MARKET_WINDOW_GROUP_NOT_AUTHORIZED');
+   await sendBotMessage(current,group,{text:'🔒 Este grupo recebeu o comando, mas não está cadastrado como grupo autorizado do bot. Confira o cadastro no painel antes de tentar novamente.'}).catch(()=>log('LOCAL_MARKET_WINDOW_REPLY_FAILED'));
+   return;
+  }
+  if(!['controle','transfer','trade'].includes(commandMode)){
+   log('LOCAL_MARKET_WINDOW_GROUP_MODE_REJECTED');
+   await sendBotMessage(current,group,{text:'⚠️ O comando chegou ao bot, mas este grupo está configurado no modo "'+commandMode+'". Para controlar a janela, configure Administração Bot como "controle" no painel do Render.'}).catch(()=>log('LOCAL_MARKET_WINDOW_REPLY_FAILED'));
+   return;
+  }
   try{
-   const actor=await cupAliases(message.key.participant??'',current);
+   const participant=message.key.participant??(message.key as typeof message.key & {participantAlt?:string}).participantAlt;
+   if(!participant){
+    log('LOCAL_MARKET_WINDOW_SENDER_ID_MISSING');
+    await sendBotMessage(current,group,{text:'⚠️ Recebi o comando, mas o WhatsApp não informou a identidade do remetente. Tente novamente.'});
+    return;
+   }
+   const actor=await cupAliases(participant,current);
    const adminGroups=adminAuditTargets(auth.data.groups,auth.data.groupModes,auth.data.loanGroups);
-   const commandFromControl=groupMode(auth.data.groupModes,group)==='controle';
+   const commandFromControl=commandMode==='controle';
    const marketGroups=auth.data.groups.filter(g=>['transfer','trade'].includes(groupMode(auth.data.groupModes,g))&&!auth.data.loanGroups?.includes(g)).sort();
    let authorized=false;
    const authorizationGroups=commandFromControl?[group]:[...new Set([group,...adminGroups])];
@@ -244,7 +271,7 @@ async function connect(){
     }
     if(authorized)break;
    }
-   if(!authorized){await sendBotMessage(current,group,{text:'🔒 Somente um administrador do grupo administrativo configurado pode controlar a janela.'});return;}
+   if(!authorized){log('LOCAL_MARKET_WINDOW_COMMAND_UNAUTHORIZED');await sendBotMessage(current,group,{text:'🔒 O comando foi recebido, mas o remetente não foi identificado como administrador deste grupo.'});return;}
    if(commandFromControl&&!marketGroups.length){await sendBotMessage(current,group,{text:'⚠️ Não encontrei nenhum grupo autorizado como transferências/trocas. Configure ao menos um grupo com modo transfer ou trade.'});return;}
    const open=marketWindowCommandAction(text)==='open';
    const previous=auth.data.marketWindow??{open:false,captureSince:0};
@@ -253,8 +280,8 @@ async function connect(){
    auth.data.marketWindow=open?{open:true,captureSince:Date.now()}:{...previous,open:false,closedAt:Date.now()};
    try{await auth.save();}catch(error){auth.data.marketWindow=previous;throw error;}
    const body=open?'🟢 JANELA DE TRANSFERÊNCIAS LIGADA NO BOT. A captura começa agora; mensagens anteriores não serão processadas.':'🔴 JANELA DE TRANSFERÊNCIAS DESLIGADA NO BOT. Novas propostas não serão capturadas.';
-   await sendBotMessage(current,group,{text:body+(commandFromControl?'\\nGrupos monitorados: '+marketGroups.length:'')});
-   if(!commandFromControl)for(const adminGroup of adminGroups)if(adminGroup!==group)await sendBotMessage(current,adminGroup,{text:body+'\\nGrupo de mercado: '+group});
+   await sendBotMessage(current,group,{text:body+(commandFromControl?'\nGrupos monitorados: '+marketGroups.length:'')});
+   if(!commandFromControl)for(const adminGroup of adminGroups)if(adminGroup!==group)await sendBotMessage(current,adminGroup,{text:body+'\nGrupo de mercado: '+group});
   }catch{log('LOCAL_MARKET_WINDOW_COMMAND_FAILED');await sendBotMessage(current,group,{text:'⚠️ Não consegui confirmar a alteração. Consulte !statusbot antes de repetir.'}).catch(()=>{});}
   return;
  }

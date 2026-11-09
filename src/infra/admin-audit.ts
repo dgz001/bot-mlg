@@ -33,3 +33,10 @@ export function marketWindowCommandAction(text:string):'open'|'close'|null{
 export function isMarketWindowCommand(text:string):boolean{
  return marketWindowCommandAction(text)!==null;
 }
+
+export function marketWindowCommandDelivery(eventType:string,text:string):'execute'|'retry'|'ignore'{
+ if(!isMarketWindowCommand(text))return 'ignore';
+ if(eventType==='notify')return 'execute';
+ if(eventType==='append')return 'retry';
+ return 'ignore';
+}
