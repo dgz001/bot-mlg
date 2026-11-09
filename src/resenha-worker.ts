@@ -156,7 +156,7 @@ async function connect(){
   return;
  }
  if(!group.endsWith('@g.us'))return;
- if(/^!transligar\\s*$/i.test(text)&&message.key.participant&&auth.data.groups.includes(group)){
+ if(/^!transligar\s*$/i.test(text)&&message.key.participant&&auth.data.groups.includes(group)){
   const channel=marketChannels.find(c=>c.group===group);
   if(!marketApi||!channel||channel.kind!=='transfer'){
    await current.sendMessage(group,{text:'⚠️ Use !transligar somente no grupo oficial de transferências da MLG.'});return;
