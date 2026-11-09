@@ -339,7 +339,14 @@ async function connect(){
     if(!target.responses.some(item=>item.messageId===id)){
      const previous=target.responses.slice();
      target.responses.push({...responseEvent,proposalMessageId:target.messageId});
-     try{await auth.save();log(responseEvent.decision==='positive'?'LOCAL_MARKET_CONFIRMATION_CAPTURED':responseEvent.decision==='negative'?'LOCAL_MARKET_REJECTION_CAPTURED':'LOCAL_MARKET_RESPONSE_CAPTURED');}
+     try{
+      await auth.save();
+      log(responseEvent.decision==='positive'?'LOCAL_MARKET_CONFIRMATION_CAPTURED':responseEvent.decision==='negative'?'LOCAL_MARKET_REJECTION_CAPTURED':'LOCAL_MARKET_RESPONSE_CAPTURED');
+      const adminGroups=adminAuditTargets(auth.data.groups,auth.data.groupModes,auth.data.loanGroups);
+      const status=responseEvent.decision==='positive'?'CONFIRMAÇÃO POSITIVA':responseEvent.decision==='negative'?'RECUSA REGISTRADA':'RESPOSTA REGISTRADA';
+      const notice=['📌 ATUALIZAÇÃO DE PROPOSTA — MLG', 'Protocolo: '+(target.ticketId??'indisponível'),'Clube/jogadores: '+target.parsed.origin+' → '+target.parsed.destination+' | '+target.parsed.playersFrom.join(', ')+' ↔ '+target.parsed.playersTo.join(', '),status,'Resposta: '+responseEvent.text,'Remetente: '+responseEvent.participant,'A proposta continua aguardando conferência dos ADMs; nenhuma operação financeira foi executada.'].join('\\n');
+      for(const adminGroup of adminGroups)try{await sendBotMessage(current,adminGroup,{text:notice});}catch{log('LOCAL_MARKET_CONFIRMATION_NOTICE_RETRY');}
+     }
      catch{target.responses=previous;log('LOCAL_MARKET_CONFIRMATION_SAVE_FAILED');}
     }
     return;
