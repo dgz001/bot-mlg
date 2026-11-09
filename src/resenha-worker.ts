@@ -212,6 +212,14 @@ async function connect(){
    auth.data.marketInbox??=[];
    if(!auth.data.marketInbox.some(e=>e.localOnly&&e.group===group&&e.messageId===id)){
     auth.data.marketInbox.push({...localProposal,localOnly:true,adminNotified:false});await auth.save();
+    const issues=localProposal.parsed.issues;
+    const reaction=issues.length?'❌':localProposal.parsed.purchaseScope==='review'?'🟠':'🟠';
+    try{await current.sendMessage(group,{react:{text:reaction,key:{remoteJid:group,participant:message.key.participant,id,fromMe:false}}});}catch{log('LOCAL_MARKET_REACTION_RETRY');}
+    const phone=(await cupAliases(message.key.participant,current).catch(()=>[])).find(a=>a.endsWith('@s.whatsapp.net'));
+    if(phone){
+     const dm=issues.length?'❌ Sua proposta foi recebida, mas há pendências: '+issues.join('; ')+'. Corrija os campos e envie novamente no grupo.':localProposal.parsed.purchaseScope==='review'?'🟠 Sua proposta foi recebida, mas o tipo ainda não está claro. Identifique se é COMPRA INTERNA (de outro clube da MLG) ou COMPRA EXTERNA (jogador de fora da MLG). A proposta ficará aguardando os ADMs.':'🟠 Sua proposta foi recebida. O bot ainda precisa conferir elenco, saldo e cotas com a base oficial local; ela não está aprovada nem concluída.';
+     await sendBotMessage(current,phone,{text:dm}).catch(()=>log('LOCAL_MARKET_PRIVATE_NOTICE_RETRY'));
+    }
    }
    void localMarketAuditTick();return;
   }
