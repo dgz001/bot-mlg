@@ -325,8 +325,8 @@ async function connect(){
   const responseEvent=marketResponse({group,messageId:id,participant:message.key.participant??(message.key as typeof message.key & {participantAlt?:string}).participantAlt??'',proposalMessageId:reactionMessage?.key?.id??context?.stanzaId,text:reactionMessage?undefined:text,reaction:reactionMessage?.text??undefined});
   if(responseEvent){
    const candidates=(auth.data.marketInbox??[]).filter(item=>item.localOnly&&item.group===group&&typeof item.reviewedAt!=='number'&&(!responseEvent.proposalMessageId||item.messageId===responseEvent.proposalMessageId));
-   let target=candidates.length===1?candidates[0]:undefined;
-   if(!responseEvent.proposalMessageId&&candidates.length===0){
+   let target=responseEvent.proposalMessageId&&candidates.length===1?candidates[0]:undefined;
+   if(!responseEvent.proposalMessageId){
     const sender=message.key.participant??(message.key as typeof message.key & {participantAlt?:string}).participantAlt;
     if(sender){
      const aliases=await cupAliases(sender,current).catch(()=>[sender]);
