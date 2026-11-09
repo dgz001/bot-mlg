@@ -138,7 +138,7 @@ async function connect(){
  if(!['notify','append'].includes(event.type)||socket!==current)return;
  for(const message of orderMessages(event.messages)){queue=queue.then(async()=>{
  const group=message.key.remoteJid,id=message.key.id;if(stopping||!group||!id||message.key.fromMe)return;
- if(!canRecoverMarketMessage(event.type,group,message.messageTimestamp,marketCaptureSince,marketChannels))return;
+ if(event.type==='append'&&!canRecoverMarketMessage(event.type,group,message.messageTimestamp,auth.data.marketWindow?.captureSince??0,marketChannels))return;
  const body=extractMessageContent(message.message);const text=loanCommand((body?.conversation??body?.extendedTextMessage?.text??body?.imageMessage?.caption??'').trim());const context=body?.extendedTextMessage?.contextInfo??body?.imageMessage?.contextInfo;
  if(/^[0-9]+@(s\.whatsapp\.net|lid)$/.test(group)){
   if(marketApi&&enabled()&&event.type==='notify'&&/^(sim|não|nao)$/i.test(text)){
@@ -177,6 +177,34 @@ async function connect(){
   return;
  }
  if(!group.endsWith('@g.us'))return;
+ if(event.type==='notify'&&auth.data.groups.includes(group)&&groupMode(auth.data.groupModes,group)==='transfer'&&/^!(?:transligar|transdesligar)\\s*$/i.test(text)){
+  try{
+   const actor=await cupAliases(message.key.participant??'',current);
+   const adminGroups=adminAuditTargets(auth.data.groups,auth.data.groupModes,auth.data.loanGroups);
+   let authorized=false;
+   for(const adminGroup of adminGroups){
+    const metadata=await current.groupMetadata(adminGroup);
+    for(const member of metadata.participants){
+     if(!member.admin)continue;
+     const aliases=await cupAliases(member.id,current).catch(()=>[]);
+     if(aliases.some(alias=>actor.includes(alias))){authorized=true;break;}
+    }
+    if(authorized)break;
+   }
+   if(!authorized){await sendBotMessage(current,group,{text:'🔒 Somente um ADM geral cadastrado como administrador no Grupo da Administração Bot pode controlar a janela.'});return;}
+   const open=/^!transligar/i.test(text);
+   const previous=auth.data.marketWindow??{open:false,captureSince:0};
+   if(open&&previous.open){await sendBotMessage(current,group,{text:'🟢 A janela de transferências do bot já está ligada. Não reiniciei a captura nem recapturei mensagens antigas.'});return;}
+   if(!open&&!previous.open){await sendBotMessage(current,group,{text:'⚪ A janela do bot já está desligada.'});return;}
+   auth.data.marketWindow=open?{open:true,captureSince:Date.now()}:{...previous,open:false,closedAt:Date.now()};
+   try{await auth.save();}catch(error){auth.data.marketWindow=previous;throw error;}
+   const body=open?'🟢 JANELA DE TRANSFERÊNCIAS LIGADA NO BOT. A captura começa agora; mensagens anteriores não serão processadas.':'🔴 JANELA DE TRANSFERÊNCIAS DESLIGADA NO BOT. Novas propostas não serão capturadas.';
+   await sendBotMessage(current,group,{text:body});
+   for(const adminGroup of adminGroups)if(adminGroup!==group)await sendBotMessage(current,adminGroup,{text:body+'\\nGrupo de mercado: '+group});
+  }catch{log('LOCAL_MARKET_WINDOW_COMMAND_FAILED');await sendBotMessage(current,group,{text:'⚠️ Não consegui confirmar a alteração. Consulte !statusbot antes de repetir.'}).catch(()=>{});}
+  return;
+ }
+ if(!auth.data.marketWindow?.open)return;
  if(enabled()&&auth.data.groups.includes(group)&&message.key.participant&&['transfer','trade'].includes(groupMode(auth.data.groupModes,group))){
   const channels:MarketChannel[]=auth.data.groups.filter(g=>['transfer','trade'].includes(groupMode(auth.data.groupModes,g))).map(g=>({group:g,kind:groupMode(auth.data.groupModes,g) as 'transfer'|'trade'}));
   const localProposal=marketEvent(group,id,message.key.participant,text,channels);
@@ -716,7 +744,7 @@ const health=httpServer((req,res)=>{if(req.url==='/livez'||req.url==='/readyz'){
 function fail(event:string){log(event);void shutdown(1);}
 async function shutdown(code:number){if(stopping)return;stopping=true;if(cupTimer)clearInterval(cupTimer);if(newsTimer)clearInterval(newsTimer);if(marketTimer)clearInterval(marketTimer);if(timer)clearTimeout(timer);if(stable)clearTimeout(stable);const deadline=setTimeout(()=>process.exit(code),12000);deadline.unref();controls.close();health.close();socket?.end(undefined);await queue;while(cupBusy||newsBusy||marketBusy||loanJoinBusy)await new Promise(r=>setTimeout(r,50));await auth?.flush();key.fill(0);process.exit(code);}
 process.on('SIGTERM',()=>{void shutdown(0);});process.on('SIGINT',()=>{void shutdown(0);});process.on('uncaughtException',()=>fail('UNCAUGHT_ERROR'));process.on('unhandledRejection',()=>fail('UNHANDLED_REJECTION'));
-async function main(){auth=await vaultAuth(endpoint!,token!,key);marketChannels=auth.data.groups.filter(g=>['transfer','trade'].includes(groupMode(auth.data.groupModes,g))).map(g=>({group:g,kind:groupMode(auth.data.groupModes,g) as 'transfer'|'trade'}));auth.data.replyHistory??={};auth.data.cupInbox??=[];auth.data.marketInbox??=[];for(const event of auth.data.marketInbox)event.queuedAt??=Date.now();auth.data.marketResponses??=[];if(marketApi){await marketTick();marketTimer=setInterval(()=>{void marketTick();},15000);}localMarketTimer=setInterval(()=>{void localMarketAuditTick();},15000);if(cupApi){try{await cupApi({action:'health'});cupHealthy=true;}catch{cupHealthy=false;log('MINICAMP_RETRY');}cupTimer=setInterval(()=>{void cupTick();void loanJoinTick();},15000);}if(loadNews)newsTimer=setInterval(()=>{void newsTick();},60000);banterReply=createBanterReply(auth.data.replyHistory);await auth.save();await unlink(controlPath).catch(()=>undefined);controls.listen(controlPath,()=>{void chmod(controlPath,0o600).catch(()=>fail('CONTROL_PERMISSIONS_FAILED'));});if(!process.send)health.listen(Number(process.env.PORT??3000),'0.0.0.0');if(auth.state.creds.registered&&!auth.data.sessionRevoked)await connect();else {phase='NEEDS_PAIRING';log(phase);}}
+async function main(){auth=await vaultAuth(endpoint!,token!,key);marketChannels=auth.data.groups.filter(g=>['transfer','trade'].includes(groupMode(auth.data.groupModes,g))).map(g=>({group:g,kind:groupMode(auth.data.groupModes,g) as 'transfer'|'trade'}));marketCaptureSince=auth.data.marketWindow?.captureSince??0;auth.data.replyHistory??={};auth.data.cupInbox??=[];auth.data.marketInbox??=[];for(const event of auth.data.marketInbox)event.queuedAt??=Date.now();auth.data.marketResponses??=[];if(marketApi){await marketTick();marketTimer=setInterval(()=>{void marketTick();},15000);}localMarketTimer=setInterval(()=>{void localMarketAuditTick();},15000);if(cupApi){try{await cupApi({action:'health'});cupHealthy=true;}catch{cupHealthy=false;log('MINICAMP_RETRY');}cupTimer=setInterval(()=>{void cupTick();void loanJoinTick();},15000);}if(loadNews)newsTimer=setInterval(()=>{void newsTick();},60000);banterReply=createBanterReply(auth.data.replyHistory);await auth.save();await unlink(controlPath).catch(()=>undefined);controls.listen(controlPath,()=>{void chmod(controlPath,0o600).catch(()=>fail('CONTROL_PERMISSIONS_FAILED'));});if(!process.send)health.listen(Number(process.env.PORT??3000),'0.0.0.0');if(auth.state.creds.registered&&!auth.data.sessionRevoked)await connect();else {phase='NEEDS_PAIRING';log(phase);}}
 async function newsTick(){
  if(!loadNews||newsBusy||stopping||phase!=='CONNECTED'||!socket||!enabled()||!auth.data.newsGroup)return;
  newsBusy=true;const current=socket,group=auth.data.newsGroup;
@@ -746,7 +774,7 @@ async function marketTick(){
   if(!Array.isArray(config.channels))throw Error('Invalid market channel list');
   rosterCaptureEnabled=Boolean(config.rosterCollection?.enabled&&!config.rosterCollection.opened&&config.rosterCollection.run);
   marketChannels=config.channels.filter(c=>groupMode(auth.data.groupModes,c.group)!=='market-loan');
-  marketSafetySupported=typeof config.safety?.paused==='boolean';marketPaused=config.safety?.paused===true;marketCaptureSince=Date.parse(config.captureSince)||0;marketDeliveryBlocked=(config.batches??[]).some(b=>b.count>=(b.limit??10));
+  marketSafetySupported=typeof config.safety?.paused==='boolean';marketPaused=config.safety?.paused===true;marketCaptureSince=auth.data.marketWindow?.captureSince??0;marketDeliveryBlocked=(config.batches??[]).some(b=>b.count>=(b.limit??10));
   if(phase!=='CONNECTED'||!socket||!enabled())return;
   const current=socket;
   let gateHealthy=true;
