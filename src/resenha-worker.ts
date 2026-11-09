@@ -133,10 +133,29 @@ async function connect(){
  });
  current.ev.on('messages.reaction',events=>{
   for(const event of events){queue=queue.then(async()=>{
-   const group=event.key.remoteJid,id=event.reaction.key?.id,participant=event.reaction.key?.participant;
-   if(!marketApi||!group||!id||!participant||event.reaction.key?.fromMe||!enabled()||!auth.data.groups.includes(group)||!marketChannels.some(c=>c.group===group))return;
-   const response=marketResponse({group,messageId:id,participant,proposalMessageId:event.key.id,reaction:event.reaction.text??undefined});
-   if(!response)return;auth.data.marketResponses??=[];
+   const group=event.key.remoteJid,id=event.key.id,participant=event.key.participant??(event.key as typeof event.key & {participantAlt?:string}).participantAlt;
+   const proposalMessageId=event.reaction.key?.id;
+   if(!group||!id||!participant||event.key.fromMe||!enabled()||!auth.data.groups.includes(group))return;
+   const response=marketResponse({group,messageId:id,participant,proposalMessageId,reaction:event.reaction.text??undefined});
+   if(!response)return;
+   if(auth.data.marketWindow?.open&&['transfer','trade'].includes(groupMode(auth.data.groupModes,group))){
+    const target=(auth.data.marketInbox??[]).find(item=>item.localOnly&&item.group===group&&item.messageId===proposalMessageId&&typeof item.reviewedAt!=='number');
+    if(target){
+     target.responses??=[];
+     if(!target.responses.some(item=>item.messageId===id)){
+      const previous=target.responses.slice();target.responses.push({...response,proposalMessageId:target.messageId});
+      try{await auth.save();}catch{target.responses=previous;log('LOCAL_MARKET_CONFIRMATION_SAVE_FAILED');return;}
+      log(response.decision==='positive'?'LOCAL_MARKET_CONFIRMATION_CAPTURED':response.decision==='negative'?'LOCAL_MARKET_REJECTION_CAPTURED':'LOCAL_MARKET_RESPONSE_CAPTURED');
+      const adminGroups=adminAuditTargets(auth.data.groups,auth.data.groupModes,auth.data.loanGroups);
+      const status=response.decision==='positive'?'CONFIRMAÇÃO POSITIVA':response.decision==='negative'?'RECUSA REGISTRADA':'RESPOSTA REGISTRADA';
+      const notice=['📌 ATUALIZAÇÃO DE PROPOSTA — MLG','Protocolo: '+(target.ticketId??'indisponível'),status,'Resposta: '+response.text,'Remetente: '+participant,'A proposta continua aguardando conferência dos ADMs; nenhuma operação financeira foi executada.'].join('\n');
+      for(const adminGroup of adminGroups)try{await sendBotMessage(current,adminGroup,{text:notice});}catch{log('LOCAL_MARKET_CONFIRMATION_NOTICE_RETRY');}
+     }
+     return;
+    }
+   }
+   if(!marketApi||!marketChannels.some(c=>c.group===group))return;
+   auth.data.marketResponses??=[];
    if(!auth.data.marketResponses.some(e=>e.group===group&&e.messageId===id)){auth.data.marketResponses.push(response);await auth.save();}
    void marketTick();
   }).catch(()=>{log('MARKET_RESPONSE_CAPTURE_RETRY');});}
@@ -220,7 +239,7 @@ async function connect(){
    const lines=page.items.map(item=>{
     const amount=item.parsed.amountEuros===null?'valor não informado':'€'+Number(item.parsed.amountEuros).toLocaleString('pt-BR',{maximumFractionDigits:0});
     const pending=item.parsed.issues.length?' ⚠️ '+item.parsed.issues.join('; '):'';
-    return (item.ticketId??'SEM-ID')+' | '+(item.parsed.kind==='trade'?'TROCA':'COMPRA')+' | '+item.parsed.origin+' → '+item.parsed.destination+' | '+amount+' | '+item.parsed.playersFrom.join(', ')+(item.parsed.playersTo.length?' ↔ '+item.parsed.playersTo.join(', '):'')+pending;
+    return (item.ticketId??'SEM-ID')+' | '+(item.parsed.kind==='trade'?'TROCA':'COMPRA')+' | '+item.parsed.origin+' → '+item.parsed.destination+' | '+amount+' | '+item.parsed.playersFrom.join(', ')+(item.parsed.playersTo.length?' ↔ '+item.parsed.playersTo.join(', '):'')+' | Confirmações: '+(item.responses?.filter(r=>r.decision==='positive').length??0)+' positivas / '+(item.responses?.filter(r=>r.decision==='negative').length??0)+' negativas'+pending;
    });
    const body=['📥 FILA LOCAL DE REVISÃO — MLG','Pendentes: '+page.total+' | Página '+page.page+'/'+page.pageCount,...(lines.length?lines:['Nenhuma proposta pendente.']),'Para encerrar uma revisão já conferida: !proposta concluir <ID>','Encerrar a revisão não aprova contrato nem altera saldo, elenco ou cotas.'].join('\n');
    await sendBotMessage(current,group,{text:body});return;
@@ -315,6 +334,41 @@ async function connect(){
     }
    }
    void localMarketAuditTick();return;
+  }
+ }
+ // Local confirmations are captured independently of the optional platform bridge.
+ // A quoted reply is linked by stanzaId; an unquoted reply is accepted only when
+ // the sender was explicitly mentioned on exactly one pending proposal in this group.
+ if(event.type==='notify'&&enabled()&&auth.data.groups.includes(group)&&auth.data.marketWindow?.open&&['transfer','trade'].includes(groupMode(auth.data.groupModes,group))){
+  const reactionMessage=body?.reactionMessage;
+  const responseEvent=marketResponse({group,messageId:id,participant:message.key.participant??(message.key as typeof message.key & {participantAlt?:string}).participantAlt??'',proposalMessageId:reactionMessage?.key?.id??context?.stanzaId,text:reactionMessage?undefined:text,reaction:reactionMessage?.text??undefined});
+  if(responseEvent){
+   const candidates=(auth.data.marketInbox??[]).filter(item=>item.localOnly&&item.group===group&&typeof item.reviewedAt!=='number'&&(!responseEvent.proposalMessageId||item.messageId===responseEvent.proposalMessageId));
+   let target=responseEvent.proposalMessageId&&candidates.length===1?candidates[0]:undefined;
+   if(!responseEvent.proposalMessageId){
+    const sender=message.key.participant??(message.key as typeof message.key & {participantAlt?:string}).participantAlt;
+    if(sender){
+     const aliases=await cupAliases(sender,current).catch(()=>[sender]);
+     const mentioned=(auth.data.marketInbox??[]).filter(item=>item.localOnly&&item.group===group&&typeof item.reviewedAt!=='number'&&(item.mentions??[]).some(jid=>aliases.includes(jid)));
+     if(mentioned.length===1)target=mentioned[0];
+    }
+   }
+   if(target){
+    target.responses??=[];
+    if(!target.responses.some(item=>item.messageId===id)){
+     const previous=target.responses.slice();
+     target.responses.push({...responseEvent,proposalMessageId:target.messageId});
+     try{await auth.save();}
+     catch{target.responses=previous;log('LOCAL_MARKET_CONFIRMATION_SAVE_FAILED');return;}
+     log(responseEvent.decision==='positive'?'LOCAL_MARKET_CONFIRMATION_CAPTURED':responseEvent.decision==='negative'?'LOCAL_MARKET_REJECTION_CAPTURED':'LOCAL_MARKET_RESPONSE_CAPTURED');
+     const adminGroups=adminAuditTargets(auth.data.groups,auth.data.groupModes,auth.data.loanGroups);
+     const status=responseEvent.decision==='positive'?'CONFIRMAÇÃO POSITIVA':responseEvent.decision==='negative'?'RECUSA REGISTRADA':'RESPOSTA REGISTRADA';
+     const notice=['📌 ATUALIZAÇÃO DE PROPOSTA — MLG', 'Protocolo: '+(target.ticketId??'indisponível'),'Clube/jogadores: '+target.parsed.origin+' → '+target.parsed.destination+' | '+target.parsed.playersFrom.join(', ')+' ↔ '+target.parsed.playersTo.join(', '),status,'Resposta: '+responseEvent.text,'Remetente: '+responseEvent.participant,'A proposta continua aguardando conferência dos ADMs; nenhuma operação financeira foi executada.'].join('\n');
+     for(const adminGroup of adminGroups)try{await sendBotMessage(current,adminGroup,{text:notice});}catch{log('LOCAL_MARKET_CONFIRMATION_NOTICE_RETRY');}
+    }
+    return;
+   }
+   log('LOCAL_MARKET_CONFIRMATION_UNMATCHED');
   }
  }
  if(marketApi&&enabled()&&message.key.participant&&auth.data.groups.includes(group)){
