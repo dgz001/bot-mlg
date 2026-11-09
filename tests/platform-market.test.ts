@@ -23,6 +23,17 @@ test('health signal records backlog age without message contents or personal num
 });
 test('capture only configured groups and flag a wrong template',()=>{assert.equal(marketEvent('other@g.us','id','123@lid',text,[{kind:'transfer',group:'12345@g.us'}]),null);assert.equal(event.parsed.amountEuros,'5000000');assert.ok(marketEvent('12345@g.us','id','123@lid',text,[{kind:'trade',group:'12345@g.us'}])!.parsed.issues.length);});
 test('bridge sends token only to configured TLS Supabase endpoint',async()=>{let request:any;const api=marketBridge('https://fixture.supabase.co','public','a'.repeat(64),async(url,options)=>{request={url:String(url),options};return new Response('{"success":true}',{status:200});});await api('ingest',event);assert.equal(request.url,'https://fixture.supabase.co/rest/v1/rpc/bot_whatsapp_market_gate');assert.equal(JSON.parse(request.options.body).p_payload.messageId,'MESSAGE');assert.throws(()=>marketBridge('https://malicious.invalid','key','a'.repeat(64)));});
+test('prepare action uses the dedicated protected platform RPC',async()=>{
+ let request:any;
+ const api=marketBridge('https://fixture.supabase.co','public','a'.repeat(64),async(url,options)=>{
+  request={url:String(url),body:JSON.parse(String(options?.body))};
+  return new Response('{"success":true}',{status:200});
+ });
+ await api('prepare',{id:'00000000-0000-0000-0000-000000000001'});
+ assert.equal(request.url,'https://fixture.supabase.co/rest/v1/rpc/bot_whatsapp_market_prepare');
+ assert.equal(request.body.p_payload.id,'00000000-0000-0000-0000-000000000001');
+ assert.equal(request.body.p_action,undefined);
+});
 test('transfer ingest is promoted exactly once to the official signing stage',async()=>{
  const state={marketInbox:[event]};const calls:string[]=[];
  const api=(async(action:string,payload:any)=>{calls.push(action);if(action==='ingest')return {success:true,id:'inbox-id'};if(action==='prepare')return {success:true,status:'awaiting_signatures'};return {success:true};}) as any;
