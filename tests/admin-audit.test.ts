@@ -26,5 +26,5 @@ test('window command resolves the intended action after trimming',()=>{
  assert.equal(marketWindowCommandAction('  !transligar  '),'open');
  assert.equal(marketWindowCommandAction('!transdesligar'),'close');
  assert.equal(marketWindowCommandAction('!transligar agora'),null);
- assert.equal(marketWindowCommandAction(''),'null'===null?null:null);
+ assert.equal(marketWindowCommandAction(''),null);
 });
