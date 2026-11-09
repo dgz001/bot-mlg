@@ -39,7 +39,7 @@ export function findMarketFinanceClub(clubs:MarketFinanceClub[],value:string):Ma
  return clubs.find(club=>[club.name,...club.aliases].some(alias=>normalizeMarketClub(alias)===key));
 }
 export function assessLocalMarketFinance(
- proposal:{kind:'transfer'|'trade';purchaseScope?:'internal'|'external'|'review'|'trade';origin:string;destination:string;amountEuros:string|null},
+ proposal:{kind:'transfer'|'trade'|'loan';purchaseScope?:'internal'|'external'|'review'|'trade';origin:string;destination:string;amountEuros:string|null},
  state:MarketFinanceState
 ):string[]{
  const alerts:string[]=[];
@@ -49,6 +49,7 @@ export function assessLocalMarketFinance(
   if(!buyer)alerts.push('⚠️ Clube de destino não localizado no livro-caixa: "'+proposal.destination+'". Não foi possível conferir o saldo do comprador.');
   if(proposal.purchaseScope!=='external'&&!seller)alerts.push('⚠️ Clube de origem não localizado no livro-caixa: "'+proposal.origin+'". Não foi possível conferir a cota de vendas.');
  }
+ if(proposal.kind==='loan')alerts.push('ℹ️ Empréstimo de jogador: valor e duração registrados para conferência; nenhuma cota de compra/venda será alterada automaticamente.');
  if(proposal.kind==='trade'){
   if(!seller)alerts.push('⚠️ Clube de origem da troca não localizado no livro-caixa: "'+proposal.origin+'".');
   if(!buyer)alerts.push('⚠️ Clube de destino da troca não localizado no livro-caixa: "'+proposal.destination+'".');
