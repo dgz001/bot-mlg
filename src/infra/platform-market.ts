@@ -1,9 +1,10 @@
 import {parseWhatsAppMarketProposal,type WhatsAppMarketProposal} from './market-proposal.ts';
+import type {MarketResponse} from './market-response.ts';
 export function marketNoticeMessageId(kind:'private'|'admin',noticeId:string){
  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(noticeId))throw Error('Invalid market notice ID');
  return 'MLG'+(kind==='private'?'PRIV':'ADMIN')+noticeId.replaceAll('-','').toUpperCase();
 }
-export type MarketEvent={group:string;messageId:string;participant:string;text:string;queuedAt?:number;mentions?:string[];cardReading?:{week:string|null;confidence:number;text:string;imageHash:string};parsed:WhatsAppMarketProposal;localOnly?:boolean;adminNotified?:boolean;ticketId?:string;reviewedAt?:number;reviewedBy?:string};
+export type MarketEvent={group:string;messageId:string;participant:string;text:string;queuedAt?:number;mentions?:string[];cardReading?:{week:string|null;confidence:number;text:string;imageHash:string};parsed:WhatsAppMarketProposal;localOnly?:boolean;adminNotified?:boolean;ticketId?:string;reviewedAt?:number;reviewedBy?:string;responses?:MarketResponse[]};
 export type MarketChannel={kind:'transfer'|'trade';group:string};
 export type MarketReaction={id:string;revision:number;emoji:''|'🟠'|'🟢'|'🔴';lease:string;group:string;messageId:string;participant:string};
 export function marketEvent(group:string,messageId:string,participant:string,text:string,channels:MarketChannel[]):MarketEvent|null{
