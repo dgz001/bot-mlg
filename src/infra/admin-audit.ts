@@ -24,6 +24,12 @@ export function adminAuditBody(input:{at:number;destination:string;messageId:str
  return ['🧾 REGISTRO DE AÇÃO DO BOT','Horário: '+new Date(input.at).toISOString(),'Destino: '+input.destination,'ID da mensagem: '+input.messageId,'Conteúdo: '+auditContent(input.content)].join('\n');
 }
 
+export function marketWindowCommandAction(text:string):'open'|'close'|null{
+ const command=text.trim().toLowerCase();
+ if(command==='!transligar')return 'open';
+ if(command==='!transdesligar')return 'close';
+ return null;
+}
 export function isMarketWindowCommand(text:string):boolean{
- return /^\s*!(?:transligar|transdesligar)\s*$/i.test(text);
+ return marketWindowCommandAction(text)!==null;
 }

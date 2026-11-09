@@ -1,5 +1,6 @@
 import {rosterTick,rosterTextReady,rosterMessageId,type RosterConfig} from "./infra/roster-collection.ts";
-import {adminAuditTargets,adminAuditBody,auditMessageId,isMarketWindowCommand} from './infra/admin-audit.ts';
+import {adminAuditTargets,adminAuditBody,auditMessageId,isMarketWindowCommand,marketWindowCommandAction} from './infra/admin-audit.ts';
+import {isWhatsAppMarketProposalTooLong} from './infra/market-proposal.ts';
 import {loanJoinBatch} from './infra/loan-join-batch.ts';
 import {reconcileMarketGroupGate} from './infra/market-group-gate.ts';
 import {loanWizard} from './infra/loan-wizard.ts';
@@ -196,7 +197,7 @@ async function connect(){
     if(authorized)break;
    }
    if(!authorized){await sendBotMessage(current,group,{text:'🔒 Somente um ADM geral cadastrado como administrador no Grupo da Administração Bot pode controlar a janela.'});return;}
-   const open=/^!transligar/i.test(text);
+   const open=marketWindowCommandAction(text)==='open';
    const previous=auth.data.marketWindow??{open:false,captureSince:0};
    if(open&&previous.open){await sendBotMessage(current,group,{text:'🟢 A janela de transferências do bot já está ligada. Não reiniciei a captura nem recapturei mensagens antigas.'});return;}
    if(!open&&!previous.open){await sendBotMessage(current,group,{text:'⚪ A janela do bot já está desligada.'});return;}
@@ -210,6 +211,10 @@ async function connect(){
  }
  if(['transfer','trade'].includes(groupMode(auth.data.groupModes,group))&&!auth.data.marketWindow?.open)return;
  if(enabled()&&auth.data.groups.includes(group)&&message.key.participant&&['transfer','trade'].includes(groupMode(auth.data.groupModes,group))){
+  if(isWhatsAppMarketProposalTooLong(text)){
+   await sendBotMessage(current,group,{text:'❌ Mensagem não processada: o limite é de 16.000 caracteres. Divida a proposta em uma mensagem menor. O bot continua funcionando.'});
+   return;
+  }
   const channels:MarketChannel[]=auth.data.groups.filter(g=>['transfer','trade'].includes(groupMode(auth.data.groupModes,g))).map(g=>({group:g,kind:groupMode(auth.data.groupModes,g) as 'transfer'|'trade'}));
   const localProposal=marketEvent(group,id,message.key.participant,text,channels);
   if(localProposal){

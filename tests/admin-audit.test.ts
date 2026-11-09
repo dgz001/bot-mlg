@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {adminAuditTargets,adminAuditBody,auditContent,auditMessageId,isMarketWindowCommand} from '../src/infra/admin-audit.ts';
+import {adminAuditTargets,adminAuditBody,auditContent,auditMessageId,isMarketWindowCommand,marketWindowCommandAction} from '../src/infra/admin-audit.ts';
 test('audit targets include only configured administration groups',()=>{
  assert.deepEqual(adminAuditTargets(['market@g.us','admin@g.us','loan@g.us'],{['admin@g.us']:'controle',['market@g.us']:'transfer',['loan@g.us']:'controle'},['loan@g.us']),['admin@g.us']);
 });
@@ -20,4 +20,11 @@ test('transfer window command parser accepts exact commands and surrounding whit
  assert.equal(isMarketWindowCommand('!transligar agora'),false);
  assert.equal(isMarketWindowCommand('!transligar\\s'),false);
  assert.equal(isMarketWindowCommand('transligar'),false);
+});
+
+test('window command resolves the intended action after trimming',()=>{
+ assert.equal(marketWindowCommandAction('  !transligar  '),'open');
+ assert.equal(marketWindowCommandAction('!transdesligar'),'close');
+ assert.equal(marketWindowCommandAction('!transligar agora'),null);
+ assert.equal(marketWindowCommandAction(''),null);
 });
