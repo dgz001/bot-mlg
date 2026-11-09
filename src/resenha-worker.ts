@@ -210,7 +210,7 @@ async function connect(){
    const lines=page.items.map(item=>{
     const amount=item.parsed.amountEuros===null?'valor não informado':'€'+Number(item.parsed.amountEuros).toLocaleString('pt-BR',{maximumFractionDigits:0});
     const pending=item.parsed.issues.length?' ⚠️ '+item.parsed.issues.join('; '):'';
-    return (item.ticketId??'SEM-ID')+' | '+(item.parsed.kind==='trade'?'TROCA':'COMPRA')+' | '+item.parsed.origin+' → '+item.parsed.destination+' | '+amount+pending;
+    return (item.ticketId??'SEM-ID')+' | '+(item.parsed.kind==='trade'?'TROCA':'COMPRA')+' | '+item.parsed.origin+' → '+item.parsed.destination+' | '+amount+' | '+item.parsed.playersFrom.join(', ')+(item.parsed.playersTo.length?' ↔ '+item.parsed.playersTo.join(', '):'')+pending;
    });
    const body=['📥 FILA LOCAL DE REVISÃO — MLG','Pendentes: '+page.total+' | Página '+page.page+'/'+page.pageCount,...(lines.length?lines:['Nenhuma proposta pendente.']),'Para encerrar uma revisão já conferida: !proposta concluir <ID>','Encerrar a revisão não aprova contrato nem altera saldo, elenco ou cotas.'].join('\n');
    await sendBotMessage(current,group,{text:body});return;
@@ -267,7 +267,7 @@ async function connect(){
   const localProposal=marketEvent(group,id,message.key.participant,text,channels);
   if(localProposal){
    auth.data.marketInbox??=[];
-   const previousInbox=auth.data.marketInbox;
+   const previousInbox=[...auth.data.marketInbox];
    const queueResult=enqueueLocalMarketProposal(auth.data,{...localProposal,localOnly:true,adminNotified:false});
    if(queueResult==='full'){
     await sendBotMessage(current,group,{text:'🚨 FILA DE REVISÃO CHEIA: existem '+MAX_PENDING_LOCAL_MARKET_PROPOSALS+' propostas pendentes. Esta proposta NÃO foi registrada. Aguarde um ADM consultar !propostas e encerrar uma revisão já conferida. Não reenvie repetidamente.'});
