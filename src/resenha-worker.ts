@@ -5,6 +5,7 @@ import {loanWizard} from './infra/loan-wizard.ts';
 import {readMarketCard} from "./infra/market-card.ts";
 import {marketResponse} from "./infra/market-response.ts";
 import {marketBridge,marketEvent,drainMarketInbox,deliverMarketReactions,canRecoverMarketMessage,marketHealthPayload,type MarketChannel} from "./infra/platform-market.ts";
+import {activateMarketTransfers,canProcessMarketEvent,marketTransfersActive} from './infra/market-activation.ts';
 import {loanCommand} from './infra/loan-invitation.ts';
 import {minicampClubs} from './minicamp/clubs.ts';
 import {moduleEnabled,parseControls} from './infra/bot-controls.ts';
@@ -90,6 +91,8 @@ async function connect(){
   for(const event of events){queue=queue.then(async()=>{
    const group=event.key.remoteJid,id=event.key.id,participant=event.key.participant;
    if(!marketApi||!group||!id||!participant||event.key.fromMe||!enabled()||!auth.data.groups.includes(group)||!marketChannels.some(c=>c.group===group))return;
+   const editedChannel=marketChannels.find(c=>c.group===group);
+   if(editedChannel?.kind==='transfer'&&(!marketTransfersActive(auth.data)||!auth.data.marketTransferMessages?.some(m=>m.group===group&&m.messageId===id&&m.at>=auth.data.marketTransfersActivatedAt!)))return;
    const edited=extractMessageContent(event.update.message?.editedMessage?.message??event.update.message);
    const text=(edited?.conversation??edited?.extendedTextMessage?.text??edited?.imageMessage?.caption??'').trim();
    if(!text)return;
@@ -102,6 +105,8 @@ async function connect(){
   for(const event of events){queue=queue.then(async()=>{
    const group=event.key.remoteJid,id=event.reaction.key?.id,participant=event.reaction.key?.participant;
    if(!marketApi||!group||!id||!participant||event.reaction.key?.fromMe||!enabled()||!auth.data.groups.includes(group)||!marketChannels.some(c=>c.group===group))return;
+   const reactionChannel=marketChannels.find(c=>c.group===group);
+   if(reactionChannel?.kind==='transfer'&&(!marketTransfersActive(auth.data)||!auth.data.marketTransferMessages?.some(m=>m.group===group&&m.messageId===id&&m.at>=auth.data.marketTransfersActivatedAt!)))return;
    const response=marketResponse({group,messageId:id,participant,proposalMessageId:event.key.id,reaction:event.reaction.text??undefined});
    if(!response)return;auth.data.marketResponses??=[];
    if(!auth.data.marketResponses.some(e=>e.group===group&&e.messageId===id)){auth.data.marketResponses.push(response);await auth.save();}
@@ -151,10 +156,53 @@ async function connect(){
   return;
  }
  if(!group.endsWith('@g.us'))return;
+ if(/^!transligar\\s*$/i.test(text)&&message.key.participant&&auth.data.groups.includes(group)){
+  const channel=marketChannels.find(c=>c.group===group);
+  if(!marketApi||!channel||channel.kind!=='transfer'){
+   await current.sendMessage(group,{text:'⚠️ Use !transligar somente no grupo oficial de transferências da MLG.'});return;
+  }
+  if(!cupApi){
+   await current.sendMessage(group,{text:'⚠️ Não foi possível validar a permissão de ADM geral. A ativação não foi realizada.'});return;
+  }
+  const dedup=JSON.stringify(['market-transligar',group,message.key.participant,id]);
+  if(auth.data.seen.includes(dedup))return;
+  try{
+   const aliases=await cupAliases(message.key.participant,current);
+   const permission=await cupApi<{allowed:boolean}>({action:'control-check',group,aliases});
+   if(!permission.allowed){
+    auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);await auth.save();
+    await current.sendMessage(group,{text:'🔒 Somente um ADM geral da MLG pode iniciar a captura de transferências.'});return;
+   }
+   const activation=activateMarketTransfers(auth.data,Date.now());
+   if(activation.activated){
+    const startedAt=activation.activatedAt;
+    auth.data.marketInbox=(auth.data.marketInbox??[]).filter(event=>event.parsed.kind!=='transfer'&&(event.queuedAt??0)>=startedAt||event.parsed.kind==='trade');
+    auth.data.marketResponses=(auth.data.marketResponses??[]).filter(response=>{
+     const responseGroup=marketChannels.find(c=>c.group===response.group);
+     return responseGroup?.kind!=='transfer'||response.at>=startedAt;
+    });
+    auth.data.marketTransferMessages=(auth.data.marketTransferMessages??[]).filter(event=>event.at>=startedAt);
+   }
+   auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);await auth.save();
+   const notice=activation.activated
+    ?'✅ Captura de transferências ativada. Somente propostas enviadas a partir deste comando serão analisadas. As propostas válidas serão encaminhadas à plataforma para assinatura; saldo e elenco só mudam após a conclusão oficial.'
+    :'ℹ️ A captura de transferências já estava ativa. O horário de início não foi alterado.';
+   await current.sendMessage(group,{text:notice});
+   void marketTick();
+  }catch{
+   log('MARKET_TRANSFER_ACTIVATION_RETRY');
+   await current.sendMessage(group,{text:'⚠️ Não consegui confirmar a ativação. Nenhuma proposta foi liberada; tente novamente.'}).catch(()=>{});
+  }
+  return;
+ }
  if(marketApi&&enabled()&&message.key.participant&&auth.data.groups.includes(group)){
-  if(marketChannels.some(c=>c.group===group)){
+  const channel=marketChannels.find(c=>c.group===group);
+  if(channel?.kind==='transfer'&&!marketTransfersActive(auth.data))return;
+  if(channel){
    const reaction=body?.reactionMessage;
-   const response=marketResponse({group,messageId:id,participant:message.key.participant,proposalMessageId:reaction?.key?.id??context?.stanzaId,text,reaction:reaction?.text??undefined});
+   const proposalReference=reaction?.key?.id??context?.stanzaId;
+   if(channel.kind==='transfer'&&!auth.data.marketTransferMessages?.some(m=>m.group===group&&m.messageId===proposalReference&&m.at>=auth.data.marketTransfersActivatedAt!))return;
+   const response=marketResponse({group,messageId:id,participant:message.key.participant,proposalMessageId:proposalReference,text,reaction:reaction?.text??undefined});
    if(response){auth.data.marketResponses??=[];if(!auth.data.marketResponses.some(e=>e.group===group&&e.messageId===id)){auth.data.marketResponses.push(response);await auth.save();}void marketTick();return;}
   }
 
@@ -173,6 +221,13 @@ async function connect(){
   if(proposal){
    (proposal.parsed as typeof proposal.parsed & {directoryPhone?:string}).directoryPhone=(await cupAliases(message.key.participant,current).catch(()=>[])).find(a=>a.endsWith('@s.whatsapp.net'));
    proposal.mentions=context?.mentionedJid??[];
+   if(channel?.kind==='transfer'){
+    auth.data.marketTransferMessages??=[];
+    if(!auth.data.marketTransferMessages.some(m=>m.group===group&&m.messageId===id)){
+     auth.data.marketTransferMessages.push({group,messageId:id,at:proposal.queuedAt??Date.now()});
+     auth.data.marketTransferMessages=auth.data.marketTransferMessages.slice(-5000);
+    }
+   }
    auth.data.marketInbox??=[];
    if(!auth.data.marketInbox.some(e=>e.group===group&&e.messageId===id&&e.text===text)){
     auth.data.marketInbox.push(proposal);await auth.save();
@@ -724,8 +779,8 @@ async function marketTick(){
   await syncGates(Array.isArray(config.batches)?config.batches:[]);
   // Save captured events before any remote acknowledgement or queue removal.
   if(auth.data.marketInbox?.length||auth.data.marketResponses?.length)await auth.save();
-  const hadMarketInbox=Boolean(auth.data.marketInbox?.length);
-  await drainMarketInbox(auth.data,marketApi,()=>auth.save());
+  const hadMarketInbox=Boolean(auth.data.marketInbox?.some(e=>e.parsed.kind==='trade'||canProcessMarketEvent(auth.data,{kind:'transfer',queuedAt:e.queuedAt})));
+  await drainMarketInbox(auth.data,marketApi,()=>auth.save(),event=>canProcessMarketEvent(auth.data,{kind:event.parsed.kind,queuedAt:event.queuedAt}));
   if(hadMarketInbox){
    const updated=await marketApi<{batches:MarketBatch[]}>('config',{rosterVersion:1});
    if(!Array.isArray(updated.batches))throw Error('Invalid market batches');
@@ -733,6 +788,8 @@ async function marketTick(){
    await syncGates(updated.batches);
   }
   for(const response of [...(auth.data.marketResponses??[])].slice(0,20)){
+   const responseChannel=marketChannels.find(c=>c.group===response.group);
+   if(responseChannel?.kind==='transfer'&&(!marketTransfersActive(auth.data)||response.at<auth.data.marketTransfersActivatedAt!))continue;
    const result=await marketApi<{success:boolean}>('response',response);if(!result.success)throw Error('Response not confirmed');
    const previous=auth.data.marketResponses;auth.data.marketResponses=auth.data.marketResponses?.filter(e=>!(e.group===response.group&&e.messageId===response.messageId));
    try{await auth.save();}catch(error){auth.data.marketResponses=previous;throw error;}
@@ -741,7 +798,10 @@ async function marketTick(){
   await deliverMarketReactions(marketApi,async r=>{
    if(!auth.data.groups.includes(r.group)||auth.data.loanGroups?.includes(r.group))throw Error('Market reaction group is not authorized');
    await current.sendMessage(r.group,{react:{text:r.emoji,key:{remoteJid:r.group,participant:r.participant,id:r.messageId,fromMe:false}}});
-  },()=>socket===current&&!stopping&&enabled());
+  },()=>socket===current&&!stopping&&enabled(),reaction=>{
+   const channel=marketChannels.find(c=>c.group===reaction.group);
+   return channel?.kind!=='transfer'||(marketTransfersActive(auth.data)&&Boolean(auth.data.marketTransferMessages?.some(m=>m.group===reaction.group&&m.messageId===reaction.messageId&&m.at>=auth.data.marketTransfersActivatedAt!)));
+  });
   const {notices}=await marketApi<{notices:MarketPrivateNotice[]}>('claim_private');
   if(!Array.isArray(notices))throw Error('Invalid private notice list');
   for(const notice of notices){
