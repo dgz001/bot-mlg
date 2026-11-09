@@ -70,7 +70,7 @@ async function localMarketAuditTick(){
   const groups=adminAuditTargets(auth.data.groups,auth.data.groupModes,auth.data.loanGroups);
   if(!groups.length){if((auth.data.marketInbox??[]).some(e=>e.localOnly&&!e.adminNotified&&typeof e.reviewedAt!=='number'))log('LOCAL_MARKET_ADMIN_GROUP_NOT_CONFIGURED');return;}
   for(const event of (auth.data.marketInbox??[]).filter(e=>e.localOnly&&!e.adminNotified&&typeof e.reviewedAt!=='number').slice(0,10)){
-   const body=['📥 NOVA PROPOSTA RECEBIDA — REVISÃO DOS ADMs','Protocolo: '+(event.ticketId??'indisponível'),'Grupo: '+event.group,'Remetente: '+event.participant,'Mensagem: '+event.messageId,'Tipo: '+(event.parsed.kind==='trade'?'Troca':'Transferência'),'Origem: '+event.parsed.origin,'Destino: '+event.parsed.destination,'Jogadores: '+event.parsed.playersFrom.join(', '),'Jogadores recebidos: '+(event.parsed.playersTo.join(', ')||'—'),'Valor informado: '+(event.parsed.amountEuros??'não informado'),'Alertas do livro-caixa: '+(assessLocalMarketFinance(event.parsed,auth.data.marketFinance??INITIAL_MARKET_FINANCE).join(' | ')||'Nenhum alerta automático.'),'Pendências: '+(event.parsed.issues.join('; ')||'Nenhuma detectada pelo parser'),'Status: aguardando conferência manual. Alertas são preventivos; o bot não aprova nem altera saldos ou elencos.'].join('\n');
+   const body=['📥 NOVA PROPOSTA RECEBIDA — REVISÃO DOS ADMs','Protocolo: '+(event.ticketId??'indisponível'),'Grupo: '+event.group,'Remetente: '+event.participant,'Mensagem: '+event.messageId,'Tipo: '+(event.parsed.kind==='trade'?'Troca':event.parsed.kind==='loan'?'Empréstimo':'Transferência'),'Origem: '+event.parsed.origin,'Destino: '+event.parsed.destination,'Jogadores: '+event.parsed.playersFrom.join(', '),'Jogadores recebidos: '+(event.parsed.playersTo.join(', ')||'—'),'Duração: '+(event.parsed.duration??'—'),'Valor informado: '+(event.parsed.amountEuros??'não informado'),'Alertas do livro-caixa: '+(assessLocalMarketFinance(event.parsed,auth.data.marketFinance??INITIAL_MARKET_FINANCE).join(' | ')||'Nenhum alerta automático.'),'Pendências: '+(event.parsed.issues.join('; ')||'Nenhuma detectada pelo parser'),'Status: aguardando conferência manual. Alertas são preventivos; o bot não aprova nem altera saldos ou elencos.'].join('\n');
    let delivered=true;
    for(const group of groups)try{const sent=await socket.sendMessage(group,{text:body},{messageId:auditMessageId(event.messageId,group)});if(!sent?.key.id)throw Error('Admin notice not confirmed');}catch{delivered=false;log('LOCAL_MARKET_ADMIN_NOTICE_RETRY');}
    if(delivered){event.adminNotified=true;try{await auth.save();}catch{event.adminNotified=false;log('LOCAL_MARKET_AUDIT_STATE_SAVE_FAILED');}}
@@ -136,9 +136,10 @@ async function connect(){
    const group=event.key.remoteJid,id=event.key.id,participant=event.key.participant??(event.key as typeof event.key & {participantAlt?:string}).participantAlt;
    const proposalMessageId=event.reaction.key?.id;
    if(!group||!id||!participant||event.key.fromMe||!enabled()||!auth.data.groups.includes(group))return;
-   const response=marketResponse({group,messageId:id,participant,proposalMessageId,reaction:event.reaction.text??undefined});
+   const linkedProposal=(auth.data.marketInbox??[]).find(item=>item.localOnly&&item.group===group&&item.messageId===proposalMessageId);
+   const response=marketResponse({group,messageId:id,participant,proposalMessageId,reaction:event.reaction.text??undefined,proposalKind:linkedProposal?.parsed.kind});
    if(!response)return;
-   if(auth.data.marketWindow?.open&&['transfer','trade'].includes(groupMode(auth.data.groupModes,group))){
+   if(auth.data.marketWindow?.open&&['transfer','trade','market-loan'].includes(groupMode(auth.data.groupModes,group))){
     const target=(auth.data.marketInbox??[]).find(item=>item.localOnly&&item.group===group&&item.messageId===proposalMessageId&&typeof item.reviewedAt!=='number');
     if(target){
      target.responses??=[];
@@ -148,7 +149,9 @@ async function connect(){
       log(response.decision==='positive'?'LOCAL_MARKET_CONFIRMATION_CAPTURED':response.decision==='negative'?'LOCAL_MARKET_REJECTION_CAPTURED':'LOCAL_MARKET_RESPONSE_CAPTURED');
       const adminGroups=adminAuditTargets(auth.data.groups,auth.data.groupModes,auth.data.loanGroups);
       const status=response.decision==='positive'?'CONFIRMAÇÃO POSITIVA':response.decision==='negative'?'RECUSA REGISTRADA':'RESPOSTA REGISTRADA';
-      const notice=['📌 ATUALIZAÇÃO DE PROPOSTA — MLG','Protocolo: '+(target.ticketId??'indisponível'),status,'Resposta: '+response.text,'Remetente: '+participant,'A proposta continua aguardando conferência dos ADMs; nenhuma operação financeira foi executada.'].join('\n');
+      const kindLabel=target.parsed.kind==='loan'?'EMPRÉSTIMO':target.parsed.kind==='trade'?'TROCA':'TRANSFERÊNCIA';
+      const reason=response.decision==='positive'?'Confirmação registrada pela reação correspondente. Ainda depende da conferência final dos ADMs.':response.decision==='negative'?'Recusa registrada. A reação não informa o motivo; solicite que o responsável explique no grupo antes de encerrar.':'A reação foi removida ou não representa aprovação/rejeição válida.';
+      const notice=['📌 ATUALIZAÇÃO DE PROPOSTA — MLG','Protocolo: '+(target.ticketId??'indisponível'),'Tipo: '+kindLabel,'Negociação: '+target.parsed.origin+' → '+target.parsed.destination,'Jogador(es): '+target.parsed.playersFrom.join(', '),'Valor: '+(target.parsed.amountEuros===null?'não informado':'€'+target.parsed.amountEuros),'Duração: '+(target.parsed.duration??'—'),status,'Resposta: '+response.text,'Remetente: '+participant,'Análise: '+reason,'Nenhum saldo, elenco ou cota foi alterado automaticamente.'].join('\n');
       for(const adminGroup of adminGroups)try{await sendBotMessage(current,adminGroup,{text:notice});}catch{log('LOCAL_MARKET_CONFIRMATION_NOTICE_RETRY');}
      }
      return;
@@ -239,7 +242,7 @@ async function connect(){
    const lines=page.items.map(item=>{
     const amount=item.parsed.amountEuros===null?'valor não informado':'€'+Number(item.parsed.amountEuros).toLocaleString('pt-BR',{maximumFractionDigits:0});
     const pending=item.parsed.issues.length?' ⚠️ '+item.parsed.issues.join('; '):'';
-    return (item.ticketId??'SEM-ID')+' | '+(item.parsed.kind==='trade'?'TROCA':'COMPRA')+' | '+item.parsed.origin+' → '+item.parsed.destination+' | '+amount+' | '+item.parsed.playersFrom.join(', ')+(item.parsed.playersTo.length?' ↔ '+item.parsed.playersTo.join(', '):'')+' | Confirmações: '+(item.responses?.filter(r=>r.decision==='positive').length??0)+' positivas / '+(item.responses?.filter(r=>r.decision==='negative').length??0)+' negativas'+pending;
+    return (item.ticketId??'SEM-ID')+' | '+(item.parsed.kind==='trade'?'TROCA':item.parsed.kind==='loan'?'EMPRÉSTIMO':'TRANSFERÊNCIA')+' | '+item.parsed.origin+' → '+item.parsed.destination+' | '+amount+' | '+item.parsed.playersFrom.join(', ')+(item.parsed.playersTo.length?' ↔ '+item.parsed.playersTo.join(', '):'')+' | Confirmações: '+(item.responses?.filter(r=>r.decision==='positive').length??0)+' positivas / '+(item.responses?.filter(r=>r.decision==='negative').length??0)+' negativas'+pending;
    });
    const body=['📥 FILA LOCAL DE REVISÃO — MLG','Pendentes: '+page.total+' | Página '+page.page+'/'+page.pageCount,...(lines.length?lines:['Nenhuma proposta pendente.']),'Para encerrar uma revisão já conferida: !proposta concluir <ID>','Encerrar a revisão não aprova contrato nem altera saldo, elenco ou cotas.'].join('\n');
    await sendBotMessage(current,group,{text:body});return;
@@ -278,7 +281,7 @@ async function connect(){
    const actor=await cupAliases(participant,current);
    const adminGroups=adminAuditTargets(auth.data.groups,auth.data.groupModes,auth.data.loanGroups);
    const commandFromControl=commandMode==='controle';
-   const marketGroups=auth.data.groups.filter(g=>['transfer','trade'].includes(groupMode(auth.data.groupModes,g))&&!auth.data.loanGroups?.includes(g)).sort();
+   const marketGroups=auth.data.groups.filter(g=>['transfer','trade','market-loan'].includes(groupMode(auth.data.groupModes,g))&&!auth.data.loanGroups?.includes(g)).sort();
    let authorized=false;
    const authorizationGroups=commandFromControl?[group]:[...new Set([group,...adminGroups])];
    for(const adminGroup of authorizationGroups){
@@ -298,19 +301,19 @@ async function connect(){
    if(!open&&!previous.open){await sendBotMessage(current,group,{text:'⚪ A janela do bot já está desligada.'});return;}
    auth.data.marketWindow=open?{open:true,captureSince:Date.now()}:{...previous,open:false,closedAt:Date.now()};
    try{await auth.save();}catch(error){auth.data.marketWindow=previous;throw error;}
-   const body=open?'🟢 JANELA DE TRANSFERÊNCIAS LIGADA NO BOT. A captura começa agora; mensagens anteriores não serão processadas.':'🔴 JANELA DE TRANSFERÊNCIAS DESLIGADA NO BOT. Novas propostas não serão capturadas.';
+   const body=open?'🟢 JANELA DE NEGOCIAÇÕES LIGADA NO BOT. A captura começa agora; mensagens anteriores não serão processadas.':'🔴 JANELA DE NEGOCIAÇÕES DESLIGADA NO BOT. Novas propostas não serão capturadas.';
    await sendBotMessage(current,group,{text:body+(commandFromControl?'\nGrupos monitorados: '+marketGroups.length:'')});
    if(!commandFromControl)for(const adminGroup of adminGroups)if(adminGroup!==group)await sendBotMessage(current,adminGroup,{text:body+'\nGrupo de mercado: '+group});
   }catch{log('LOCAL_MARKET_WINDOW_COMMAND_FAILED');await sendBotMessage(current,group,{text:'⚠️ Não consegui confirmar a alteração. Consulte !statusbot antes de repetir.'}).catch(()=>{});}
   return;
  }
- if(['transfer','trade'].includes(groupMode(auth.data.groupModes,group))&&!auth.data.marketWindow?.open)return;
- if(enabled()&&auth.data.groups.includes(group)&&message.key.participant&&['transfer','trade'].includes(groupMode(auth.data.groupModes,group))){
+ if(['transfer','trade','market-loan'].includes(groupMode(auth.data.groupModes,group))&&!auth.data.marketWindow?.open)return;
+ if(enabled()&&auth.data.groups.includes(group)&&message.key.participant&&['transfer','trade','market-loan'].includes(groupMode(auth.data.groupModes,group))){
   if(isWhatsAppMarketProposalTooLong(text)){
    await sendBotMessage(current,group,{text:'❌ Mensagem não processada: o limite é de 16.000 caracteres. Divida a proposta em uma mensagem menor. O bot continua funcionando.'});
    return;
   }
-  const channels:MarketChannel[]=auth.data.groups.filter(g=>['transfer','trade'].includes(groupMode(auth.data.groupModes,g))).map(g=>({group:g,kind:groupMode(auth.data.groupModes,g) as 'transfer'|'trade'}));
+  const channels:MarketChannel[]=auth.data.groups.filter(g=>['transfer','trade','market-loan'].includes(groupMode(auth.data.groupModes,g))).map(g=>({group:g,kind:groupMode(auth.data.groupModes,g)==='market-loan'?'loan':groupMode(auth.data.groupModes,g) as 'transfer'|'trade'}));
   const localProposal=marketEvent(group,id,message.key.participant,text,channels);
   if(localProposal){
    auth.data.marketInbox??=[];
@@ -329,7 +332,7 @@ async function connect(){
     try{await sendBotMessage(current,group,{react:{text:reaction,key:{remoteJid:group,participant:message.key.participant,id,fromMe:false}}});}catch{log('LOCAL_MARKET_REACTION_RETRY');}
     const phone=(await cupAliases(message.key.participant,current).catch(()=>[])).find(a=>a.endsWith('@s.whatsapp.net'));
     if(phone){
-     const dm=issues.length?'❌ Protocolo '+ticket+' recebido, mas há pendências: '+issues.join('; ')+'. Corrija os campos e envie uma nova proposta.':localProposal.parsed.purchaseScope==='review'?'🟠 Protocolo '+ticket+' recebido, mas o tipo ainda não está claro. Identifique se é COMPRA INTERNA (de outro clube da MLG) ou COMPRA EXTERNA (jogador de fora da MLG). A proposta ficará aguardando os ADMs.':'🟠 Protocolo '+ticket+' recebido e encaminhado para revisão dos ADMs. Ainda não está aprovado nem concluído.';
+     const dm=issues.length?'❌ Protocolo '+ticket+' recebido, mas há pendências: '+issues.join('; ')+'. Corrija os campos e envie uma nova proposta.':localProposal.parsed.kind==='loan'?'🟠 Protocolo '+ticket+' de EMPRÉSTIMO recebido: '+localProposal.parsed.playersFrom.join(', ')+' — '+localProposal.parsed.origin+' → '+localProposal.parsed.destination+'. Duração: '+(localProposal.parsed.duration??'não informada')+'. Valor: €'+(localProposal.parsed.amountEuros??'não informado')+'. Encaminhado aos ADMs para conferência; ainda não está aprovado.':localProposal.parsed.purchaseScope==='review'?'🟠 Protocolo '+ticket+' recebido, mas o tipo ainda não está claro. Identifique se é COMPRA INTERNA (de outro clube da MLG) ou COMPRA EXTERNA (jogador de fora da MLG). A proposta ficará aguardando os ADMs.':'🟠 Protocolo '+ticket+' recebido e encaminhado para revisão dos ADMs. Ainda não está aprovado nem concluído.';
      await sendBotMessage(current,phone,{text:dm}).catch(()=>log('LOCAL_MARKET_PRIVATE_NOTICE_RETRY'));
     }
    }
@@ -339,9 +342,11 @@ async function connect(){
  // Local confirmations are captured independently of the optional platform bridge.
  // A quoted reply is linked by stanzaId; an unquoted reply is accepted only when
  // the sender was explicitly mentioned on exactly one pending proposal in this group.
- if(event.type==='notify'&&enabled()&&auth.data.groups.includes(group)&&auth.data.marketWindow?.open&&['transfer','trade'].includes(groupMode(auth.data.groupModes,group))){
+ if(event.type==='notify'&&enabled()&&auth.data.groups.includes(group)&&auth.data.marketWindow?.open&&['transfer','trade','market-loan'].includes(groupMode(auth.data.groupModes,group))){
   const reactionMessage=body?.reactionMessage;
-  const responseEvent=marketResponse({group,messageId:id,participant:message.key.participant??(message.key as typeof message.key & {participantAlt?:string}).participantAlt??'',proposalMessageId:reactionMessage?.key?.id??context?.stanzaId,text:reactionMessage?undefined:text,reaction:reactionMessage?.text??undefined});
+  const linkedId=reactionMessage?.key?.id??context?.stanzaId;
+  const linkedProposal=(auth.data.marketInbox??[]).find(item=>item.localOnly&&item.group===group&&item.messageId===linkedId);
+  const responseEvent=marketResponse({group,messageId:id,participant:message.key.participant??(message.key as typeof message.key & {participantAlt?:string}).participantAlt??'',proposalMessageId:linkedId,text:reactionMessage?undefined:text,reaction:reactionMessage?.text??undefined,proposalKind:linkedProposal?.parsed.kind});
   if(responseEvent){
    const candidates=(auth.data.marketInbox??[]).filter(item=>item.localOnly&&item.group===group&&typeof item.reviewedAt!=='number'&&(!responseEvent.proposalMessageId||item.messageId===responseEvent.proposalMessageId));
    let target=responseEvent.proposalMessageId&&candidates.length===1?candidates[0]:undefined;
@@ -899,7 +904,7 @@ const health=httpServer((req,res)=>{if(req.url==='/livez'||req.url==='/readyz'){
 function fail(event:string){log(event);void shutdown(1);}
 async function shutdown(code:number){if(stopping)return;stopping=true;if(cupTimer)clearInterval(cupTimer);if(newsTimer)clearInterval(newsTimer);if(marketTimer)clearInterval(marketTimer);if(localMarketTimer)clearInterval(localMarketTimer);if(timer)clearTimeout(timer);if(stable)clearTimeout(stable);const deadline=setTimeout(()=>process.exit(code),12000);deadline.unref();controls.close();health.close();socket?.end(undefined);await queue;while(cupBusy||newsBusy||marketBusy||loanJoinBusy)await new Promise(r=>setTimeout(r,50));await auth?.flush();key.fill(0);process.exit(code);}
 process.on('SIGTERM',()=>{void shutdown(0);});process.on('SIGINT',()=>{void shutdown(0);});process.on('uncaughtException',()=>fail('UNCAUGHT_ERROR'));process.on('unhandledRejection',()=>fail('UNHANDLED_REJECTION'));
-async function main(){log('MARKET_BRIDGE_DISABLED_BOT_LOCAL_TRANSFER');auth=await vaultAuth(endpoint!,token!,key);marketChannels=auth.data.groups.filter(g=>['transfer','trade'].includes(groupMode(auth.data.groupModes,g))).map(g=>({group:g,kind:groupMode(auth.data.groupModes,g) as 'transfer'|'trade'}));marketCaptureSince=auth.data.marketWindow?.captureSince??0;auth.data.replyHistory??={};auth.data.marketFinance??=structuredClone(INITIAL_MARKET_FINANCE);auth.data.cupInbox??=[];auth.data.marketInbox??=[];for(const event of auth.data.marketInbox)event.queuedAt??=Date.now();ensureLocalMarketTicketIds(auth.data);auth.data.marketResponses??=[];if(marketApi){await marketTick();marketTimer=setInterval(()=>{void marketTick();},15000);}localMarketTimer=setInterval(()=>{void localMarketAuditTick();},15000);if(cupApi){try{await cupApi({action:'health'});cupHealthy=true;}catch{cupHealthy=false;log('MINICAMP_RETRY');}cupTimer=setInterval(()=>{void cupTick();void loanJoinTick();},15000);}if(loadNews)newsTimer=setInterval(()=>{void newsTick();},60000);banterReply=createBanterReply(auth.data.replyHistory);await auth.save();await unlink(controlPath).catch(()=>undefined);controls.listen(controlPath,()=>{void chmod(controlPath,0o600).catch(()=>fail('CONTROL_PERMISSIONS_FAILED'));});if(!process.send)health.listen(Number(process.env.PORT??3000),'0.0.0.0');if(auth.state.creds.registered&&!auth.data.sessionRevoked)await connect();else {phase='NEEDS_PAIRING';log(phase);}}
+async function main(){log('MARKET_BRIDGE_DISABLED_BOT_LOCAL_TRANSFER');auth=await vaultAuth(endpoint!,token!,key);marketChannels=auth.data.groups.filter(g=>['transfer','trade','market-loan'].includes(groupMode(auth.data.groupModes,g))).map(g=>({group:g,kind:groupMode(auth.data.groupModes,g)==='market-loan'?'loan':groupMode(auth.data.groupModes,g) as 'transfer'|'trade'}));marketCaptureSince=auth.data.marketWindow?.captureSince??0;auth.data.replyHistory??={};auth.data.marketFinance??=structuredClone(INITIAL_MARKET_FINANCE);auth.data.cupInbox??=[];auth.data.marketInbox??=[];for(const event of auth.data.marketInbox)event.queuedAt??=Date.now();ensureLocalMarketTicketIds(auth.data);auth.data.marketResponses??=[];if(marketApi){await marketTick();marketTimer=setInterval(()=>{void marketTick();},15000);}localMarketTimer=setInterval(()=>{void localMarketAuditTick();},15000);if(cupApi){try{await cupApi({action:'health'});cupHealthy=true;}catch{cupHealthy=false;log('MINICAMP_RETRY');}cupTimer=setInterval(()=>{void cupTick();void loanJoinTick();},15000);}if(loadNews)newsTimer=setInterval(()=>{void newsTick();},60000);banterReply=createBanterReply(auth.data.replyHistory);await auth.save();await unlink(controlPath).catch(()=>undefined);controls.listen(controlPath,()=>{void chmod(controlPath,0o600).catch(()=>fail('CONTROL_PERMISSIONS_FAILED'));});if(!process.send)health.listen(Number(process.env.PORT??3000),'0.0.0.0');if(auth.state.creds.registered&&!auth.data.sessionRevoked)await connect();else {phase='NEEDS_PAIRING';log(phase);}}
 async function newsTick(){
  if(!loadNews||newsBusy||stopping||phase!=='CONNECTED'||!socket||!enabled()||!auth.data.newsGroup)return;
  newsBusy=true;const current=socket,group=auth.data.newsGroup;

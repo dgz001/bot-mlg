@@ -5,7 +5,7 @@ export function marketNoticeMessageId(kind:'private'|'admin',noticeId:string){
  return 'MLG'+(kind==='private'?'PRIV':'ADMIN')+noticeId.replaceAll('-','').toUpperCase();
 }
 export type MarketEvent={group:string;messageId:string;participant:string;text:string;queuedAt?:number;mentions?:string[];cardReading?:{week:string|null;confidence:number;text:string;imageHash:string};parsed:WhatsAppMarketProposal;localOnly?:boolean;adminNotified?:boolean;ticketId?:string;reviewedAt?:number;reviewedBy?:string;responses?:MarketResponse[]};
-export type MarketChannel={kind:'transfer'|'trade';group:string};
+export type MarketChannel={kind:'transfer'|'trade'|'loan';group:string};
 export type MarketReaction={id:string;revision:number;emoji:''|'🟠'|'🟢'|'🔴';lease:string;group:string;messageId:string;participant:string};
 export function marketEvent(group:string,messageId:string,participant:string,text:string,channels:MarketChannel[]):MarketEvent|null{
  const channel=channels.find(c=>c.group===group);if(!channel)return null;
