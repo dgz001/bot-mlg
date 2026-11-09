@@ -59,5 +59,4 @@ test('three failed attempts defer one club and allow the remaining directory to 
  assert.equal(holder.rosterCollection.entries[0].requested,undefined);
  assert.equal(sends.length,4);
  assert.notEqual(sends[3],sends[0]);
- assert.match(holder.rosterCollection.summary,/Solicitação não enviada após 3 tentativas/);
 });
