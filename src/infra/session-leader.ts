@@ -1,8 +1,8 @@
 import type { Pool, PoolClient } from 'pg';
 
-// Shared by the primary WhatsApp worker modes. The lock is session-scoped and
-// must stay on this client for the entire lifetime of the Baileys connection.
-export const WHATSAPP_SESSION_LOCK_ID = 71012028;
+// Dedicated to the Resenha vault session. The lock is session-scoped and must
+// stay on this client for the entire lifetime of the Baileys connection.
+export const WHATSAPP_SESSION_LOCK_ID = 71012029;
 
 export async function acquireWhatsAppSessionLeader(
   pool: Pick<Pool, 'connect'>,
