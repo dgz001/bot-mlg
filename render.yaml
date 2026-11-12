@@ -16,6 +16,8 @@ services:
         value: production
       - key: BOT_MODE
         value: minicamp
+      - key: DATABASE_URL
+        sync: false
       - key: APP_DATABASE_PASSWORD
         generateValue: true
       - key: AUTH_ENCRYPTION_KEY
