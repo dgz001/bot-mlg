@@ -40,7 +40,7 @@ const database=process.env.DATABASE_URL,appPassword=process.env.APP_DATABASE_PAS
 if(!database||!appPassword)throw new Error('Session lock database configuration missing');
 const databaseUrl=new URL(database);
 const tenant=databaseUrl.hostname.endsWith('.pooler.supabase.com')?decodeURIComponent(databaseUrl.username).split('.').slice(1).join('.'):'';
-databaseUrl.username=tenant?\`mlg_bot_app.\${tenant}\`:'mlg_bot_app';databaseUrl.password=appPassword;
+databaseUrl.username=tenant?'mlg_bot_app.'+tenant:'mlg_bot_app';databaseUrl.password=appPassword;
 const lockPool=new Pool({connectionString:databaseUrl.toString(),max:1,connectionTimeoutMillis:10000,statement_timeout:15000});
 const endpoint=process.env.SESSION_VAULT_URL,token=process.env.SESSION_VAULT_TOKEN,master=process.env.AUTH_ENCRYPTION_KEY;
 if(!endpoint||!token||!master||!process.env.CONTROL_PASSWORD||!process.env.CONTROL_ORIGIN)throw new Error('Resenha configuration missing');
