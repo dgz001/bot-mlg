@@ -23,6 +23,8 @@ services:
         sync: false
       - key: SESSION_VAULT_TOKEN
         sync: false
+      - key: DATABASE_URL
+        sync: false
       - key: APP_DATABASE_PASSWORD
         generateValue: true
       - key: AUTH_ENCRYPTION_KEY
