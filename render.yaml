@@ -15,14 +15,7 @@ services:
       - key: NODE_ENV
         value: production
       - key: BOT_MODE
-        value: resenha
-      # Keep archive import disabled during normal operation; enable temporarily when needed.
-      - key: WA_SYNC_FULL_HISTORY
-        value: "false"
-      - key: SESSION_VAULT_URL
-        sync: false
-      - key: SESSION_VAULT_TOKEN
-        sync: false
+        value: minicamp
       - key: APP_DATABASE_PASSWORD
         generateValue: true
       - key: AUTH_ENCRYPTION_KEY

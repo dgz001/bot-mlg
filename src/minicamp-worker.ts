@@ -4,7 +4,7 @@ import pino from 'pino';
 import { createServer as httpServer } from 'node:http';
 import { createServer } from 'node:net';
 import { chmod, unlink } from 'node:fs/promises';
-import { randomUUID, randomInt } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { authStore } from './whatsapp/auth-store.ts';
 import { processEvent, pgDatabase } from './infra/postgres.ts';
 import { reconnect } from './infra/security.ts';
@@ -124,21 +124,6 @@ async function tick() {
     lastTick=Date.now();
     const rows=await pool.query("SELECT * FROM mlg_bot.inbox WHERE status='pending' ORDER BY id LIMIT 10");
     for(const row of rows.rows) {
-      const special=/^!bot adm (status|resenha (leve|normal|pesada))$/i.exec(row.body);
-      if(special) {
-        const admin=await pool.query('SELECT 1 FROM mlg_bot.admins WHERE group_id=$1 AND user_id=$2',[row.group_id,row.user_id]);
-        if(!admin.rowCount){await finishSpecial(row,'Somente ADM autorizado.');continue;}
-        if(special[2]) {
-          await pool.query('INSERT INTO mlg_bot.bot_settings(group_id,banter_level) VALUES($1,$2) ON CONFLICT(group_id) DO UPDATE SET banter_level=excluded.banter_level',[row.group_id,special[2].toUpperCase()]);
-          await pool.query('INSERT INTO mlg_bot.control_audit(action,group_id,user_id) VALUES($1,$2,$3)',['banter-level',row.group_id,row.user_id]);
-        }
-        await finishSpecial(row,special[2]?`Resenha: ${special[2].toUpperCase()}`:`Bot: ${phase}`);continue;
-      }
-      if(row.body.toLowerCase()==='!resenha') {
-        const recent=await pool.query("SELECT 1 FROM mlg_bot.outbox WHERE group_id=$1 AND body LIKE '😂%' AND available_at>now()-interval '1 minute'",[row.group_id]);
-        const phrases=['Hoje o VAR vai precisar de café. 😂','Aqui o controle descarrega antes das desculpas. 🎮','A coletiva depois da derrota promete mais que o jogo. 🍿','Treino fechado? Ou ninguém achou o botão de marcar? 😂'];
-        await finishSpecial(row,recent.rowCount?'':`😂 ${phrases[randomInt(phrases.length)]}`);continue;
-      }
       try {
         await processEvent(pgDatabase(pool),{id:row.message_id,groupId:row.group_id,userId:row.user_id,name:row.display_name,text:row.body,at:Number(row.received_at)});
         await pool.query("UPDATE mlg_bot.inbox SET status='done',body='' WHERE id=$1",[row.id]);

@@ -9,5 +9,4 @@ if(process.env.MLG_RUNTIME_DISABLED==='true'){
  const stop=()=>server.close(()=>process.exit(0));process.once('SIGTERM',stop);process.once('SIGINT',stop);
  console.log(JSON.stringify({event:'RUNTIME_DISABLED',at:new Date().toISOString()}));
 }
-else if(process.env.BOT_MODE==='resenha')await import('./supervisor.ts');
 else await import('./minicamp-worker.ts');
