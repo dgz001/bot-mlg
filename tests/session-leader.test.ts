@@ -57,6 +57,7 @@ test('PostgreSQL advisory lock rejects a second WhatsApp worker until the first 
       () => acquireWhatsAppSessionLeader(secondPool, testLockId),
       /Another worker already owns/,
     );
+    await first.query('SELECT pg_advisory_unlock($1)', [testLockId]);
     first.release();
     const second = await acquireWhatsAppSessionLeader(secondPool, testLockId);
     second.release();
