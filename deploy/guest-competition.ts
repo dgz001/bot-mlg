@@ -10,6 +10,7 @@ const audit=async(q,cup,match,user,action,before,after,reason=null)=>q.query(`IN
  VALUES($1,$2,$3,$4,$5,$6,$7)`,[cup.id,match.code,user,action,before,after,reason]);
 const names=(players)=>new Map(players.map(p=>[p.user_id,p.display_name]));
 const score=(m)=>`${m.home_score}x${m.away_score}`;
+export const guestTieBreakReady=(matches)=>matches.length>0&&matches.every(m=>m.status==='confirmed');
 const card=(m,people)=>`#${m.code} · ${m.leg===3?'desempate':m.leg===2?'volta':'ida'} · ${people.get(m.home)} × ${people.get(m.away)}${m.status==='confirmed'?' · '+score(m):m.status==='pending'?' · aguardando confirmação':m.status==='disputed'?' · contestado':''}`;
 export const guestStandings=(players,matches)=>{
  const rows=players.map(p=>({id:p.user_id,name:p.display_name,team:p.team,played:0,wins:0,draws:0,goals:0,against:0,points:0}));
@@ -72,6 +73,8 @@ async function progress(q,cup,players,group){
    const playoffs=matches.filter(m=>m.leg===3),latest=Math.max(...playoffs.map(m=>m.round),-1);
    const cycle=playoffs.filter(m=>m.round===latest);
    if(cycle.length){
+    // Never decide a multi-player tie-break while any fixture in that round is pending.
+    if(!guestTieBreakReady(cycle))return '';
     const playoffTable=guestStandings(players.filter(p=>cycle.some(m=>m.home===p.user_id||m.away===p.user_id)),cycle);
     const top=playoffTable.filter(p=>same(p,playoffTable[0]));
     if(top.length===1){winner=top[0];resolved=true;}
@@ -169,7 +172,7 @@ export async function guestEvent(db,request,identity){
   if(cmd==='!ajuda'||cmd==='!comandos')reply='🏆 '+(cup?.name??'CAMPEONATO')+'\n!entrar · !sair (antes do sorteio)\n!copa · !meujogo · !jogo CÓDIGO · !tabela · !classificacao · !proximafase\n!resultado CÓDIGO MxV (mandante primeiro)\n!confirmar CÓDIGO MxV · !cancelar CÓDIGO · !contestar CÓDIGO\n!campeoes · !historico\nADM: !painel · !forcarresultado CÓDIGO MxV motivo'+(cup?.mode==='misto'?'\nNeste formato, os '+cup.qualifiers+' melhores da liga avançam para o mata-mata.':'');
   else if(cmd==='!campeoes'||cmd==='!campeões'||cmd==='!historico'||cmd==='!histórico'){
    const saved=(await q.query('SELECT competition_name,champion_name,edition FROM mlg_bot.loan_champions WHERE group_id=$1 ORDER BY edition DESC LIMIT 15',[group])).rows;
-   const current=(await q.query("SELECT c.name,p.display_name FROM mlg_bot.guest_competitions c JOIN mlg_bot.guest_players p ON p.cup_id=c.id AND p.user_id=c.champion_id WHERE c.group_id=$1 AND c.status='completed' ORDER BY c.created_at DESC LIMIT 5",[group])).rows;
+   const current=(await q.query("SELECT c.name,p.display_name FROM mlg_bot.guest_competitions c JOIN mlg_bot.guest_players p ON p.cup_id=c.id AND p.user_id=c.champion_id WHERE c.group_id=$1 AND c.status='completed' AND c.archived_at IS NULL ORDER BY c.created_at DESC LIMIT 5",[group])).rows;
    reply='🏆 CAMPEÕES DESTE GRUPO\n'+([...current.map(x=>x.name+' · '+x.display_name),...saved.map(x=>'Edição '+x.edition+' · '+x.competition_name+' · '+x.champion_name)].join('\n')||'Ainda não há campeão.');
   }else if(!cup)reply='Nenhum campeonato aberto. O organizador inicia com !novacopa e !painel.';
   else if(cmd==='!entrar'){
@@ -287,23 +290,25 @@ export async function guestAutoConfirm(db){
 export async function guestArchive(db){
  return db.transaction(async q=>{
   const row=(await q.query(`SELECT c.* FROM mlg_bot.guest_competitions c JOIN mlg_bot.loan_groups l ON l.group_id=c.group_id
-   WHERE c.status IN ('completed','cancelled') AND (c.status='cancelled' OR c.completed_at<$1)
-   ORDER BY c.created_at LIMIT 1`,[Date.now()-600000])).rows[0];
+   WHERE c.status IN ('completed','cancelled') AND c.archived_at IS NULL
+   AND (c.status='cancelled' OR c.completed_at<$1)
+   ORDER BY c.created_at LIMIT 1 FOR UPDATE OF c SKIP LOCKED`,[Date.now()-600000])).rows[0];
   if(!row)return {archived:false};
   await q.query('SELECT id FROM mlg_bot.groups WHERE id=$1 FOR UPDATE',[row.group_id]);
   if((await q.query("SELECT 1 FROM mlg_bot.outbox WHERE group_id=$1 AND status<>'sent' LIMIT 1",[row.group_id])).rows.length)return {archived:false};
   if(row.status==='completed'){
    const winner=(await q.query('SELECT display_name FROM mlg_bot.guest_players WHERE cup_id=$1 AND user_id=$2',[row.id,row.champion_id])).rows[0];
+   if(!winner)throw Error('Guest champion record is missing; archive was not marked complete');
    const edition=Number((await q.query('SELECT count(*)::int AS n FROM mlg_bot.loan_champions WHERE group_id=$1',[row.group_id])).rows[0].n)+1;
-   await q.query('INSERT INTO mlg_bot.loan_champions(cup_id,group_id,champion_id,champion_name,competition_name,edition,completed_at) VALUES($1,$2,$3,$4,$5,$6,$7)',[row.id,row.group_id,row.champion_id,winner.display_name,row.name,edition,row.completed_at]);
+   await q.query(`INSERT INTO mlg_bot.loan_champions(cup_id,group_id,champion_id,champion_name,competition_name,edition,completed_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(cup_id) DO NOTHING`,[row.id,row.group_id,row.champion_id,winner.display_name,row.name,edition,row.completed_at]);
   }
-  await q.query('DELETE FROM mlg_bot.guest_result_audit WHERE cup_id=$1',[row.id]);
-  await q.query('DELETE FROM mlg_bot.guest_matches WHERE cup_id=$1',[row.id]);
-  await q.query('DELETE FROM mlg_bot.guest_players WHERE cup_id=$1',[row.id]);
-  await q.query('DELETE FROM mlg_bot.guest_competitions WHERE id=$1',[row.id]);
+  // Keep the complete competition, roster, fixtures, scores and audit trail.
+  // Only mark the notification/archive lifecycle as complete.
+  await q.query('UPDATE mlg_bot.guest_competitions SET archived_at=$2 WHERE id=$1 AND archived_at IS NULL',[row.id,Date.now()]);
   await q.query("DELETE FROM mlg_bot.outbox WHERE group_id=$1 AND status='sent' AND sent_at<now()-interval '7 days'",[row.group_id]);
   await q.query(`DELETE FROM mlg_bot.processed_messages p WHERE p.group_id=$1 AND p.received_at<$2
    AND NOT EXISTS(SELECT 1 FROM mlg_bot.outbox o WHERE o.group_id=p.group_id AND o.user_id=p.user_id AND o.message_id=p.message_id)`,[row.group_id,Date.now()-604800000]);
-  return {archived:true};
+  return {archived:true,preserved:true,cupId:row.id};
  });
 }
