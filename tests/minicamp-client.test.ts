@@ -16,5 +16,6 @@ test('only competition commands are routed to the Mini Camp worker',()=>{
 test('command menu is focused on competition operations, not conversation',async()=>{
  const {commandMenu}=await import('../src/minicamp/engine.ts');
  assert.match(commandMenu,/CENTRAL DE CAMPEONATOS/);
+ assert.match(commandMenu,/Qual meu próximo jogo/);
  assert.doesNotMatch(commandMenu,/resenha|!bot/i);
 });
