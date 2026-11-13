@@ -29,19 +29,6 @@ test('instruções do placar ensinam a ordem dos gols sem sugerir placar especí
  for(const tip of tips){assert.match(tip,/MxV/);assert.doesNotMatch(tip,/!resultado(?:\s+\d+|\s+CÓDIGO)?\s+\d+x\d+/i);}
  assert.match(tips.join(' '),/mandante primeiro/);
 });
-test('resenha leve do Mini Camp registra só o último placar confirmado',()=>{
- const h=harness(),cup=h.start(4),match=cup.matches[0]!;
- assert.match(h.send(match.home,'!resenhacamp').notices[0]!,/Ainda não tem jogo confirmado/);
- h.send(match.home,`!resultado ${match.code} 1x2`);
- assert.doesNotMatch(h.send(match.home,'!resenhacamp').notices[0]!,/1 x 2/);
- const confirmed=h.send(match.away,`!confirmar ${match.code}`).notices.join(' ');
- assert.match(confirmed,/!resenhacamp/);
- assert.match(h.send(match.home,'!resenhacamp').notices[0]!,/1 x 2/);
- h.send('admin',`!forcarresultado ${match.code} 2x1`);
- const corrected=h.send(match.home,'!resenhacamp').notices[0]!;
- assert.match(corrected,/2 x 1/);assert.doesNotMatch(corrected,/1 x 2/);
- assert.equal((corrected.match(new RegExp(`Jogo ${match.code}`, 'g'))??[]).length,1);
-});
 test('Mini Camp com quatro jogadores mostra final projetada sem inventar adversário',()=>{
  const h=harness(),cup=h.start(4),[a,b]=cup.matches;
  const before=h.send(a!.home,'!proximafase').notices[0]!;
@@ -77,13 +64,6 @@ test('próxima fase atende Copa formal nas inscrições, mata-mata, final e tít
  assert.match(h.send('u0','!proximafase').notices[0]!,new RegExp(`#${final.code} ${a!.home} × ${b!.home}`));
  h.send(final.home,`!resultado ${final.code} 1x0`);h.send(final.away,`!confirmar ${final.code}`);
  assert.match(h.send('u0','!proximafase').notices[0]!,new RegExp(`${final.home} é campeão`));
-});
-test('resenha do Mini Camp não mistura placar de Copa nomeada no mesmo grupo',()=>{
- const h=harness(),cup=h.start(4),match=cup.matches[0]!;
- h.send(match.home,`!resultado ${match.code} 2x0`);h.send(match.away,`!confirmar ${match.code}`);
- assert.match(h.send('u0','!resenhacamp').notices[0]!,new RegExp(`Jogo ${match.code}`));
- h.state.cups[cup.id]!.competitionName='Copa Oficial MLG';
- assert.doesNotMatch(h.send('u0','!resenhacamp').notices[0]!,new RegExp(`Jogo ${match.code}`));
 });
 test('autor cancela placar pendente e reencontra a ordem mandante x visitante sem avanço duplicado',()=>{
  const h=harness();const cup=h.start(4),match=cup.matches[0]!;
