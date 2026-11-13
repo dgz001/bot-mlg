@@ -208,8 +208,19 @@ test('bloqueio exige ADM, conta verificada, motivo e permite reversão auditáve
  assert.equal(calls.at(-1)?.operation,'block');assert.equal(calls.at(-1)?.group,'central@g.us');
  assert.match(await adminControl('!bloquear 5511999999999',{},[],api,async()=>{},Date.now(),{...actor,resolveMemberAnywhere:async()=>['5511999999999@s.whatsapp.net']}),/bloqueada/);
  assert.equal(calls.at(-1)?.reason,'Bloqueio administrativo pelo WhatsApp');
+ assert.match(await send('!bloquear 5511999999999 Quebra das regras'),/bloqueada/);
+ assert.equal(calls.at(-1)?.operation,'block');
+ assert.equal(calls.at(-1)?.reason,'Quebra das regras');
+ assert.match(await send('!bloquear 5511999999999 motivo curto'),/8 a 160 caracteres/);
+ assert.match(await send('!bloquear 5511999999999 | Motivo com | separador extra'),/bloqueada/);
+ assert.equal(calls.at(-1)?.reason,'Motivo com | separador extra');
  assert.match(await send('!desbloquear 5511999999999 | Reintegração aprovada'),/desbloqueada/);
  assert.equal(calls.at(-1)?.operation,'unblock');
+ assert.match(await send('!desbloquear 5511999999999 Reintegração aprovada'),/desbloqueada/);
+ assert.equal(calls.at(-1)?.operation,'unblock');
+ assert.equal(calls.at(-1)?.reason,'Reintegração aprovada');
+ assert.match(await send('!desbloquear 5511999999999'),/desbloqueada/);
+ assert.equal(calls.at(-1)?.reason,'Desbloqueio administrativo pelo WhatsApp');
  assert.match(await send('!bloqueados'),/Nenhuma conta bloqueada/);
 });
 

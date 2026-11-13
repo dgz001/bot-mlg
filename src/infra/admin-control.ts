@@ -66,8 +66,8 @@ No canal escolhido: !novacopa — abrir inscrições da Copa preparada
 !confirmarelenco / !cancelarelenco — decidir mudança
 
 🚫 MODERAÇÃO
-!bloquear telefone [| motivo] — impede comandos e novas inscrições
-!desbloquear telefone | motivo — restaura o acesso
+!bloquear telefone [| motivo] — motivo opcional; com ou sem | (8 a 160 caracteres)
+!desbloquear telefone [| motivo] — motivo opcional; com ou sem | (8 a 160 caracteres)
 !bloqueados — lista contas bloqueadas
 Se o membro tiver partida pendente, um ADM deverá resolver ou substituir o jogador.
 
@@ -256,9 +256,14 @@ export async function adminControl(text:string,room:ControlWorkspace,targets:Con
    const result=await api({...request,operation:'list'});
    return result.error?'⚠️ '+result.error:'🚫 CONTAS BLOQUEADAS\n'+(result.members?.map((m:{display_name:string;reason:string},i:number)=>`${i+1}. ${m.display_name} · ${m.reason}`).join('\n')||'Nenhuma conta bloqueada.');
   }
-  const [rawPhone,...rawReason]=arg.split('|');const phone=loanPhone(rawPhone?.trim()??'');
-  const reason=rawReason.length?rawReason.join('|').trim():cmd==='!bloquear'?'Bloqueio administrativo pelo WhatsApp':'Desbloqueio administrativo pelo WhatsApp';
-  if(!phone||reason.length<8||reason.length>160||/[\r\n\x00-\x1f\x7f\u202a-\u202e*_~`]/.test(reason))return `Use ${cmd} telefone com DDI e DDD | motivo (8 a 160 caracteres). O motivo é opcional.`;
+  const hasSeparator=arg.includes('|');
+  const [rawPhone,...rawReason]=arg.split('|');
+  const unseparated=hasSeparator?[]:arg.trim().split(/\s+/);
+  const phoneInput=hasSeparator?rawPhone?.trim():unseparated.shift()??'';
+  const suppliedReason=hasSeparator?rawReason.join('|').trim():unseparated.join(' ').trim();
+  const phone=loanPhone(phoneInput??'');
+  const reason=suppliedReason||(cmd==='!bloquear'?'Bloqueio administrativo pelo WhatsApp':'Desbloqueio administrativo pelo WhatsApp');
+  if(!phone||reason.length<8||reason.length>160||/[\r\n\x00-\x1f\x7f\u202a-\u202e*_~`]/.test(reason))return `Use ${cmd} 55DDDNÚMERO [| motivo]. O motivo é opcional; se informado, deve ter de 8 a 160 caracteres. Ex.: ${cmd} 556493342177 | Quebra das regras.`;
   const aliases=cmd==='!bloquear'?await actor.resolveMemberAnywhere?.(phone)??await actor.resolveMember?.(room.targetId??actor.controlGroup,phone)??await actor.resolveMember?.(actor.controlGroup,phone)??null:[phone+'@s.whatsapp.net'];
   if(!aliases)return 'Conta não localizada nos grupos autorizados. Confira DDI, DDD e a lista de participantes.';
   const result=await api({...request,operation:cmd==='!bloquear'?'block':'unblock',targetAliases:aliases,reason});
