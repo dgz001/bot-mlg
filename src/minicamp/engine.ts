@@ -710,8 +710,15 @@ export function apply(input: State, event: Event, env: Environment = environment
     notices.push(`🗺️ CAMINHO ATÉ A TAÇA · ${cup.competitionName?.toUpperCase()??'MLG'}\n🏆 ${cupLabel(cup)} · ${cupStatus(cup)}\n\n${bracket(cup,arg as 'A'|'B'|undefined)}\n\n📌 Só a fase seguinte: !proximafase.`);
   } else if (cmd === '!meujogo') {
     requireThat(parts.length===1,'Use !meujogo sem argumentos.');
-    const cup=active();requireThat(cup,'Nenhuma Copa ativa neste grupo. Consulte !historico.');
-    requireThat(cup.participants.some(p=>p.userId===event.userId),'Você não está inscrito nesta Copa.');
+    const cup=active()??[...groupCups].sort((a,b)=>b.createdAt-a.createdAt).find(c=>c.status==='completed');requireThat(cup,'Nenhuma Copa ativa ou recém-encerrada neste grupo. Consulte !historico.');
+    requireThat(cup.participants.some(p=>p.userId===event.userId),'Você não está inscrito nesta edição. Consulte !participantes para conferir a lista.');
+    if(cup.status==='completed'){
+      const final=cup.matches.find(m=>m.round===Math.log2(cup.size)-1);
+      if(final&&[final.home,final.away].includes(event.userId)){
+        const result=score(final),champion=cup.champion===event.userId;
+        notices.push(champion?`🏆 EDIÇÃO CONCLUÍDA · CAMPEÃO\nParabéns, ${player(cup,event.userId).name}! Você venceu a final ${result.home}x${result.away} e seu título está registrado.\n📊 Consulte !stats para seus números e !historico para a campanha completa.`:`🥈 EDIÇÃO CONCLUÍDA · VICE-CAMPEÃO\n${player(cup,event.userId).name}, sua campanha terminou na final. Placar: ${result.home}x${result.away}.\n📊 Consulte !stats para seus números e !historico para a campanha completa.`);
+      }else notices.push('🏁 Esta edição já foi encerrada. Consulte !historico para ver o campeão e a campanha.');
+    }else{
     const next=cup.matches.find(m=>m.status!=='confirmed'&&[m.home,m.away].includes(event.userId));
     if(next){
       const opponent=player(cup,next.home===event.userId?next.away:next.home);
@@ -727,6 +734,7 @@ export function apply(input: State, event: Event, env: Environment = environment
         const waiting=sibling?.status==='confirmed'?'A chave está sendo atualizada. Consulte !copa.':sibling?`Aguarde o vencedor do jogo ${sibling.code}: ${player(cup,sibling.home).name} × ${player(cup,sibling.away).name}.`:'Aguarde o próximo confronto na chave.';
         notices.push(cup.competitionName==='Minicamp MLG'?`✅ Você avançou no jogo #${last.code}.\n📍 ${miniPhase(cup,Math.min(Math.log2(cup.size)-1,last.round+1),undefined,false,Math.floor(last.position/2))}\nO outro classificado será definido quando o jogo dele terminar.`:`✅ Você passou de fase no jogo ${last.code}.\n🎯 ${waiting}\nConsulte !meujogo novamente quando o adversário estiver definido.`);
       }
+    }
     }
   } else if (cmd === '!jogo') {
     const { cup, match } = getMatch(parts[1]);
