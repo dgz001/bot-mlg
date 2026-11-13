@@ -7,6 +7,7 @@ import { vaultAuth } from './vault-auth.ts';
 export const WA_AUTH_IMPORT_LOCK_ID = 71012030;
 
 type AuthSnapshot = {
+  sessionRevoked?: boolean;
   creds: AuthenticationState['creds'];
   keys: Record<string, Record<string, unknown>>;
 };
@@ -22,7 +23,8 @@ export async function importAuthSnapshotIfEmpty(
   snapshot: AuthSnapshot,
 ): Promise<boolean> {
   if (key.length !== 32) throw new Error('Invalid encryption key');
-  if (!snapshot.creds.registered) return false;
+  // A revoked session must never be restored as a valid registered account.
+  if (snapshot.sessionRevoked || !snapshot.creds.registered) return false;
 
   const client = await pool.connect();
   try {
@@ -73,7 +75,12 @@ export async function importAuthSnapshotIfEmpty(
   }
 }
 
-export async function authStore(pool: Pool, account: string, key: Buffer) {
+export async function authStore(
+  pool: Pool,
+  account: string,
+  key: Buffer,
+  options: { importLegacy?: boolean } = {},
+) {
   if (key.length !== 32) throw new Error('Invalid encryption key');
   const context = (category: string,id: string) => JSON.stringify([account,category,id]);
   async function read(category: string,id: string): Promise<unknown | null> {
@@ -99,7 +106,7 @@ export async function authStore(pool: Pool, account: string, key: Buffer) {
   if (Boolean(vaultUrl) !== Boolean(vaultToken)) {
     throw new Error('Incomplete legacy session vault configuration');
   }
-  if (vaultUrl && vaultToken) {
+  if (options.importLegacy !== false && vaultUrl && vaultToken) {
     const existing = await pool.query(
       'SELECT 1 FROM mlg_bot.wa_auth WHERE account_id=$1 LIMIT 1',
       [account],
