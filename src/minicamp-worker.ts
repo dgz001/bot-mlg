@@ -182,7 +182,7 @@ const controls=createServer(client=>{
         const old=socket;socket=undefined;old?.end(undefined);
         await auth.flush();
         await pool.query('DELETE FROM mlg_bot.wa_auth WHERE account_id=$1',[account]);
-        auth=await authStore(pool,account,key);phase='NEEDS_PAIRING';
+        auth=await authStore(pool,account,key,{importLegacy:false});phase='NEEDS_PAIRING';
         await pool.query("INSERT INTO mlg_bot.control_audit(action) VALUES('reset-session')");return {phase};
       }
       if(phase!=='CONNECTED' || !socket)throw new Error('WhatsApp not connected');
