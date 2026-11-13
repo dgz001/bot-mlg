@@ -193,7 +193,7 @@ const eliminatedCheers = [
   '⚽ Cabeça erguida! Obrigado por fazer parte dessa edição.',
   '🔥 A próxima chance começa com outro !entrar. Te esperamos!',
   '👏 Valeu pelo jogo! A comunidade ganha com a participação de todo mundo.',
-  '😄 A taça escapou dessa vez. A vaga na resenha continua garantida!',
+  '😄 A taça escapou dessa vez. Prepare-se para buscar o título na próxima edição!',
 ];
 const championCheers = [
   '🎉 Solta o grito! Essa edição tem dono e a festa está liberada!',
@@ -303,7 +303,7 @@ export function apply(input: State, event: Event, env: Environment = environment
   const automatic=event.userId===AUTO_CONFIRM_ACTOR&&/^auto-confirm-\d+-\d+$/.test(event.id);
   if(event.userId===AUTO_CONFIRM_ACTOR)requireThat(automatic&&cmd==='!confirmar'&&parts.length===2&&/^\d+$/.test(parts[1]??''),'Evento automático inválido.');
   let notices: string[] = [];
-  const cheer=['🔥 Chegou pra disputar a taça ou pra render resenha?','🎮 Agora é no controle! A torcida já está de olho.','🍿 Mais um nome na disputa. Vai faltar cadeira nessa arquibancada!','⚽ Tá dentro! O discurso de campeão a gente deixa pra final.','🏆 Vaga garantida. Agora chama aquele rival que fala muito!','📣 A lista está esquentando! Essa Copa promete.'][[...event.id].reduce((n,c)=>n+c.charCodeAt(0),0)%6];
+  const cheer=['🏟️ Inscrição confirmada! A torcida já está de olho.','🎮 Agora é no controle: boa disputa!','⚽ Mais um nome na chave. A competição está ficando completa!','🏆 Vaga garantida. O próximo passo é buscar a taça!','📣 A lista está esquentando. Essa edição promete!','🔥 Chegou para disputar o título. Boa sorte!'][[...event.id].reduce((n,c)=>n+c.charCodeAt(0),0)%6];
   const profiles=s.profiles?.[event.groupId]??{};
   const groupCups=Object.values(s.cups).filter(c=>c.groupId===event.groupId);
   const editions=()=>Object.values(s.cups).filter(c=>c.groupId===event.groupId).sort((a,b)=>a.createdAt-b.createdAt||a.id.localeCompare(b.id));
@@ -676,7 +676,7 @@ export function apply(input: State, event: Event, env: Environment = environment
     const won=cups.filter(c=>c.status==='completed'&&c.champion===target).sort((a,b)=>(b.completedAt??0)-(a.completedAt??0));
     const variation=[...event.id].reduce((n,c)=>n+c.charCodeAt(0),0)%4;
     const lines=won.map(c=>`🏆 ${c.competitionName??"Minicamp MLG"} · ${cupLabel(c)} · ${cupDate(c)} · ${teamLabel(player(c,target!).club,c.teamKind)}`);
-    const cheers=won.length?['👑 A taça está registrada. Agora aguenta a resenha!','🏆 Tem história na estante! Quem vai buscar a próxima?','🍿 Os números estão aí. O debate do grupo está liberado!','🎮 Conquista confirmada. Bora defender essa moral na próxima Copa!']:['😄 A estante está esperando a estreia. Bora de !entrar na próxima!','Ainda sem título registrado. A próxima edição está disponível para inscrição.','🎮 O primeiro título ainda está em jogo. Próxima Copa, nova chance!','🏆 Ainda não levantou uma aqui. A próxima história pode ser sua!'];
+    const cheers=won.length?['👑 Título registrado no histórico oficial.','🏆 Uma conquista importante na sua trajetória!','📊 Seu desempenho está registrado. Quem busca a próxima taça?','🎮 Conquista confirmada. Prepare-se para defender o título!']:['😄 Sua primeira taça ainda pode chegar. Inscreva-se na próxima edição!','Ainda sem título registrado. A próxima edição está disponível para inscrição.','🎮 O primeiro título ainda está em jogo. Próxima Copa, nova chance!','🏆 Ainda não levantou uma aqui. A próxima história pode ser sua!'];
     notices.push(`🏆 TÍTULOS DO MINICAMP\n${name}\nTotal neste grupo: ${won.length}\n${lines.join('\n')}\n${cheers[variation]}\nSomente Copas concluídas neste bot; edições anuladas não contam.`);
   } else if (cmd === '!stats'||cmd==='!statsid') {
     const cups = Object.values(s.cups).filter(c=>c.groupId===event.groupId&&c.status!=='cancelled');
@@ -715,7 +715,8 @@ export function apply(input: State, event: Event, env: Environment = environment
     const next=cup.matches.find(m=>m.status!=='confirmed'&&[m.home,m.away].includes(event.userId));
     if(next){
       const opponent=player(cup,next.home===event.userId?next.away:next.home);
-      notices.push(`🎯 SEU PRÓXIMO JOGO · ${cup.competitionName?.toUpperCase()??'MLG'}\n${roundName(cup.size/2**next.round)} · código ${next.code} · ${matchStatus(next.status)}\n${player(cup,next.home).name} (${teamLabel(player(cup,next.home).club,cup.teamKind)}) × ${player(cup,next.away).name} (${teamLabel(player(cup,next.away).club,cup.teamKind)})\n🤝 Adversário: ${opponent.name}\n📌 Envie !resultado ${next.code} MxV: substitua M e V pelos gols em números, sem espaços; mandante primeiro, visitante depois. Consulte !jogo ${next.code}.`);
+      const detail=next.status==='pending'?`📝 Placar aguardando confirmação: ${score(next).home}x${score(next).away}.\n${score(next).author===event.userId?'Você informou o placar.':'Placar informado por '+player(cup,score(next).author).name+'.'} Confira o print: !confirmar ${next.code} ${score(next).home}x${score(next).away}. Se houver divergência, use !contestar ${next.code}.`:next.status==='disputed'?`⚠️ Resultado contestado. Aguarde a análise de um ADM; não envie outro placar para esta partida.`:`📸 Após jogar, envie o print e registre: !resultado ${next.code} MxV. O primeiro número é do mandante; o segundo, do visitante.`;
+      notices.push(`🎯 SEU PRÓXIMO JOGO · ${cup.competitionName?.toUpperCase()??'MLG'}\n${roundName(cup.size/2**next.round)} · código ${next.code} · ${matchStatus(next.status)}\n${player(cup,next.home).name} (${teamLabel(player(cup,next.home).club,cup.teamKind)}) × ${player(cup,next.away).name} (${teamLabel(player(cup,next.away).club,cup.teamKind)})\n🤝 Adversário: ${opponent.name}\n${detail}\n🔎 Consulte !jogo ${next.code} para ver a situação completa.`);
     }else if(cup.status==='open')notices.push('⏳ Sua inscrição está confirmada. O sorteio acontece quando as vagas forem preenchidas.');
     else{
       const last=cup.matches.filter(m=>m.status==='confirmed'&&[m.home,m.away].includes(event.userId)).sort((a,b)=>b.round-a.round)[0];
