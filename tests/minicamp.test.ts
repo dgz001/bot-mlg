@@ -838,3 +838,15 @@ test('Minicamp aceita sorteio misto de clubes e seleções sem repetição',()=>
  assert.equal(cup.participants.length,32);
  assert.equal(new Set(cup.participants.map(p=>p.club)).size,32);
 });
+
+test('meujogo explica o próximo passo conforme o estado real da partida',()=>{
+ const h=harness(),cup=h.start(4),match=cup.matches[0]!;
+ const scheduled=h.send(match.home,'!meujogo').notices[0]!;
+ assert.match(scheduled,/SEU PRÓXIMO JOGO/);assert.match(scheduled,/!resultado/);
+ h.send(match.home,`!resultado ${match.code} 2x1`);
+ const pending=h.send(match.home,'!meujogo').notices[0]!;
+ assert.match(pending,/Placar aguardando confirmação: 2x1/);assert.match(pending,new RegExp(`!confirmar ${match.code} 2x1`));
+ h.send(match.away,`!contestar ${match.code}`);
+ const disputed=h.send(match.home,'!meujogo').notices[0]!;
+ assert.match(disputed,/Resultado contestado/);assert.match(disputed,/aguarde a análise de um ADM/);
+});
