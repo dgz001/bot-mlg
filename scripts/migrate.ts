@@ -16,12 +16,12 @@ export type MigrationStage =
   | 'permissions';
 
 export class MigrationFailure extends Error {
-  constructor(
-    readonly stage: MigrationStage,
-    cause: unknown,
-  ) {
+  readonly stage: MigrationStage;
+
+  constructor(stage: MigrationStage, cause: unknown) {
     super('Database migration failed', { cause });
     this.name = 'MigrationFailure';
+    this.stage = stage;
   }
 }
 
