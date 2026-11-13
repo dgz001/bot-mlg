@@ -211,7 +211,7 @@ test('bloqueio exige ADM, conta verificada, motivo e permite reversão auditáve
  assert.match(await send('!bloquear 5511999999999 Quebra das regras'),/bloqueada/);
  assert.equal(calls.at(-1)?.operation,'block');
  assert.equal(calls.at(-1)?.reason,'Quebra das regras');
- assert.match(await send('!bloquear 5511999999999 motivo curto'),/8 a 160 caracteres/);
+ assert.match(await send('!bloquear 5511999999999 curto'),/8 a 160 caracteres/);
  assert.match(await send('!bloquear 5511999999999 | Motivo com | separador extra'),/bloqueada/);
  assert.equal(calls.at(-1)?.reason,'Motivo com | separador extra');
  assert.match(await send('!desbloquear 5511999999999 | Reintegração aprovada'),/desbloqueada/);
