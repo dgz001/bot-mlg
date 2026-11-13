@@ -66,7 +66,7 @@ No canal escolhido: !novacopa — abrir inscrições da Copa preparada
 !confirmarelenco / !cancelarelenco — decidir mudança
 
 🚫 MODERAÇÃO
-!bloquear telefone [| motivo] — impede comandos e novas inscrições
+!bloquear telefone [| motivo] — motivo opcional; com ou sem | (8 a 160 caracteres)
 !desbloquear telefone | motivo — restaura o acesso
 !bloqueados — lista contas bloqueadas
 Se o membro tiver partida pendente, um ADM deverá resolver ou substituir o jogador.
