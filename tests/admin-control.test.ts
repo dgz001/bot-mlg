@@ -219,6 +219,8 @@ test('bloqueio exige ADM, conta verificada, motivo e permite reversão auditáve
  assert.match(await send('!desbloquear 5511999999999 Reintegração aprovada'),/desbloqueada/);
  assert.equal(calls.at(-1)?.operation,'unblock');
  assert.equal(calls.at(-1)?.reason,'Reintegração aprovada');
+ assert.match(await send('!desbloquear 5511999999999'),/desbloqueada/);
+ assert.equal(calls.at(-1)?.reason,'Desbloqueio administrativo pelo WhatsApp');
  assert.match(await send('!bloqueados'),/Nenhuma conta bloqueada/);
 });
 
