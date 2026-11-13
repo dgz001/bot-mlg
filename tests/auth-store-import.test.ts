@@ -36,10 +36,11 @@ class FakePool {
   }
 }
 
-function snapshot(registered = true) {
+function snapshot(registered = true, sessionRevoked = false) {
   const creds = initAuthCreds();
   creds.registered = registered;
   return {
+    sessionRevoked,
     creds,
     keys: {
       'pre-key': { 'key-1': { private: Buffer.from('private'), public: Buffer.from('public') } },
@@ -90,6 +91,21 @@ test('não importa credenciais legadas sem registro WhatsApp válido', async () 
     'secondary',
     Buffer.alloc(32, 7),
     snapshot(false),
+  );
+
+  assert.equal(imported, false);
+  assert.equal(pool.connectCalls, 0);
+  assert.equal(pool.records.length, 0);
+});
+
+test('não restaura credenciais registradas quando a sessão legada foi revogada', async () => {
+  const pool = new FakePool();
+
+  const imported = await importAuthSnapshotIfEmpty(
+    pool as unknown as Pool,
+    'secondary',
+    Buffer.alloc(32, 7),
+    snapshot(true, true),
   );
 
   assert.equal(imported, false);
