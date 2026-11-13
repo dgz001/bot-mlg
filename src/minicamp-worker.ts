@@ -9,6 +9,7 @@ import { authStore } from './whatsapp/auth-store.ts';
 import { processEvent, pgDatabase } from './infra/postgres.ts';
 import { reconnect } from './infra/security.ts';
 import { privateControl } from './infra/private-control.ts';
+import { cupQuestion } from './minicamp/question.ts';
 
 process.umask(0o077);
 const account='secondary';
@@ -86,9 +87,12 @@ async function connect() {
         if(!group?.endsWith('@g.us') || m.key.fromMe || !m.key.id || !m.key.participant)continue;
         const content=extractMessageContent(m.message);
         let text=content?.conversation ?? content?.extendedTextMessage?.text ?? '';
-        if(!text || text.length>1000 || (!text.startsWith('!') && !/^[123]$/.test(text)))continue;
+        if(!text || text.length>1000)continue;
         const allowed=await pool.query('SELECT 1 FROM mlg_bot.groups WHERE id=$1 AND authorized',[group]);
         if(!allowed.rowCount)continue;
+        const question=cupQuestion(text);
+        if(!text.startsWith('!') && !/^[123]$/.test(text) && !question)continue;
+        if(question)text=question;
         text=text.replace(/^!bot adm copa cancelar\b/i,'!cancelar').replace(/^!bot adm resultado resolver\b/i,'!resolver');
         const user=await identity(m.key.participant);
         const q=await pool.connect();
