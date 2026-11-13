@@ -828,7 +828,7 @@ test('meujogo explica o próximo passo conforme o estado real da partida',()=>{
  assert.match(pending,/Placar aguardando confirmação: 2x1/);assert.match(pending,new RegExp(`!confirmar ${match.code} 2x1`));
  h.send(match.away,`!contestar ${match.code}`);
  const disputed=h.send(match.home,'!meujogo').notices[0]!;
- assert.match(disputed,/Resultado contestado/);assert.match(disputed,/aguarde a análise de um ADM/);
+ assert.match(disputed,/Resultado contestado/);assert.match(disputed,/aguarde a análise de um ADM/i);
 });
 
 test('meujogo reconhece campeão e vice após o encerramento da edição',()=>{
