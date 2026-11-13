@@ -3,6 +3,9 @@ import type { Pool, PoolClient } from 'pg';
 import { seal, unseal } from '../infra/security.ts';
 import { vaultAuth } from './vault-auth.ts';
 
+// Separate from the long-lived Resenha session lock (71012029).
+export const WA_AUTH_IMPORT_LOCK_ID = 71012030;
+
 type AuthSnapshot = {
   creds: AuthenticationState['creds'];
   keys: Record<string, Record<string, unknown>>;
@@ -24,7 +27,7 @@ export async function importAuthSnapshotIfEmpty(
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query('SELECT pg_advisory_xact_lock($1)', [71012029]);
+    await client.query('SELECT pg_advisory_xact_lock($1)', [WA_AUTH_IMPORT_LOCK_ID]);
     const existing = await client.query(
       'SELECT 1 FROM mlg_bot.wa_auth WHERE account_id=$1 LIMIT 1',
       [account],
