@@ -216,6 +216,9 @@ test('bloqueio exige ADM, conta verificada, motivo e permite reversão auditáve
  assert.equal(calls.at(-1)?.reason,'Motivo com | separador extra');
  assert.match(await send('!desbloquear 5511999999999 | Reintegração aprovada'),/desbloqueada/);
  assert.equal(calls.at(-1)?.operation,'unblock');
+ assert.match(await send('!desbloquear 5511999999999 Reintegração aprovada'),/desbloqueada/);
+ assert.equal(calls.at(-1)?.operation,'unblock');
+ assert.equal(calls.at(-1)?.reason,'Reintegração aprovada');
  assert.match(await send('!bloqueados'),/Nenhuma conta bloqueada/);
 });
 
