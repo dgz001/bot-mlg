@@ -830,3 +830,18 @@ test('meujogo explica o próximo passo conforme o estado real da partida',()=>{
  const disputed=h.send(match.home,'!meujogo').notices[0]!;
  assert.match(disputed,/Resultado contestado/);assert.match(disputed,/aguarde a análise de um ADM/);
 });
+
+test('meujogo reconhece campeão e vice após o encerramento da edição',()=>{
+ const h=harness(),cup=h.start(4);
+ while(h.state.cups[cup.id]!.status!=='completed'){
+  const match=h.state.cups[cup.id]!.matches.find(m=>m.status==='scheduled')!;
+  h.send(match.home,`!resultado ${match.code} 2x1`);
+  h.send(match.away,`!confirmar ${match.code}`);
+ }
+ const completed=h.state.cups[cup.id]!,final=completed.matches.find(m=>m.round===Math.log2(completed.size)-1)!;
+ const champion=h.send(completed.champion!,'!meujogo').notices[0]!;
+ const runnerUp=final.home===completed.champion?final.away:final.home;
+ const vice=h.send(runnerUp,'!meujogo').notices[0]!;
+ assert.match(champion,/CAMPEÃO/);assert.match(champion,/título está registrado/);
+ assert.match(vice,/VICE-CAMPEÃO/);assert.match(vice,/campanha terminou na final/);
+});
