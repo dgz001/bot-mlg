@@ -1,33 +1,207 @@
-import { Pool } from 'pg';
+import { Pool, type PoolClient } from 'pg';
 import { readFile } from 'node:fs/promises';
 
-export async function migrate() {
-  const url=process.env.DATABASE_URL;
-  const appPassword=process.env.APP_DATABASE_PASSWORD;
-  if(!url || !appPassword || appPassword.length<32) throw new Error('Migration configuration missing');
-  const pool=new Pool({connectionString:url,connectionTimeoutMillis:15000});
-  const q=await pool.connect();
-  try {
-    await q.query('SELECT pg_advisory_lock(71012026)');
-    const exists=await q.query("SELECT to_regclass('mlg_bot.schema_migrations') AS present");
-    if(!exists.rows[0].present) await q.query(await readFile(new URL('../migrations/001_initial.sql',import.meta.url),'utf8'));
-    const second=await q.query('SELECT 1 FROM mlg_bot.schema_migrations WHERE version=2');
-    if(!second.rowCount) await q.query(await readFile(new URL('../migrations/002_worker.sql',import.meta.url),'utf8'));
-    const role=await q.query("SELECT 1 FROM pg_roles WHERE rolname='mlg_bot_app'");
-    if(!role.rowCount) await q.query('CREATE ROLE mlg_bot_app LOGIN');
-    // quote_literal is performed by PostgreSQL. Never log the generated SQL.
-    const quoted=await q.query('SELECT quote_literal($1) AS value',[appPassword]);
-    await q.query('ALTER ROLE mlg_bot_app PASSWORD '+quoted.rows[0].value);
-    await q.query('GRANT USAGE ON SCHEMA mlg_bot TO mlg_bot_app');
-    await q.query('GRANT SELECT,INSERT,UPDATE ON ALL TABLES IN SCHEMA mlg_bot TO mlg_bot_app');
-    await q.query('GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA mlg_bot TO mlg_bot_app');
-    await q.query('GRANT DELETE ON mlg_bot.command_drafts,mlg_bot.wa_auth,mlg_bot.conversation_context TO mlg_bot_app');
-    await q.query('REVOKE UPDATE ON mlg_bot.audit_logs,mlg_bot.control_audit,mlg_bot.schema_migrations FROM mlg_bot_app');
-    if((await q.query("SELECT to_regclass('mlg_bot.cup_checkpoints') AS present")).rows[0].present)
-      await q.query('REVOKE UPDATE,DELETE ON mlg_bot.cup_checkpoints FROM mlg_bot_app');
-    await q.query('REVOKE INSERT ON mlg_bot.schema_migrations FROM mlg_bot_app');
-  } finally { await q.query('SELECT pg_advisory_unlock(71012026)').catch(()=>undefined);q.release();await pool.end(); }
+const MIGRATION_LOCK = 71012026;
+
+export type MigrationStage =
+  | 'configuration'
+  | 'database_pool'
+  | 'database_connect'
+  | 'advisory_lock'
+  | 'migration_001_check'
+  | 'migration_001'
+  | 'migration_002_check'
+  | 'migration_002'
+  | 'application_role'
+  | 'permissions';
+
+export class MigrationFailure extends Error {
+  constructor(
+    readonly stage: MigrationStage,
+    cause: unknown,
+  ) {
+    super('Database migration failed', { cause });
+    this.name = 'MigrationFailure';
+  }
 }
-if(process.argv[1]?.endsWith('/migrate.ts')) {
-  migrate().then(()=>console.log('MIGRATIONS_OK')).catch(()=>{console.error('MIGRATIONS_FAILED');process.exitCode=1;});
+
+export function validateMigrationConfig(env: NodeJS.ProcessEnv = process.env) {
+  const databaseUrl = env.DATABASE_URL;
+  const appPassword = env.APP_DATABASE_PASSWORD;
+  const missing: string[] = [];
+
+  if (!databaseUrl?.trim()) missing.push('DATABASE_URL');
+  if (!appPassword) missing.push('APP_DATABASE_PASSWORD');
+
+  if (missing.length) {
+    throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(databaseUrl!);
+  } catch {
+    throw new Error('DATABASE_URL is not a valid URL');
+  }
+
+  if (!['postgres:', 'postgresql:'].includes(parsed.protocol) || !parsed.hostname) {
+    throw new Error('DATABASE_URL must use the postgres or postgresql protocol and include a host');
+  }
+
+  if (appPassword!.length < 32) {
+    throw new Error('APP_DATABASE_PASSWORD must contain at least 32 characters');
+  }
+
+  return { databaseUrl: databaseUrl!, appPassword: appPassword! };
+}
+
+function safeErrorFields(error: unknown, secrets: string[]) {
+  const candidate = error && typeof error === 'object'
+    ? error as { message?: unknown; code?: unknown; severity?: unknown }
+    : undefined;
+
+  let message = typeof candidate?.message === 'string'
+    ? candidate.message
+    : 'Unexpected non-Error failure';
+
+  for (const secret of secrets.filter(Boolean)) {
+    message = message.split(secret).join('[REDACTED]');
+  }
+
+  message = message
+    .replace(/postgres(?:ql)?:\/\/[^\s"'<>]+/gi, '[REDACTED_DATABASE_URL]')
+    .replace(/((?:password|passphrase|token|secret)\s*[=:]\s*)[^\s,;]+/gi, '$1[REDACTED]')
+    .slice(0, 320);
+
+  const code = typeof candidate?.code === 'string' && /^[A-Za-z0-9_-]{1,32}$/.test(candidate.code)
+    ? candidate.code
+    : undefined;
+  const severity = typeof candidate?.severity === 'string' && /^[A-Z]{1,16}$/.test(candidate.severity)
+    ? candidate.severity
+    : undefined;
+
+  return { code, severity, message };
+}
+
+export function formatMigrationFailure(
+  stage: MigrationStage,
+  error: unknown,
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  const cause = error instanceof MigrationFailure ? error.cause : error;
+  const secrets = [
+    env.DATABASE_URL,
+    env.APP_DATABASE_PASSWORD,
+    env.AUTH_ENCRYPTION_KEY,
+    env.CONTROL_PASSWORD,
+  ].filter((value): value is string => Boolean(value));
+
+  return {
+    event: 'MIGRATIONS_FAILED',
+    stage,
+    ...safeErrorFields(cause, secrets),
+  };
+}
+
+export async function migrate(env: NodeJS.ProcessEnv = process.env) {
+  let stage: MigrationStage = 'configuration';
+  let pool: Pool | undefined;
+  let client: PoolClient | undefined;
+  let lockAcquired = false;
+
+  try {
+    const config = validateMigrationConfig(env);
+
+    stage = 'database_pool';
+    pool = new Pool({
+      connectionString: config.databaseUrl,
+      connectionTimeoutMillis: 15000,
+      max: 1,
+      application_name: 'mlg-bot-migrations',
+    });
+
+    stage = 'database_connect';
+    client = await pool.connect();
+
+    stage = 'advisory_lock';
+    await client.query('SELECT pg_advisory_lock($1)', [MIGRATION_LOCK]);
+    lockAcquired = true;
+
+    stage = 'migration_001_check';
+    const exists = await client.query(
+      "SELECT to_regclass('mlg_bot.schema_migrations') AS present",
+    );
+    if (!exists.rows[0]?.present) {
+      stage = 'migration_001';
+      const sql = await readFile(new URL('../migrations/001_initial.sql', import.meta.url), 'utf8');
+      await client.query(sql);
+    }
+
+    stage = 'migration_002_check';
+    const second = await client.query(
+      'SELECT 1 FROM mlg_bot.schema_migrations WHERE version = 2',
+    );
+    if (!second.rowCount) {
+      stage = 'migration_002';
+      const sql = await readFile(new URL('../migrations/002_worker.sql', import.meta.url), 'utf8');
+      await client.query(sql);
+    }
+
+    stage = 'application_role';
+    const role = await client.query(
+      "SELECT 1 FROM pg_roles WHERE rolname = 'mlg_bot_app'",
+    );
+    if (!role.rowCount) await client.query('CREATE ROLE mlg_bot_app LOGIN');
+
+    // quote_literal is generated by PostgreSQL. Never log the generated SQL.
+    const quoted = await client.query('SELECT quote_literal($1) AS value', [config.appPassword]);
+    // LOGIN is intentional: repair an older role that exists with NOLOGIN.
+    await client.query('ALTER ROLE mlg_bot_app LOGIN PASSWORD ' + quoted.rows[0].value);
+
+    stage = 'permissions';
+    await client.query('GRANT USAGE ON SCHEMA mlg_bot TO mlg_bot_app');
+    await client.query('GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA mlg_bot TO mlg_bot_app');
+    await client.query('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA mlg_bot TO mlg_bot_app');
+    await client.query(
+      'GRANT DELETE ON mlg_bot.command_drafts, mlg_bot.wa_auth, mlg_bot.conversation_context TO mlg_bot_app',
+    );
+    await client.query(
+      'REVOKE UPDATE ON mlg_bot.audit_logs, mlg_bot.control_audit, mlg_bot.schema_migrations FROM mlg_bot_app',
+    );
+
+    const checkpoints = await client.query(
+      "SELECT to_regclass('mlg_bot.cup_checkpoints') AS present",
+    );
+    if (checkpoints.rows[0]?.present) {
+      await client.query(
+        'REVOKE UPDATE, DELETE ON mlg_bot.cup_checkpoints FROM mlg_bot_app',
+      );
+    }
+    await client.query('REVOKE INSERT ON mlg_bot.schema_migrations FROM mlg_bot_app');
+  } catch (error) {
+    // Destroy the failed session rather than returning an aborted transaction
+    // or a held advisory lock to the pool.
+    client?.release(true);
+    client = undefined;
+    lockAcquired = false;
+    throw new MigrationFailure(stage, error);
+  } finally {
+    if (client) {
+      if (lockAcquired) {
+        await client.query('SELECT pg_advisory_unlock($1)', [MIGRATION_LOCK]).catch(() => undefined);
+      }
+      client.release();
+    }
+    await pool?.end();
+  }
+}
+
+if (process.argv[1]?.endsWith('/migrate.ts')) {
+  migrate()
+    .then(() => console.log(JSON.stringify({ event: 'MIGRATIONS_OK' })))
+    .catch((error: unknown) => {
+      const stage = error instanceof MigrationFailure ? error.stage : 'configuration';
+      console.error(JSON.stringify(formatMigrationFailure(stage, error)));
+      process.exitCode = 1;
+    });
 }
