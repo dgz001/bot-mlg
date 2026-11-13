@@ -7,7 +7,7 @@ import {allowedDrawTeam} from './nations.ts';
 // Pure domain boundary. The production adapter MUST resolve identities, load
 // permissions and commit state + inbox + audit + outbox in one DB transaction.
 // This module does not provide a database, transport or operational durability.
-export const commandMenu='📋🎮 COMANDOS MLG\n\n🍿 RESENHA EM CANAL PRÓPRIO\nNo grupo de resenha, use !bot mensagem. Aqui ficam os comandos da Copa.\n\n⚔️ RETROSPECTO REAL\n!confronto jogador A x jogador B\nOu marque as duas contas: !confronto @jogador1 x @jogador2\n!titulo nome ou @conta — títulos e conquistas; sem nome, consulta sua conta\n!stats — seus números\n!stats Nome ou @conta — números de outro participante\n!jornada [nome ou @conta] — sua trajetória completa\n!arquivo [página] — inscritos nas últimas Copas\n!moral [página] — pontos e conquistas\n!participantes [edição] — inscritos; C1 consulta tentativa cancelada\n!ranking • !campeoes • !historico • !minhascopas (use 2 para a próxima página)\n\n🏆 MINICAMP\n!teste — configuração e situação da Copa\n!supabase — verificar a conexão com o banco\n!times [página] — equipes disponíveis para sorteio\n!entrar — inscrição\n!sair — libera vaga; após sorteio, propõe W.O. 3x0 para confirmação\n!copa — jogos abertos por fase\n!proximafase — somente a próxima fase\n!chave A ou !chave B — caminho até a final\n!sorteio — conferir os jogos sorteados\n!sorteio Nome ou @pessoa [| motivo] — ADM troca só o time; mantém chave e placares\n!jogo código — partida\n!meujogo — próximo adversário e código do seu jogo\n!resenhacamp — últimos jogos confirmados deste Mini Camp\nMande o print no grupo. Use !resultado CÓDIGO MxV: CÓDIGO é o número do jogo; M e V são os gols em números, sem espaços, primeiro mandante, depois visitante\n!confirmar CÓDIGO MxV • !cancelar CÓDIGO • !contestar CÓDIGO\nQuem enviou pode cancelar o placar pendente e reenviar; qualquer jogador da dupla pode confirmar; sem contestação, o placar comum confirma após cinco minutos.\nUse !meujogo para consultar o código; ADM corrige erros.\n\n🔐 SOMENTE ADMs SELECIONADOS NO PAINEL\n!modelos • !ativarmodelo Nome — escolher campeonato deste grupo\n!novacopa → !formato 4, 8, 16 ou 32\n!cancelar copa — libera o número para a próxima edição\n!forcarresultado CÓDIGO MxV motivo\n!resolver CÓDIGO MxV motivo\n!deletar código — anular resultado sem fase posterior\n!deletar título código-da-final — retirar título e reabrir final\n!anularcopa número-da-edição — retirar uma Copa de teste das estatísticas\n!cadastrar @nome — vincula o nome à conta marcada\n!editar @nome | Nome novo — muda o nome salvo\n!meunome Nome novo — ADM altera o próprio nome\n!excluir @nome — libera vaga antes do sorteio; mantém histórico\n!registrar Nome | @conta • !associar Nome | @conta — formas antigas\n!sincronizarcontas — conferir vínculos\n!revisarnumeros — conferir estatísticas pelo histórico\n!vistoria — situação e pendências da Copa\n!config\n\n📊 Retrospectos usam partidas confirmadas neste bot. Palpites não alteram resultados.';
+export const commandMenu='📋🎮 COMANDOS MLG\n\n🏆 CENTRAL DE CAMPEONATOS\nEste bot é dedicado a inscrições, sorteios, partidas, resultados e histórico.\n💬 Perguntas diretas: “Qual meu próximo jogo?”, “Como está a Copa?” ou “Como confirmo meu resultado?”\n\n⚔️ RETROSPECTO REAL\n!confronto jogador A x jogador B\nOu marque as duas contas: !confronto @jogador1 x @jogador2\n!titulo nome ou @conta — títulos e conquistas; sem nome, consulta sua conta\n!stats — seus números\n!stats Nome ou @conta — números de outro participante\n!jornada [nome ou @conta] — sua trajetória completa\n!arquivo [página] — inscritos nas últimas Copas\n!moral [página] — pontos e conquistas\n!participantes [edição] — inscritos; C1 consulta tentativa cancelada\n!ranking • !campeoes • !historico • !minhascopas (use 2 para a próxima página)\n\n🏆 MINICAMP\n!teste — configuração e situação da Copa\n!supabase — verificar a conexão com o banco\n!times [página] — equipes disponíveis para sorteio\n!entrar — inscrição\n!sair — libera vaga; após sorteio, propõe W.O. 3x0 para confirmação\n!copa — jogos abertos por fase\n!proximafase — somente a próxima fase\n!chave A ou !chave B — caminho até a final\n!sorteio — conferir os jogos sorteados\n!sorteio Nome ou @pessoa [| motivo] — ADM troca só o time; mantém chave e placares\n!jogo código — partida\n!meujogo — próximo adversário e código do seu jogo\nMande o print no grupo. Use !resultado CÓDIGO MxV: CÓDIGO é o número do jogo; M e V são os gols em números, sem espaços, primeiro mandante, depois visitante\n!confirmar CÓDIGO MxV • !cancelar CÓDIGO • !contestar CÓDIGO\nQuem enviou pode cancelar o placar pendente e reenviar; qualquer jogador da dupla pode confirmar; sem contestação, o placar comum confirma após cinco minutos.\nUse !meujogo para consultar o código; ADM corrige erros.\n\n🔐 SOMENTE ADMs SELECIONADOS NO PAINEL\n!modelos • !ativarmodelo Nome — escolher campeonato deste grupo\n!novacopa → !formato 4, 8, 16 ou 32\n!cancelar copa — libera o número para a próxima edição\n!forcarresultado CÓDIGO MxV motivo\n!resolver CÓDIGO MxV motivo\n!deletar código — anular resultado sem fase posterior\n!deletar título código-da-final — retirar título e reabrir final\n!anularcopa número-da-edição — retirar uma Copa de teste das estatísticas\n!cadastrar @nome — vincula o nome à conta marcada\n!editar @nome | Nome novo — muda o nome salvo\n!meunome Nome novo — ADM altera o próprio nome\n!excluir @nome — libera vaga antes do sorteio; mantém histórico\n!registrar Nome | @conta • !associar Nome | @conta — formas antigas\n!sincronizarcontas — conferir vínculos\n!revisarnumeros — conferir estatísticas pelo histórico\n!vistoria — situação e pendências da Copa\n!config\n\n📊 Retrospectos usam partidas confirmadas neste bot. Palpites não alteram resultados.';
 export type Participant = { userId: string; name: string; club?: string };
 export type Result = {
   home: number; away: number; author: string; at: number;
@@ -188,12 +188,12 @@ const classifiedCheers = [
 const eliminatedCheers = [
   '🤝 Valeu pela disputa! Na próxima Copa tem revanche.',
   '💪 Hoje acabou a caminhada, mas a próxima inscrição já merece teu nome!',
-  '🍿 Agora é arquibancada e resenha. Volta pra buscar a taça na próxima!',
+  'Participação encerrada. Inscreva-se na próxima edição.',
   '🎮 Guarda o controle com carinho: ainda tem muita Copa pela frente!',
   '⚽ Cabeça erguida! Obrigado por fazer parte dessa edição.',
   '🔥 A próxima chance começa com outro !entrar. Te esperamos!',
   '👏 Valeu pelo jogo! A comunidade ganha com a participação de todo mundo.',
-  '😄 A taça escapou dessa vez. A vaga na resenha continua garantida!',
+  '😄 A taça escapou dessa vez. Prepare-se para buscar o título na próxima edição!',
 ];
 const championCheers = [
   '🎉 Solta o grito! Essa edição tem dono e a festa está liberada!',
@@ -227,7 +227,7 @@ function advance(s: State, cup: Cup, match: Match, at: number): string[] {
   const loser = player(cup, match.winner === match.home ? match.away : match.home);
   const isFinal = cup.size / 2 ** match.round === 2;
   const notices = [`✅ RESULTADO CONFIRMADO\n#${match.code} · ${roundName(cup.size/2**match.round)}\n${player(cup, match.home).name} ${r.home} x ${r.away} ${player(cup, match.away).name}\n${isFinal ? `🏆 ${winner.name} é campeão!\n🥈 ${loser.name} fica com o vice. Valeu pela disputa até a final!` : `🟢 CLASSIFICADO · ${winner.name}\n${classifiedCheers[match.code % classifiedCheers.length]}\n\n🔴 ELIMINADO · ${loser.name}\n${eliminatedCheers[match.code % eliminatedCheers.length]}\n📣 Na próxima edição: !entrar para se inscrever novamente.`}`];
-  if(cup.competitionName==='Minicamp MLG')notices[0]+='\n🍿 Ficou na resenha do Mini Camp: !resenhacamp.';
+  
   const progress=()=>{
     if(cup.competitionName==='Minicamp MLG')return `📍 MINI CAMP · CHAVE ATUALIZADA\n${cup.status==='completed'?miniPhase(cup,Math.log2(cup.size)-1):miniPhase(cup,Math.min(Math.log2(cup.size)-1,match.round+1),undefined,false,Math.floor(match.position/2))}\n${cup.status==='completed'?'🏆 Campeão confirmado.':'Vagas indefinidas aguardam os outros jogos. Consulte !proximafase.'}`;
     const side=match.position<cup.size/2**(match.round+2)?'A':'B';
@@ -303,7 +303,7 @@ export function apply(input: State, event: Event, env: Environment = environment
   const automatic=event.userId===AUTO_CONFIRM_ACTOR&&/^auto-confirm-\d+-\d+$/.test(event.id);
   if(event.userId===AUTO_CONFIRM_ACTOR)requireThat(automatic&&cmd==='!confirmar'&&parts.length===2&&/^\d+$/.test(parts[1]??''),'Evento automático inválido.');
   let notices: string[] = [];
-  const cheer=['🔥 Chegou pra disputar a taça ou pra render resenha?','🎮 Agora é no controle! A torcida já está de olho.','🍿 Mais um nome na disputa. Vai faltar cadeira nessa arquibancada!','⚽ Tá dentro! O discurso de campeão a gente deixa pra final.','🏆 Vaga garantida. Agora chama aquele rival que fala muito!','📣 A lista está esquentando! Essa Copa promete.'][[...event.id].reduce((n,c)=>n+c.charCodeAt(0),0)%6];
+  const cheer=['🏟️ Inscrição confirmada! A torcida já está de olho.','🎮 Agora é no controle: boa disputa!','⚽ Mais um nome na chave. A competição está ficando completa!','🏆 Vaga garantida. O próximo passo é buscar a taça!','📣 A lista está esquentando. Essa edição promete!','🔥 Chegou para disputar o título. Boa sorte!'][[...event.id].reduce((n,c)=>n+c.charCodeAt(0),0)%6];
   const profiles=s.profiles?.[event.groupId]??{};
   const groupCups=Object.values(s.cups).filter(c=>c.groupId===event.groupId);
   const editions=()=>Object.values(s.cups).filter(c=>c.groupId===event.groupId).sort((a,b)=>a.createdAt-b.createdAt||a.id.localeCompare(b.id));
@@ -419,7 +419,7 @@ export function apply(input: State, event: Event, env: Environment = environment
     const games=cups.flatMap(c=>c.matches.filter(m=>m.status==='confirmed'&&((m.home===a&&m.away===b)||(m.home===b&&m.away===a))));
     let ga=0,gb=0,wa=0,wb=0;
     for(const m of games){const r=score(m);ga+=m.home===a?r.home:r.away;gb+=m.home===b?r.home:r.away;wa+=Number(m.winner===a);wb+=Number(m.winner===b);}
-    notices.push('⚔️ RETROSPECTO MLG\n'+people.get(a!)+' 🆚 '+people.get(b!)+'\n🎮 Jogos: '+games.length+'\n🏅 Vitórias: '+wa+' x '+wb+'\n⚽ Gols: '+ga+' x '+gb+'\n'+(games.length?'🍿 O placar está nos registros. A resenha fica por conta de vocês!':'🎮 Nenhum duelo confirmado ainda. Bora estrear esse confronto!')+'\nSomente partidas confirmadas neste bot; correções aplicadas e Copas canceladas excluídas.');
+    notices.push('⚔️ RETROSPECTO MLG\n'+people.get(a!)+' 🆚 '+people.get(b!)+'\n🎮 Jogos: '+games.length+'\n🏅 Vitórias: '+wa+' x '+wb+'\n⚽ Gols: '+ga+' x '+gb+'\n'+(games.length?'O placar está registrado.':'🎮 Nenhum duelo confirmado ainda. Bora estrear esse confronto!')+'\nSomente partidas confirmadas neste bot; correções aplicadas e Copas canceladas excluídas.');
   } else if (cmd === '!novacopa') {
     needAdmin(); requireThat(!active(), 'Já existe Copa ativa.');
     const draft = s.drafts[event.groupId];
@@ -662,7 +662,7 @@ export function apply(input: State, event: Event, env: Environment = environment
   } else if (cmd === '!ajuda' || cmd === '!minicamp') {
     const cup=active();
     const next=cup?.status==='open'?`Inscrições abertas: ${cup.participants.length}/${cup.size}. Use !entrar para participar.`:cup?.status==='playing'?`Copa em andamento: use !copa para ver os confrontos e !jogo código para conferir sua partida.`:admin?'Nenhuma Copa ativa. Para abrir uma, use !novacopa.':'Nenhuma Copa ativa. Aguarde um ADM abrir a próxima edição.';
-    notices.push('📍 AGORA\n'+next+'\n\n'+'🏆 '+competitionName.toUpperCase()+'\nADM: !novacopa → !nome → !categoria → !formato → !jogos 1 → !abrircopa\nJogadores: !entrar\nMandem o print: !resultado CÓDIGO MxV\nTroque CÓDIGO pelo número do jogo; M e V pelos gols em números, sem espaços (mandante primeiro, visitante depois).\nConfirme o placar conferido: !confirmar CÓDIGO MxV\nAntes de confirmar: autor pode !cancelar código e reenviar\nAdversário discorda: !contestar código\nADM distinto do proponente: !resolver CÓDIGO MxV motivo\nConsultas: !copa, !jogo código, !stats, !ranking, !campeoes, !historico, !minhascopas\n!stats Nome completo consulta alguém; nomes repetidos: cada jogador consulta sua conta com !stats.\nADM: !cancelar copa • !forcarresultado CÓDIGO MxV • !config\nTimes sorteados valem só para esta Copa.');
+    notices.push('📍 AGORA\n'+next+'\n\n'+'🏆 '+competitionName.toUpperCase()+'\nADM: !novacopa → !nome → !categoria → !formato → !jogos 1 → !abrircopa\nJogadores: !entrar\nMandem o print: !resultado CÓDIGO MxV\nTroque CÓDIGO pelo número do jogo; M e V pelos gols em números, sem espaços (mandante primeiro, visitante depois).\nConfirme o placar conferido: !confirmar CÓDIGO MxV\nAntes de confirmar: autor pode !cancelar código e reenviar\nAdversário discorda: !contestar código\nADM distinto do proponente: !resolver CÓDIGO MxV motivo\nConsultas: !copa, !jogo código, !stats, !ranking, !campeoes, !historico, !minhascopas\n!stats Nome completo consulta alguém; nomes repetidos: cada jogador consulta sua conta com !stats.\nADM: !cancelar copa • !forcarresultado CÓDIGO MxV • !config\nTimes sorteados valem só para esta Copa.\n💬 Você também pode perguntar em linguagem natural sobre seu jogo, a Copa e como registrar ou confirmar placares.');
   } else if (cmd === '!titulo' || cmd === '!título' || cmd === '!tituloid') {
     const cups=Object.values(s.cups).filter(c=>c.groupId===event.groupId);
     const normalize=(v:string)=>v.trim().replace(/^@+/, '').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim().replace(/\s+/g,' ');
@@ -676,7 +676,7 @@ export function apply(input: State, event: Event, env: Environment = environment
     const won=cups.filter(c=>c.status==='completed'&&c.champion===target).sort((a,b)=>(b.completedAt??0)-(a.completedAt??0));
     const variation=[...event.id].reduce((n,c)=>n+c.charCodeAt(0),0)%4;
     const lines=won.map(c=>`🏆 ${c.competitionName??"Minicamp MLG"} · ${cupLabel(c)} · ${cupDate(c)} · ${teamLabel(player(c,target!).club,c.teamKind)}`);
-    const cheers=won.length?['👑 A taça está registrada. Agora aguenta a resenha!','🏆 Tem história na estante! Quem vai buscar a próxima?','🍿 Os números estão aí. O debate do grupo está liberado!','🎮 Conquista confirmada. Bora defender essa moral na próxima Copa!']:['😄 A estante está esperando a estreia. Bora de !entrar na próxima!','🍿 Sem taça por enquanto, mas presença na resenha está garantida!','🎮 O primeiro título ainda está em jogo. Próxima Copa, nova chance!','🏆 Ainda não levantou uma aqui. A próxima história pode ser sua!'];
+    const cheers=won.length?['👑 Título registrado no histórico oficial.','🏆 Uma conquista importante na sua trajetória!','📊 Seu desempenho está registrado. Quem busca a próxima taça?','🎮 Conquista confirmada. Prepare-se para defender o título!']:['😄 Sua primeira taça ainda pode chegar. Inscreva-se na próxima edição!','Ainda sem título registrado. A próxima edição está disponível para inscrição.','🎮 O primeiro título ainda está em jogo. Próxima Copa, nova chance!','🏆 Ainda não levantou uma aqui. A próxima história pode ser sua!'];
     notices.push(`🏆 TÍTULOS DO MINICAMP\n${name}\nTotal neste grupo: ${won.length}\n${lines.join('\n')}\n${cheers[variation]}\nSomente Copas concluídas neste bot; edições anuladas não contam.`);
   } else if (cmd === '!stats'||cmd==='!statsid') {
     const cups = Object.values(s.cups).filter(c=>c.groupId===event.groupId&&c.status!=='cancelled');
@@ -708,20 +708,22 @@ export function apply(input: State, event: Event, env: Environment = environment
     requireThat(parts.length<=2 && (!arg || arg==='A' || arg==='B'), 'Use !chave, !chave A ou !chave B.');
     const cup=active()??[...groupCups].sort((a,b)=>b.createdAt-a.createdAt).find(c=>c.status==='completed');requireThat(cup, 'Nenhuma Copa sorteada neste grupo.');
     notices.push(`🗺️ CAMINHO ATÉ A TAÇA · ${cup.competitionName?.toUpperCase()??'MLG'}\n🏆 ${cupLabel(cup)} · ${cupStatus(cup)}\n\n${bracket(cup,arg as 'A'|'B'|undefined)}\n\n📌 Só a fase seguinte: !proximafase.`);
-  } else if (cmd === '!resenhacamp') {
-    requireThat(casualMinicamp,'A resenha do Mini Camp fica no grupo do Mini Camp.');
-    requireThat(parts.length===1,'Use !resenhacamp sem argumentos.');
-    const games=groupCups.filter(c=>c.status!=='cancelled'&&c.competitionName==='Minicamp MLG').flatMap(c=>c.matches.filter(m=>m.status==='confirmed').map(m=>({cup:c,match:m,result:score(m)})))
-      .sort((a,b)=>b.result.at-a.result.at||b.match.code-a.match.code).slice(0,5);
-    notices.push(`🍿 RESENHA DO MINI CAMP\n${games.map(({cup,match,result})=>`⚽ Jogo ${match.code} · ${cupLabel(cup)}\n${player(cup,match.home).name} ${result.home} x ${result.away} ${player(cup,match.away).name}\n${result.reason?.includes('W.O.')?'🏳️ Decidido por W.O.':`🎮 ${player(cup,match.winner!).name} levou essa!`}`).join('\n\n')||'Ainda não tem jogo confirmado. Quando a turma jogar, a resenha aparece aqui.'}\n\nSó resultados confirmados deste Mini Camp; correções entram na consulta e edições anuladas ficam fora.`);
   } else if (cmd === '!meujogo') {
     requireThat(parts.length===1,'Use !meujogo sem argumentos.');
-    const cup=active();requireThat(cup,'Nenhuma Copa ativa neste grupo. Consulte !historico.');
-    requireThat(cup.participants.some(p=>p.userId===event.userId),'Você não está inscrito nesta Copa.');
+    const cup=active()??[...groupCups].sort((a,b)=>b.createdAt-a.createdAt).find(c=>c.status==='completed');requireThat(cup,'Nenhuma Copa ativa ou recém-encerrada neste grupo. Consulte !historico.');
+    requireThat(cup.participants.some(p=>p.userId===event.userId),'Você não está inscrito nesta edição. Consulte !participantes para conferir a lista.');
+    if(cup.status==='completed'){
+      const final=cup.matches.find(m=>m.round===Math.log2(cup.size)-1);
+      if(final&&[final.home,final.away].includes(event.userId)){
+        const result=score(final),champion=cup.champion===event.userId;
+        notices.push(champion?`🏆 EDIÇÃO CONCLUÍDA · CAMPEÃO\nParabéns, ${player(cup,event.userId).name}! Você venceu a final ${result.home}x${result.away} e seu título está registrado.\n📊 Consulte !stats para seus números e !historico para a campanha completa.`:`🥈 EDIÇÃO CONCLUÍDA · VICE-CAMPEÃO\n${player(cup,event.userId).name}, sua campanha terminou na final. Placar: ${result.home}x${result.away}.\n📊 Consulte !stats para seus números e !historico para a campanha completa.`);
+      }else notices.push('🏁 Esta edição já foi encerrada. Consulte !historico para ver o campeão e a campanha.');
+    }else{
     const next=cup.matches.find(m=>m.status!=='confirmed'&&[m.home,m.away].includes(event.userId));
     if(next){
       const opponent=player(cup,next.home===event.userId?next.away:next.home);
-      notices.push(`🎯 SEU PRÓXIMO JOGO · ${cup.competitionName?.toUpperCase()??'MLG'}\n${roundName(cup.size/2**next.round)} · código ${next.code} · ${matchStatus(next.status)}\n${player(cup,next.home).name} (${teamLabel(player(cup,next.home).club,cup.teamKind)}) × ${player(cup,next.away).name} (${teamLabel(player(cup,next.away).club,cup.teamKind)})\n🤝 Adversário: ${opponent.name}\n📌 Envie !resultado ${next.code} MxV: substitua M e V pelos gols em números, sem espaços; mandante primeiro, visitante depois. Consulte !jogo ${next.code}.`);
+      const detail=next.status==='pending'?`📝 Placar aguardando confirmação: ${score(next).home}x${score(next).away}.\n${score(next).author===event.userId?'Você informou o placar.':'Placar informado por '+player(cup,score(next).author).name+'.'} Confira o print: !confirmar ${next.code} ${score(next).home}x${score(next).away}. Se houver divergência, use !contestar ${next.code}.`:next.status==='disputed'?`⚠️ Resultado contestado. Aguarde a análise de um ADM; não envie outro placar para esta partida.`:`📸 Após jogar, envie o print e registre: !resultado ${next.code} MxV. O primeiro número é do mandante; o segundo, do visitante.`;
+      notices.push(`🎯 SEU PRÓXIMO JOGO · ${cup.competitionName?.toUpperCase()??'MLG'}\n${roundName(cup.size/2**next.round)} · código ${next.code} · ${matchStatus(next.status)}\n${player(cup,next.home).name} (${teamLabel(player(cup,next.home).club,cup.teamKind)}) × ${player(cup,next.away).name} (${teamLabel(player(cup,next.away).club,cup.teamKind)})\n🤝 Adversário: ${opponent.name}\n${detail}\n🔎 Consulte !jogo ${next.code} para ver a situação completa.`);
     }else if(cup.status==='open')notices.push('⏳ Sua inscrição está confirmada. O sorteio acontece quando as vagas forem preenchidas.');
     else{
       const last=cup.matches.filter(m=>m.status==='confirmed'&&[m.home,m.away].includes(event.userId)).sort((a,b)=>b.round-a.round)[0];
@@ -732,6 +734,7 @@ export function apply(input: State, event: Event, env: Environment = environment
         const waiting=sibling?.status==='confirmed'?'A chave está sendo atualizada. Consulte !copa.':sibling?`Aguarde o vencedor do jogo ${sibling.code}: ${player(cup,sibling.home).name} × ${player(cup,sibling.away).name}.`:'Aguarde o próximo confronto na chave.';
         notices.push(cup.competitionName==='Minicamp MLG'?`✅ Você avançou no jogo #${last.code}.\n📍 ${miniPhase(cup,Math.min(Math.log2(cup.size)-1,last.round+1),undefined,false,Math.floor(last.position/2))}\nO outro classificado será definido quando o jogo dele terminar.`:`✅ Você passou de fase no jogo ${last.code}.\n🎯 ${waiting}\nConsulte !meujogo novamente quando o adversário estiver definido.`);
       }
+    }
     }
   } else if (cmd === '!jogo') {
     const { cup, match } = getMatch(parts[1]);

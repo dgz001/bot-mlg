@@ -29,19 +29,6 @@ test('instruções do placar ensinam a ordem dos gols sem sugerir placar especí
  for(const tip of tips){assert.match(tip,/MxV/);assert.doesNotMatch(tip,/!resultado(?:\s+\d+|\s+CÓDIGO)?\s+\d+x\d+/i);}
  assert.match(tips.join(' '),/mandante primeiro/);
 });
-test('resenha leve do Mini Camp registra só o último placar confirmado',()=>{
- const h=harness(),cup=h.start(4),match=cup.matches[0]!;
- assert.match(h.send(match.home,'!resenhacamp').notices[0]!,/Ainda não tem jogo confirmado/);
- h.send(match.home,`!resultado ${match.code} 1x2`);
- assert.doesNotMatch(h.send(match.home,'!resenhacamp').notices[0]!,/1 x 2/);
- const confirmed=h.send(match.away,`!confirmar ${match.code}`).notices.join(' ');
- assert.match(confirmed,/!resenhacamp/);
- assert.match(h.send(match.home,'!resenhacamp').notices[0]!,/1 x 2/);
- h.send('admin',`!forcarresultado ${match.code} 2x1`);
- const corrected=h.send(match.home,'!resenhacamp').notices[0]!;
- assert.match(corrected,/2 x 1/);assert.doesNotMatch(corrected,/1 x 2/);
- assert.equal((corrected.match(new RegExp(`Jogo ${match.code}`, 'g'))??[]).length,1);
-});
 test('Mini Camp com quatro jogadores mostra final projetada sem inventar adversário',()=>{
  const h=harness(),cup=h.start(4),[a,b]=cup.matches;
  const before=h.send(a!.home,'!proximafase').notices[0]!;
@@ -77,13 +64,6 @@ test('próxima fase atende Copa formal nas inscrições, mata-mata, final e tít
  assert.match(h.send('u0','!proximafase').notices[0]!,new RegExp(`#${final.code} ${a!.home} × ${b!.home}`));
  h.send(final.home,`!resultado ${final.code} 1x0`);h.send(final.away,`!confirmar ${final.code}`);
  assert.match(h.send('u0','!proximafase').notices[0]!,new RegExp(`${final.home} é campeão`));
-});
-test('resenha do Mini Camp não mistura placar de Copa nomeada no mesmo grupo',()=>{
- const h=harness(),cup=h.start(4),match=cup.matches[0]!;
- h.send(match.home,`!resultado ${match.code} 2x0`);h.send(match.away,`!confirmar ${match.code}`);
- assert.match(h.send('u0','!resenhacamp').notices[0]!,new RegExp(`Jogo ${match.code}`));
- h.state.cups[cup.id]!.competitionName='Copa Oficial MLG';
- assert.doesNotMatch(h.send('u0','!resenhacamp').notices[0]!,new RegExp(`Jogo ${match.code}`));
 });
 test('autor cancela placar pendente e reencontra a ordem mandante x visitante sem avanço duplicado',()=>{
  const h=harness();const cup=h.start(4),match=cup.matches[0]!;
@@ -837,4 +817,31 @@ test('Minicamp aceita sorteio misto de clubes e seleções sem repetição',()=>
  const cup=Object.values(h.state.cups)[0]!;
  assert.equal(cup.participants.length,32);
  assert.equal(new Set(cup.participants.map(p=>p.club)).size,32);
+});
+
+test('meujogo explica o próximo passo conforme o estado real da partida',()=>{
+ const h=harness(),cup=h.start(4),match=cup.matches[0]!;
+ const scheduled=h.send(match.home,'!meujogo').notices[0]!;
+ assert.match(scheduled,/SEU PRÓXIMO JOGO/);assert.match(scheduled,/!resultado/);
+ h.send(match.home,`!resultado ${match.code} 2x1`);
+ const pending=h.send(match.home,'!meujogo').notices[0]!;
+ assert.match(pending,/Placar aguardando confirmação: 2x1/);assert.match(pending,new RegExp(`!confirmar ${match.code} 2x1`));
+ h.send(match.away,`!contestar ${match.code}`);
+ const disputed=h.send(match.home,'!meujogo').notices[0]!;
+ assert.match(disputed,/Resultado contestado/);assert.match(disputed,/aguarde a análise de um ADM/);
+});
+
+test('meujogo reconhece campeão e vice após o encerramento da edição',()=>{
+ const h=harness(),cup=h.start(4);
+ while(h.state.cups[cup.id]!.status!=='completed'){
+  const match=h.state.cups[cup.id]!.matches.find(m=>m.status==='scheduled')!;
+  h.send(match.home,`!resultado ${match.code} 2x1`);
+  h.send(match.away,`!confirmar ${match.code}`);
+ }
+ const completed=h.state.cups[cup.id]!,final=completed.matches.find(m=>m.round===Math.log2(completed.size)-1)!;
+ const champion=h.send(completed.champion!,'!meujogo').notices[0]!;
+ const runnerUp=final.home===completed.champion?final.away:final.home;
+ const vice=h.send(runnerUp,'!meujogo').notices[0]!;
+ assert.match(champion,/CAMPEÃO/);assert.match(champion,/título está registrado/);
+ assert.match(vice,/VICE-CAMPEÃO/);assert.match(vice,/campanha terminou na final/);
 });

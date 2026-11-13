@@ -7,8 +7,15 @@ test('canais pausados preservam a fila sem bloquear comandos de canais ativos',(
  assert.equal(events.length,12);
  assert.deepEqual(pendingCupBatch(events,()=>false),[]);
 });
-test('cup commands are routed separately from resenha',()=>{
- for(const t of ['!supabase','!teste','!jornada','!jornada Nome completo','!arquivo 2','!vistoria','!titulo','!título Nome completo','!titulo Nome completo','!comandos','!chave','!chave A','!chave B','!lado A','!cadastrar @Maria','!editar @Maria | Maria Souza','!excluir @Maria','!meunome Novo nome','!confronto Arthur x Lucas','!forçar resultado 123 4x3','!novacopa','!nome Copa Nova','!categoria seleção','!formato 4','!jogos 1','!abrircopa','!entrar','!sorteio','!sorteio Samuel','!sorteio Rafael | Seleção indisponível','!meujogo','!proximafase','!próxima fase','!resenhacamp','!resultado 432 3x2','!confirmar 432','!stats','!ajuda','2'])assert.equal(minicampCommand(t),true);
- for(const t of ['!bot gs x amerio','bom dia','!entraroutra','25'])assert.equal(minicampCommand(t),false);
+test('only competition commands are routed to the Mini Camp worker',()=>{
+ for(const t of ['!supabase','!teste','!jornada','!jornada Nome completo','!arquivo 2','!vistoria','!titulo','!título Nome completo','!titulo Nome completo','!comandos','!chave','!chave A','!chave B','!lado A','!cadastrar @Maria','!editar @Maria | Maria Souza','!excluir @Maria','!meunome Novo nome','!confronto Arthur x Lucas','!forçar resultado 123 4x3','!novacopa','!nome Copa Nova','!categoria seleção','!formato 4','!jogos 1','!abrircopa','!entrar','!sorteio','!sorteio Samuel','!sorteio Rafael | Seleção indisponível','!meujogo','!proximafase','!próxima fase','!resultado 432 3x2','!confirmar 432','!stats','!ajuda','2'])assert.equal(minicampCommand(t),true);
+ for(const t of ['!bot gs x amerio','!resenha','!resenhacamp','bom dia','!entraroutra','25'])assert.equal(minicampCommand(t),false);
  for(const command of ['!campeoes','!historico','!proximafase','!forcarresultado'])assert.equal(minicampCommand(command),true);
+});
+
+test('command menu is focused on competition operations, not conversation',async()=>{
+ const {commandMenu}=await import('../src/minicamp/engine.ts');
+ assert.match(commandMenu,/CENTRAL DE CAMPEONATOS/);
+ assert.match(commandMenu,/Qual meu próximo jogo/);
+ assert.doesNotMatch(commandMenu,/resenha|!bot/i);
 });
