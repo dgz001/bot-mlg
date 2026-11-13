@@ -21,7 +21,7 @@ test('pré-validação rejeita protocolo de banco inesperado', () => {
       DATABASE_URL: 'mysql://user:password@example.com/db',
       APP_DATABASE_PASSWORD: validPassword,
     }),
-    /postgres ou postgresql/,
+    /postgres or postgresql/,
   );
 });
 
