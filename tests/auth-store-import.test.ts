@@ -2,16 +2,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { initAuthCreds } from '@whiskeysockets/baileys';
 import type { Pool } from 'pg';
-import { importAuthSnapshotIfEmpty } from '../src/whatsapp/auth-store.ts';
+import { importAuthSnapshotIfEmpty, WA_AUTH_IMPORT_LOCK_ID } from '../src/whatsapp/auth-store.ts';
 
 class FakePool {
   records: { account: string; category: string; id: string }[] = [];
   connectCalls = 0;
+  advisoryLockIds: number[] = [];
 
   async connect() {
     this.connectCalls++;
     return {
       query: async (sql: string, values: unknown[] = []) => {
+        if (sql.includes('pg_advisory_xact_lock')) {
+          this.advisoryLockIds.push(Number(values[0]));
+          return { rows: [], rowCount: 1 };
+        }
         if (sql.startsWith('SELECT 1 FROM mlg_bot.wa_auth')) {
           const found = this.records.some(record => record.account === values[0]);
           return { rows: found ? [{}] : [], rowCount: found ? 1 : 0 };
@@ -54,6 +59,8 @@ test('importa a sessão legada apenas quando a conta ainda não tem autenticaç�
 
   assert.equal(imported, true);
   assert.equal(pool.records.length, 3);
+  assert.deepEqual(pool.advisoryLockIds, [WA_AUTH_IMPORT_LOCK_ID]);
+  assert.notEqual(WA_AUTH_IMPORT_LOCK_ID, 71012029);
   assert.deepEqual(
     pool.records.map(record => record.category).sort(),
     ['app-state-sync-key', 'creds', 'pre-key'],
