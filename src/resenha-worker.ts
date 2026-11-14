@@ -1,5 +1,5 @@
 import {rosterTick,rosterTextReady,rosterMessageId,type RosterConfig} from "./infra/roster-collection.ts";
-import {adminAuditTargets,adminAuditBody,auditMessageId,marketWindowCommandAction,marketWindowCommandDelivery} from './infra/admin-audit.ts';
+import {adminAuditTargets,auditMessageId,marketWindowCommandAction,marketWindowCommandDelivery} from './infra/admin-audit.ts';
 import {isWhatsAppMarketProposalTooLong} from './infra/market-proposal.ts';
 import {INITIAL_MARKET_FINANCE,assessLocalMarketFinance} from './infra/market-finance.ts';
 import {enqueueLocalMarketProposal,ensureLocalMarketTicketIds,localMarketProposalPage,pendingLocalMarketProposals,completeLocalMarketProposal,parseLocalMarketReviewCommand,MAX_PENDING_LOCAL_MARKET_PROPOSALS} from './infra/local-market-review.ts';
@@ -77,18 +77,11 @@ async function localMarketAuditTick(){
   }
  }finally{localMarketAuditBusy=false;}
 }
+// Outbound messages are delivered only to their explicit recipient. The
+// administration group receives dedicated operational notices elsewhere;
+// mirroring every reply here floods the admin channel and duplicates traffic.
 async function sendBotMessage(current:ReturnType<typeof makeWASocket>,recipient:string,content:any,options?:any){
- const sent=await current.sendMessage(recipient,content,options);
- if(!sent?.key?.id)return sent;
- const targets=adminAuditTargets(auth.data.groups,auth.data.groupModes,auth.data.loanGroups);
- const body=adminAuditBody({at:Date.now(),destination:recipient,messageId:sent.key.id,content});
- for(const group of targets){
-  if(group===recipient)continue;
-  try{await current.sendMessage(group,{text:body},{messageId:auditMessageId(sent.key.id,group)});}
-  catch{log('ADMIN_AUDIT_DELIVERY_FAILED');}
- }
- if(!targets.length)log('ADMIN_AUDIT_GROUP_NOT_CONFIGURED');
- return sent;
+ return current.sendMessage(recipient,content,options);
 }
 let phase='STARTING',stopping=false,attempt=0,timer:ReturnType<typeof setTimeout>|undefined,stable:ReturnType<typeof setTimeout>|undefined;
 let auth:Awaited<ReturnType<typeof vaultAuth>>,socket:ReturnType<typeof makeWASocket>|undefined;
