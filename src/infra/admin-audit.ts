@@ -7,10 +7,6 @@ export function adminAuditTargets(groups:string[],modes:Record<string,GroupMode>
 export function auditMessageId(messageId:string,group:string):string{
  return 'MLGAUDIT'+createHash('sha256').update(JSON.stringify([messageId,group])).digest('hex').slice(0,24).toUpperCase();
 }
-export function adminAuditBody(input:{at:number;destination:string;messageId:string;content:unknown}):string{
- return ['🧾 REGISTRO DE AÇÃO DO BOT','Horário: '+new Date(input.at).toISOString(),'Destino: '+input.destination,'ID da mensagem: '+input.messageId,'Conteúdo: '+auditContent(input.content)].join('\n');
-}
-
 export function marketWindowCommandAction(text:string):'open'|'close'|null{
  const command=text.trim().toLowerCase();
  if(command==='!transligar')return 'open';
