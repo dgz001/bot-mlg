@@ -19,3 +19,10 @@ test('command menu is focused on competition operations, not conversation',async
  assert.match(commandMenu,/Qual meu próximo jogo/);
  assert.doesNotMatch(commandMenu,/resenha|!bot/i);
 });
+
+test('every command advertised in the main menu has an active routing path',async()=>{
+ const {commandMenu}=await import('../src/minicamp/engine.ts');
+ const commands=[...new Set((commandMenu.match(/![\p{L}]+/gu)??[]).map(command=>command.toLocaleLowerCase('pt-BR')))];
+ const dedicated=new Set(['!modelos','!ativarmodelo']);
+ for(const command of commands)assert.equal(minicampCommand(command)||dedicated.has(command),true,command+' is advertised but has no Mini Camp routing path');
+});

@@ -1,5 +1,5 @@
 import {rosterTick,rosterTextReady,rosterMessageId,type RosterConfig} from "./infra/roster-collection.ts";
-import {adminAuditTargets,adminAuditBody,auditMessageId,marketWindowCommandAction,marketWindowCommandDelivery} from './infra/admin-audit.ts';
+import {adminAuditTargets,auditMessageId,marketWindowCommandAction,marketWindowCommandDelivery} from './infra/admin-audit.ts';
 import {isWhatsAppMarketProposalTooLong} from './infra/market-proposal.ts';
 import {INITIAL_MARKET_FINANCE,assessLocalMarketFinance} from './infra/market-finance.ts';
 import {enqueueLocalMarketProposal,ensureLocalMarketTicketIds,localMarketProposalPage,pendingLocalMarketProposals,completeLocalMarketProposal,parseLocalMarketReviewCommand,MAX_PENDING_LOCAL_MARKET_PROPOSALS} from './infra/local-market-review.ts';
@@ -32,6 +32,7 @@ import {vaultAuth} from './whatsapp/vault-auth.ts';
 import {privateControl} from './infra/private-control.ts';
 import {reconnect} from './infra/security.ts';
 import {progressMessage} from './whatsapp/progress-message.ts';
+import {groupMessageParticipant} from './whatsapp/message-identity.ts';
 import {configureJournal} from './infra/journal-control.ts';
 import {newerNews,newsCursor,newsMessage,newsSource} from './infra/platform-news.ts';
 process.umask(0o077);
@@ -77,18 +78,11 @@ async function localMarketAuditTick(){
   }
  }finally{localMarketAuditBusy=false;}
 }
+// Outbound messages are delivered only to their explicit recipient. The
+// administration group receives dedicated operational notices elsewhere;
+// mirroring every reply here floods the admin channel and duplicates traffic.
 async function sendBotMessage(current:ReturnType<typeof makeWASocket>,recipient:string,content:any,options?:any){
- const sent=await current.sendMessage(recipient,content,options);
- if(!sent?.key?.id)return sent;
- const targets=adminAuditTargets(auth.data.groups,auth.data.groupModes,auth.data.loanGroups);
- const body=adminAuditBody({at:Date.now(),destination:recipient,messageId:sent.key.id,content});
- for(const group of targets){
-  if(group===recipient)continue;
-  try{await current.sendMessage(group,{text:body},{messageId:auditMessageId(sent.key.id,group)});}
-  catch{log('ADMIN_AUDIT_DELIVERY_FAILED');}
- }
- if(!targets.length)log('ADMIN_AUDIT_GROUP_NOT_CONFIGURED');
- return sent;
+ return current.sendMessage(recipient,content,options);
 }
 let phase='STARTING',stopping=false,attempt=0,timer:ReturnType<typeof setTimeout>|undefined,stable:ReturnType<typeof setTimeout>|undefined;
 let auth:Awaited<ReturnType<typeof vaultAuth>>,socket:ReturnType<typeof makeWASocket>|undefined;
@@ -168,6 +162,7 @@ async function connect(){
  for(const message of orderMessages(event.messages)){queue=queue.then(async()=>{
  const group=message.key.remoteJid,id=message.key.id;if(stopping||!group||!id||message.key.fromMe)return;
  const body=extractMessageContent(message.message);const text=loanCommand((body?.conversation??body?.extendedTextMessage?.text??body?.imageMessage?.caption??'').trim());const context=body?.extendedTextMessage?.contextInfo??body?.imageMessage?.contextInfo;
+ const participant=groupMessageParticipant(message.key as typeof message.key & {participantAlt?:string|null});
  const windowDelivery=marketWindowCommandDelivery(event.type,text);
  if(windowDelivery==='retry'&&group.endsWith('@g.us')&&auth.data.groups.includes(group)){
   const receivedAt=Number(message.messageTimestamp)*1000;
@@ -217,7 +212,7 @@ async function connect(){
  if(!group.endsWith('@g.us'))return;
  const reviewCommand=event.type==='notify'?parseLocalMarketReviewCommand(text):null;
  const reviewGroupMode=groupMode(auth.data.groupModes,group);
- const reviewActor=message.key.participant;
+ const reviewActor=participant;
  if(reviewCommand&&auth.data.groups.includes(group)&&['controle','transfer','trade'].includes(reviewGroupMode)&&reviewActor){
   const current=socket;
   if(!current)return;
@@ -272,7 +267,6 @@ async function connect(){
    return;
   }
   try{
-   const participant=message.key.participant??(message.key as typeof message.key & {participantAlt?:string}).participantAlt;
    if(!participant){
     log('LOCAL_MARKET_WINDOW_SENDER_ID_MISSING');
     await sendBotMessage(current,group,{text:'⚠️ Recebi o comando, mas o WhatsApp não informou a identidade do remetente. Tente novamente.'});
@@ -308,13 +302,13 @@ async function connect(){
   return;
  }
  if(['transfer','trade','market-loan'].includes(groupMode(auth.data.groupModes,group))&&!auth.data.marketWindow?.open)return;
- if(enabled()&&auth.data.groups.includes(group)&&message.key.participant&&['transfer','trade','market-loan'].includes(groupMode(auth.data.groupModes,group))){
+ if(enabled()&&auth.data.groups.includes(group)&&participant&&['transfer','trade','market-loan'].includes(groupMode(auth.data.groupModes,group))){
   if(isWhatsAppMarketProposalTooLong(text)){
    await sendBotMessage(current,group,{text:'❌ Mensagem não processada: o limite é de 16.000 caracteres. Divida a proposta em uma mensagem menor. O bot continua funcionando.'});
    return;
   }
   const channels:MarketChannel[]=auth.data.groups.filter(g=>['transfer','trade','market-loan'].includes(groupMode(auth.data.groupModes,g))).map(g=>({group:g,kind:groupMode(auth.data.groupModes,g)==='market-loan'?'loan':groupMode(auth.data.groupModes,g) as 'transfer'|'trade'}));
-  const localProposal=marketEvent(group,id,message.key.participant,text,channels);
+  const localProposal=marketEvent(group,id,participant,text,channels);
   if(localProposal){
    auth.data.marketInbox??=[];
    const previousInbox=[...auth.data.marketInbox];
@@ -329,8 +323,8 @@ async function connect(){
     const ticket=accepted?.ticketId??'indisponível';
     const issues=localProposal.parsed.issues;
     const reaction=issues.length?'❌':'🟠';
-    try{await sendBotMessage(current,group,{react:{text:reaction,key:{remoteJid:group,participant:message.key.participant,id,fromMe:false}}});}catch{log('LOCAL_MARKET_REACTION_RETRY');}
-    const phone=(await cupAliases(message.key.participant,current).catch(()=>[])).find(a=>a.endsWith('@s.whatsapp.net'));
+    try{await sendBotMessage(current,group,{react:{text:reaction,key:{remoteJid:group,participant:participant,id,fromMe:false}}});}catch{log('LOCAL_MARKET_REACTION_RETRY');}
+    const phone=(await cupAliases(participant,current).catch(()=>[])).find(a=>a.endsWith('@s.whatsapp.net'));
     if(phone){
      const dm=issues.length?'❌ Protocolo '+ticket+' recebido, mas há pendências: '+issues.join('; ')+'. Corrija os campos e envie uma nova proposta.':localProposal.parsed.kind==='loan'?'🟠 Protocolo '+ticket+' de EMPRÉSTIMO recebido: '+localProposal.parsed.playersFrom.join(', ')+' — '+localProposal.parsed.origin+' → '+localProposal.parsed.destination+'. Duração: '+(localProposal.parsed.duration??'não informada')+'. Valor: €'+(localProposal.parsed.amountEuros??'não informado')+'. Encaminhado aos ADMs para conferência; ainda não está aprovado.':localProposal.parsed.purchaseScope==='review'?'🟠 Protocolo '+ticket+' recebido, mas o tipo ainda não está claro. Identifique se é COMPRA INTERNA (de outro clube da MLG) ou COMPRA EXTERNA (jogador de fora da MLG). A proposta ficará aguardando os ADMs.':'🟠 Protocolo '+ticket+' recebido e encaminhado para revisão dos ADMs. Ainda não está aprovado nem concluído.';
      await sendBotMessage(current,phone,{text:dm}).catch(()=>log('LOCAL_MARKET_PRIVATE_NOTICE_RETRY'));
@@ -346,12 +340,12 @@ async function connect(){
   const reactionMessage=body?.reactionMessage;
   const linkedId=reactionMessage?.key?.id??context?.stanzaId;
   const linkedProposal=(auth.data.marketInbox??[]).find(item=>item.localOnly&&item.group===group&&item.messageId===linkedId);
-  const responseEvent=marketResponse({group,messageId:id,participant:message.key.participant??(message.key as typeof message.key & {participantAlt?:string}).participantAlt??'',proposalMessageId:linkedId,text:reactionMessage?undefined:text,reaction:reactionMessage?.text??undefined,proposalKind:linkedProposal?.parsed.kind});
+  const responseEvent=marketResponse({group,messageId:id,participant:participant??'',proposalMessageId:linkedId,text:reactionMessage?undefined:text,reaction:reactionMessage?.text??undefined,proposalKind:linkedProposal?.parsed.kind});
   if(responseEvent){
    const candidates=(auth.data.marketInbox??[]).filter(item=>item.localOnly&&item.group===group&&typeof item.reviewedAt!=='number'&&(!responseEvent.proposalMessageId||item.messageId===responseEvent.proposalMessageId));
    let target=responseEvent.proposalMessageId&&candidates.length===1?candidates[0]:undefined;
    if(!responseEvent.proposalMessageId){
-    const sender=message.key.participant??(message.key as typeof message.key & {participantAlt?:string}).participantAlt;
+    const sender=participant;
     if(sender){
      const aliases=await cupAliases(sender,current).catch(()=>[sender]);
      const mentioned=(auth.data.marketInbox??[]).filter(item=>item.localOnly&&item.group===group&&typeof item.reviewedAt!=='number'&&(item.mentions??[]).some(jid=>aliases.includes(jid)));
@@ -376,27 +370,27 @@ async function connect(){
    log('LOCAL_MARKET_CONFIRMATION_UNMATCHED');
   }
  }
- if(marketApi&&enabled()&&message.key.participant&&auth.data.groups.includes(group)){
+ if(marketApi&&enabled()&&participant&&auth.data.groups.includes(group)){
   if(marketChannels.some(c=>c.group===group)){
    const reaction=body?.reactionMessage;
-   const response=marketResponse({group,messageId:id,participant:message.key.participant,proposalMessageId:reaction?.key?.id??context?.stanzaId,text,reaction:reaction?.text??undefined});
+   const response=marketResponse({group,messageId:id,participant:participant,proposalMessageId:reaction?.key?.id??context?.stanzaId,text,reaction:reaction?.text??undefined});
    if(response){auth.data.marketResponses??=[];if(!auth.data.marketResponses.some(e=>e.group===group&&e.messageId===id)){auth.data.marketResponses.push(response);await auth.save();}void marketTick();return;}
   }
 
 
-  let proposal=marketEvent(group,id,message.key.participant,text,marketChannels);
+  let proposal=marketEvent(group,id,participant,text,marketChannels);
   if(proposal&&body?.imageMessage&&marketChannels.some(c=>c.group===group)){
    try{
     const stream=await downloadContentFromMessage(body.imageMessage,'image');let size=0;const chunks:Buffer[]=[];
     for await(const chunk of stream){size+=chunk.length;if(size>4*1024*1024)throw Error('Card image too large');chunks.push(Buffer.from(chunk));}
     const reading=await readMarketCard(Buffer.concat(chunks),text);
-    if(!proposal){proposal=marketEvent(group,id,message.key.participant,'PROPOSTA DE COMPRA\n'+text,marketChannels);if(proposal){proposal.text=text||'[Carta recebida sem modelo de proposta]';proposal.parsed.issues.push('Carta recebida sem proposta completa: associe o jogador externo e o destino antes de continuar.');}}
+    if(!proposal){proposal=marketEvent(group,id,participant,'PROPOSTA DE COMPRA\n'+text,marketChannels);if(proposal){proposal.text=text||'[Carta recebida sem modelo de proposta]';proposal.parsed.issues.push('Carta recebida sem proposta completa: associe o jogador externo e o destino antes de continuar.');}}
     if(proposal)proposal.cardReading=reading;
-   }catch{if(!proposal){proposal=marketEvent(group,id,message.key.participant,'PROPOSTA DE COMPRA\n'+text,marketChannels);if(proposal)proposal.text=text||'[Carta recebida sem modelo de proposta]';}if(proposal)proposal.parsed.issues.push('A leitura da carta não foi confirmada. Confira a imagem original.');log('MARKET_CARD_REVIEW_REQUIRED');}
+   }catch{if(!proposal){proposal=marketEvent(group,id,participant,'PROPOSTA DE COMPRA\n'+text,marketChannels);if(proposal)proposal.text=text||'[Carta recebida sem modelo de proposta]';}if(proposal)proposal.parsed.issues.push('A leitura da carta não foi confirmada. Confira a imagem original.');log('MARKET_CARD_REVIEW_REQUIRED');}
   }
 
   if(proposal){
-   (proposal.parsed as typeof proposal.parsed & {directoryPhone?:string}).directoryPhone=(await cupAliases(message.key.participant,current).catch(()=>[])).find(a=>a.endsWith('@s.whatsapp.net'));
+   (proposal.parsed as typeof proposal.parsed & {directoryPhone?:string}).directoryPhone=(await cupAliases(participant,current).catch(()=>[])).find(a=>a.endsWith('@s.whatsapp.net'));
    proposal.mentions=context?.mentionedJid??[];
    auth.data.marketInbox??=[];
    if(!auth.data.marketInbox.some(e=>e.group===group&&e.messageId===id&&e.text===text)){
@@ -413,10 +407,10 @@ async function connect(){
  if(auth.data.groups.includes(group)&&['transfer','trade','market-loan','roster'].includes(groupMode(auth.data.groupModes,group)))return;
  const receivedAt=Number(message.messageTimestamp)*1000;
  const eventAt=Number.isSafeInteger(receivedAt)&&receivedAt>1577836800000&&receivedAt<Date.now()+60000?receivedAt:Date.now();
- if(!auth.data.groups.includes(group)&&/^!novacopa\s*$/i.test(text.trim())&&cupApi&&message.key.participant){
+ if(!auth.data.groups.includes(group)&&/^!novacopa\s*$/i.test(text.trim())&&cupApi&&participant){
   try{
    const metadata=await current.groupMetadata(group);
-   const aliases=await cupAliases(message.key.participant,current);
+   const aliases=await cupAliases(participant,current);
    const verified=await Promise.all(metadata.participants.filter(p=>Boolean(p.admin)).map(p=>cupAliases(p.id,current).catch(():string[]=>[])));
    if(!verified.some(a=>a.some(j=>aliases.includes(j))))return;
    const result=await cupApi<{claimed?:boolean;error?:string}>({action:'loan-claim',group,aliases,name:message.pushName??'Organizador'});
@@ -426,14 +420,14 @@ async function connect(){
    auth.data.controlRooms??={};auth.data.controlRooms[group]={targetId:group};await auth.save();
   }catch{log('LOAN_CLAIM_RETRY');await sendBotMessage(current,group,{text:'⚠️ Não consegui ativar o empréstimo agora. Tente !novacopa novamente em instantes.'});return;}
  }
- if(cupApi&&text.trim().startsWith('!')&&message.key.participant&&auth.data.groups.includes(group)){
-  const checked=await cupApi<{blocked:boolean}>({action:'block-check',aliases:await cupAliases(message.key.participant,current)});
+ if(cupApi&&text.trim().startsWith('!')&&participant&&auth.data.groups.includes(group)){
+  const checked=await cupApi<{blocked:boolean}>({action:'block-check',aliases:await cupAliases(participant,current)});
   if(checked.blocked)return;
  }
- if(/^!jornal(?:\s|$)/i.test(text)&&message.key.participant&&auth.data.groups.includes(group)){
+ if(/^!jornal(?:\s|$)/i.test(text)&&participant&&auth.data.groups.includes(group)){
   if(!cupApi)return;
   try{
-   const aliases=await cupAliases(message.key.participant,current);
+   const aliases=await cupAliases(participant,current);
    const permission=await cupApi<{allowed:boolean}>({action:'control-check',group,aliases});
    if(!permission.allowed){await sendBotMessage(current,group,{text:'🔒 Somente um ADM geral da MLG pode configurar o jornal.'});return;}
    const choice=text.replace(/^!jornal\s*/i,'').trim().toLowerCase();
@@ -454,10 +448,10 @@ async function connect(){
  const reply=context?.participant&&self.includes(jidNormalizedUser(context.participant));
  // Power commands must remain reachable in every authorized group while responses are paused.
  const power=whatsappControls(text,auth.data.controls);
- if(power&&auth.data.groups.includes(group)&&groupMode(auth.data.groupModes,group)!=='controle'&&cupApi&&message.key.participant){
-  const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
+ if(power&&auth.data.groups.includes(group)&&groupMode(auth.data.groupModes,group)!=='controle'&&cupApi&&participant){
+  const dedup=JSON.stringify([group,participant,id]);if(auth.data.seen.includes(dedup))return;
   try{
-   const aliases=await cupAliases(message.key.participant,current);
+   const aliases=await cupAliases(participant,current);
    const members=(await current.groupMetadata(group)).participants;
    if(!members.some(p=>aliases.includes(jidNormalizedUser(p.id)))&&!(await Promise.all(members.map(p=>cupAliases(p.id,current).catch(()=>[])))).some(a=>a.some(j=>aliases.includes(j))))return;
    const permission=await cupApi<{allowed:boolean}>({action:'control-check',group,aliases});
@@ -480,12 +474,12 @@ async function connect(){
  const outsideCup=!inChannel(group,'minicamp')&&/^!(?:modelos|ativarmodelo|sorteio|novacopa|cancelarcopa|anularcopa|nome|categoria|times|abrircopa|forcarresultado|resolver|deletar|vistoria)(?:\s|$)/i.test(text.trim());
  const loanSetup=/^!(?:novacopa|nome|modalidade|formato|jogos|classificados|times|abrircopa|cancelarcopa|cancelar\s+copa|modelos|imagemgrupo|imagemtexto|corrigirclubes|daradm|tiraradm|adms)(?:\s|$)/i.test(text.trim());
  if(auth.data.groups.includes(group)&&(mode==='controle'||centralOnly||outsideCup||loanSetup)){
-  if(!text.trim().startsWith('!')||!cupApi||!message.key.participant)return;
+  if(!text.trim().startsWith('!')||!cupApi||!participant)return;
   if(text.length>16000){await sendBotMessage(current,group,{text:'⚠️ Mensagem muito longa. Envie os times em mensagens menores com !adicionar.'});return;}
-  const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
+  const dedup=JSON.stringify([group,participant,id]);if(auth.data.seen.includes(dedup))return;
   let finish:ReturnType<typeof progressMessage>|undefined;
   try{
-   const aliases=await cupAliases(message.key.participant,current);
+   const aliases=await cupAliases(participant,current);
    const members=(await current.groupMetadata(group)).participants;
    if(!members.some(p=>aliases.includes(jidNormalizedUser(p.id)))&&!(await Promise.all(members.map(p=>cupAliases(p.id,current).catch(()=>[])))).some(a=>a.some(j=>aliases.includes(j))))return;
    const permission=await cupApi<{allowed:boolean;channelAllowed:boolean;loanAllowed:boolean;loanGroup:boolean}>({action:'control-check',group,aliases});
@@ -595,17 +589,17 @@ async function connect(){
   return;
  }
  if(!enabled())return;
- if(auth.data.loanGroups?.includes(group)&&inChannel(group,'minicamp')&&cupApi&&message.key.participant&&text.startsWith('!')){
-  const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
-  const aliases=await cupAliases(message.key.participant,current);
+ if(auth.data.loanGroups?.includes(group)&&inChannel(group,'minicamp')&&cupApi&&participant&&text.startsWith('!')){
+  const dedup=JSON.stringify([group,participant,id]);if(auth.data.seen.includes(dedup))return;
+  const aliases=await cupAliases(participant,current);
   const result=await cupApi<{accepted?:boolean}>({action:'guest-event',group,aliases,messageId:id,text:text.trim(),name:message.pushName??'Participante'});
   if(result.accepted){auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);await auth.save();void cupTick();}
   return;
  }
- const question=inChannel(group,'minicamp')&&enabled('minicamp')&&cupApi&&message.key.participant?cupQuestion(text):null;
+ const question=inChannel(group,'minicamp')&&enabled('minicamp')&&cupApi&&participant?cupQuestion(text):null;
  if(question){
-  const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
-  const aliases=await cupAliases(message.key.participant!,current);
+  const dedup=JSON.stringify([group,participant,id]);if(auth.data.seen.includes(dedup))return;
+  const aliases=await cupAliases(participant!,current);
   const blocked=await cupApi!<{blocked:boolean}>({action:'block-check',aliases});if(blocked.blocked)return;
   auth.data.cupInbox??=[];
   if(auth.data.cupInbox.length>=100){await sendBotMessage(current,group,{text:'⚠️ Muitas consultas aguardando. Tente !meujogo novamente em instantes.'});return;}
@@ -613,7 +607,7 @@ async function connect(){
   auth.data.cupInbox.push({group,aliases,id,name:message.pushName??'Participante',text:question,at:eventAt});await auth.save();void cupTick();return;
  }
  if(/^!supabase\s*$/i.test(text)&&inChannel(group,'minicamp')&&enabled('minicamp')){
-  const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
+  const dedup=JSON.stringify([group,participant,id]);if(auth.data.seen.includes(dedup))return;
   auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);await auth.save();
   let answer='🗄️ SUPABASE\n⚠️ Diagnóstico indisponível: serviço do Minicamp não configurado.';
   if(cupApi){
@@ -623,9 +617,9 @@ async function connect(){
   if(socket===current&&!stopping&&enabled('minicamp')&&inChannel(group,'minicamp'))await sendBotMessage(current,group,{text:answer});return;
  }
  if(/^!(?:modelos|ativarmodelo)(?:\s|$)/i.test(text)&&inChannel(group,'minicamp')){
-  if(!enabled('minicamp')||!cupApi||!message.key.participant)return;
-  const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
-  const aliases=await cupAliases(message.key.participant,current);
+  if(!enabled('minicamp')||!cupApi||!participant)return;
+  const dedup=JSON.stringify([group,participant,id]);if(auth.data.seen.includes(dedup))return;
+  const aliases=await cupAliases(participant,current);
   await configureCup(group,current);
   const response=await cupApi<{text:string}>({action:'admin-templates',event:{group,aliases,text:text.trim()}});
   auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);await auth.save();
@@ -633,8 +627,8 @@ async function connect(){
  }
  if(cupApi&&minicampCommand(text.trim())){
   if(!enabled('minicamp'))return;
-  if(!inChannel(group,'minicamp')||!message.key.participant||text.length>1000)return;
-  const aliases=await cupAliases(message.key.participant,current);
+  if(!inChannel(group,'minicamp')||!participant||text.length>1000)return;
+  const aliases=await cupAliases(participant,current);
   if(/^!config(?:\s|$)/i.test(text.trim())){
    await configureCup(group,current);
    const answer=await cupApi<{text:string|null}>({action:'config',event:{group,aliases,id,name:message.pushName??'ADM',text}});
@@ -680,9 +674,9 @@ async function connect(){
     targets=await Promise.all(metadata.participants.slice(0,100).map(p=>cupAliases(p.id,current)));
    }
   auth.data.cupInbox.push({group,aliases,targets,id,name:message.pushName??'Participante',text:text.trim(),at:eventAt});await auth.save();
-  if(/^!resultado(?:\s|$)/i.test(text.trim())&&message.key.participant){
+  if(/^!resultado(?:\s|$)/i.test(text.trim())&&participant){
    auth.data.scoreReactions??=[];
-   auth.data.scoreReactions.push({group,participant:message.key.participant,id,at:Date.now()});
+   auth.data.scoreReactions.push({group,participant:participant,id,at:Date.now()});
    auth.data.scoreReactions=auth.data.scoreReactions.slice(-100);
    await auth.save();
   }
@@ -691,11 +685,11 @@ async function connect(){
  }
  if(!enabled('resenha')||!inChannel(group,'resenha'))return;
  const request=/^!palpite(?:\s|$)/i.test(text)?text.replace(/^!palpite\s*/i,'')+' quem ganha':/^!tecnicos\s*$/i.test(text)?'__LIST_COACHES__':banterRequest(text,Boolean(mention),Boolean(reply));if(request===null)return;
- if(cupApi&&message.key.participant&&!text.trim().startsWith('!')){
-  const checked=await cupApi<{blocked:boolean}>({action:'block-check',aliases:await cupAliases(message.key.participant,current)});
+ if(cupApi&&participant&&!text.trim().startsWith('!')){
+  const checked=await cupApi<{blocked:boolean}>({action:'block-check',aliases:await cupAliases(participant,current)});
   if(checked.blocked)return;
  }
-  const dedup=JSON.stringify([group,message.key.participant,id]);if(auth.data.seen.includes(dedup))return;
+  const dedup=JSON.stringify([group,participant,id]);if(auth.data.seen.includes(dedup))return;
  auth.data.seen.push(dedup);auth.data.seen=auth.data.seen.slice(-1000);
  let archive='';
  if(cupApi){

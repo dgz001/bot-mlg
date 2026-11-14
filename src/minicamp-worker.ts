@@ -6,6 +6,7 @@ import { createServer } from 'node:net';
 import { chmod, unlink } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { authStore } from './whatsapp/auth-store.ts';
+import { groupMessageParticipant } from './whatsapp/message-identity.ts';
 import { processEvent, pgDatabase } from './infra/postgres.ts';
 import { reconnect } from './infra/security.ts';
 import { privateControl } from './infra/private-control.ts';
@@ -84,7 +85,8 @@ async function connect() {
     void (async()=>{
       for(const m of event.messages) {
         const group=m.key.remoteJid;
-        if(!group?.endsWith('@g.us') || m.key.fromMe || !m.key.id || !m.key.participant)continue;
+        const participant=groupMessageParticipant(m.key as typeof m.key & {participantAlt?:string|null});
+        if(!group?.endsWith('@g.us') || m.key.fromMe || !m.key.id || !participant)continue;
         const content=extractMessageContent(m.message);
         let text=content?.conversation ?? content?.extendedTextMessage?.text ?? '';
         if(!text || text.length>1000)continue;
@@ -94,7 +96,7 @@ async function connect() {
         if(!text.startsWith('!') && !/^[123]$/.test(text) && !question)continue;
         if(question)text=question;
         text=text.replace(/^!bot adm copa cancelar\b/i,'!cancelar').replace(/^!bot adm resultado resolver\b/i,'!resolver');
-        const user=await identity(m.key.participant);
+        const user=await identity(participant);
         const q=await pool.connect();
         try {
           await q.query('BEGIN');
