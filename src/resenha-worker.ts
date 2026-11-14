@@ -32,6 +32,7 @@ import {vaultAuth} from './whatsapp/vault-auth.ts';
 import {privateControl} from './infra/private-control.ts';
 import {reconnect} from './infra/security.ts';
 import {progressMessage} from './whatsapp/progress-message.ts';
+import {groupMessageParticipant} from './whatsapp/message-identity.ts';
 import {configureJournal} from './infra/journal-control.ts';
 import {newerNews,newsCursor,newsMessage,newsSource} from './infra/platform-news.ts';
 process.umask(0o077);
@@ -161,7 +162,7 @@ async function connect(){
  for(const message of orderMessages(event.messages)){queue=queue.then(async()=>{
  const group=message.key.remoteJid,id=message.key.id;if(stopping||!group||!id||message.key.fromMe)return;
  const body=extractMessageContent(message.message);const text=loanCommand((body?.conversation??body?.extendedTextMessage?.text??body?.imageMessage?.caption??'').trim());const context=body?.extendedTextMessage?.contextInfo??body?.imageMessage?.contextInfo;
- const participant=message.key.participant??(message.key as typeof message.key & {participantAlt?:string}).participantAlt;
+ const participant=groupMessageParticipant(message.key as typeof message.key & {participantAlt?:string|null});
  const windowDelivery=marketWindowCommandDelivery(event.type,text);
  if(windowDelivery==='retry'&&group.endsWith('@g.us')&&auth.data.groups.includes(group)){
   const receivedAt=Number(message.messageTimestamp)*1000;
@@ -266,7 +267,7 @@ async function connect(){
    return;
   }
   try{
-   const participant=participant??(message.key as typeof message.key & {participantAlt?:string}).participantAlt;
+   
    if(!participant){
     log('LOCAL_MARKET_WINDOW_SENDER_ID_MISSING');
     await sendBotMessage(current,group,{text:'⚠️ Recebi o comando, mas o WhatsApp não informou a identidade do remetente. Tente novamente.'});
