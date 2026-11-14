@@ -267,7 +267,6 @@ async function connect(){
    return;
   }
   try{
-   
    if(!participant){
     log('LOCAL_MARKET_WINDOW_SENDER_ID_MISSING');
     await sendBotMessage(current,group,{text:'⚠️ Recebi o comando, mas o WhatsApp não informou a identidade do remetente. Tente novamente.'});
