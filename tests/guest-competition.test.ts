@@ -1,7 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 // @ts-ignore Edge module has no declaration file.
-import {guestFixtures,guestStandings} from '../deploy/guest-competition.ts';
+import {guestFixtures,guestStandings,guestArchive,guestTieBreakReady} from '../deploy/guest-competition.ts';
+
+test('desempate entre vários participantes só é avaliado quando todos os jogos da rodada terminam',()=>{
+ assert.equal(guestTieBreakReady([{status:'confirmed'},{status:'pending'}]),false);
+ assert.equal(guestTieBreakReady([{status:'confirmed'},{status:'disputed'}]),false);
+ assert.equal(guestTieBreakReady([{status:'confirmed'},{status:'confirmed'}]),true);
+ assert.equal(guestTieBreakReady([]),false);
+});
 
 test('liga com número ímpar gera cada confronto uma vez e inverte o mando na volta',()=>{
  const ids=['a','b','c','d','e'];
@@ -28,4 +35,23 @@ test('platform lending rejects malformed actors and never grants unavailable gro
  const identity=async()=>{throw Error('must not resolve an organizer');};
  await assert.rejects(platformLoan(db,{platformActor:'invalid',group:'12345@g.us',operation:'grant'},identity));assert.equal(queries,0);
  const result=await platformLoan(db,{platformActor:'11111111-1111-4111-8111-111111111111',group:'12345@g.us',operation:'grant'},identity);assert.ok(result.error);assert.equal(queries,1);
+});
+
+
+test('guest archive preserves roster, fixtures, scores and audit for permanent history',async()=>{
+ const statements:string[]=[];
+ const cup={id:'cup-1',group_id:'123@g.us',status:'completed',champion_id:'winner',name:'Mini Camp 2.0',completed_at:1000,archived_at:null};
+ const db={transaction:async(run:(q:any)=>Promise<any>)=>run({query:async(sql:string,values:any[]=[])=>{
+  statements.push(sql.replace(/\\s+/g,' ').trim());
+  if(sql.includes('SELECT c.* FROM mlg_bot.guest_competitions'))return {rows:[cup]};
+  if(sql.includes('SELECT 1 FROM mlg_bot.outbox'))return {rows:[]};
+  if(sql.includes('SELECT display_name FROM mlg_bot.guest_players'))return {rows:[{display_name:'Campeão'}]};
+  if(sql.includes('SELECT count(*)::int AS n FROM mlg_bot.loan_champions'))return {rows:[{n:0}]};
+  return {rows:[]};
+ }})};
+ const result=await guestArchive(db);
+ assert.deepEqual(result,{archived:true,preserved:true,cupId:'cup-1'});
+ assert.ok(statements.some(s=>s.startsWith('UPDATE mlg_bot.guest_competitions SET archived_at=')));
+ assert.ok(statements.some(s=>s.includes('ON CONFLICT(cup_id) DO NOTHING')));
+ assert.equal(statements.some(s=>/^DELETE FROM mlg_bot\\.(guest_competitions|guest_players|guest_matches|guest_result_audit)/.test(s)),false);
 });

@@ -33,7 +33,7 @@ O adversário confirma com `!confirmar CÓDIGO MxV` ou contesta com `!contestar 
 
 Pontos corridos: vitória vale 3 pontos e empate 1; desempate por saldo, gols e vitórias. Empate total na liderança gera partidas decisivas. Mata-mata de ida e volta soma os gols dos dois jogos, sem critério de gol fora; empate agregado gera jogo de desempate.
 
-O campeão é anunciado e aparece em `!campeoes` e `!historico` daquele grupo. Campeonatos emprestados ficam separados das estatísticas da MLG. O armazenamento existente arquiva o campeão e limpa os detalhes da edição após o encerramento e a entrega das respostas; não oferece um arquivo permanente de todas as partidas convidadas.
+O campeão é anunciado e aparece em `!campeoes` e `!historico` daquele grupo. Campeonatos emprestados ficam separados das estatísticas da MLG. Após a entrega das respostas, a edição recebe uma marca de arquivamento, mas seus participantes, confrontos, placares e trilha de auditoria permanecem no banco para consulta e recuperação. O resumo do campeão continua disponível em `loan_champions`.
 
 `!painel` mostra ajuda do organizador no grupo, quando solicitada; `!central` mostra a situação. `!cancelarcopa motivo` cancela a edição ativa sem retirar campeões anteriores.
 
