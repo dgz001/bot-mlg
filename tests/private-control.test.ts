@@ -83,3 +83,23 @@ test('navegador usa sessão protegida sem reenviar senha e rotação invalida se
   assert.equal(restarts,3);
  }finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));}
 });
+
+
+test('painel Resenha mostra somente operações e bloqueia comandos administrativos',async()=>{
+ const secret='p'.repeat(43);
+ const handler=privateControl({secret,origin:'https://bot.example',socketPath:'/tmp/missing-operational-panel.sock',resenha:true,restart:()=>({restarting:true,phase:'RESTARTING'})});
+ const server=createServer((req,res)=>{void handler(req,res);});
+ await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
+ const addr=server.address();assert.ok(addr&&typeof addr==='object');const base='http://127.0.0.1:'+addr.port;
+ try{
+  const page=await fetch(base);assert.equal(page.status,200);
+  const html=await page.text();
+  assert.match(html,/Controle do bot/);assert.match(html,/Pausar respostas/);assert.match(html,/Retomar respostas/);assert.match(html,/Vincular WhatsApp/);
+  for(const removed of ['Grupos e conexão','Quem apita a Copa?','Uma central para todas as Copas','Memória da resenha','setadmins','cup-open'])assert.equal(html.includes(removed),false);
+  const script=/<script[^>]*>([\\s\\S]*?)<\\/script>/.exec(html)?.[1];assert.ok(script);assert.doesNotThrow(()=>new Script(script));
+  const call=(action:string)=>fetch(base+'/control',{method:'POST',headers:{Origin:'https://bot.example','Content-Type':'application/json','X-MLG-Control':'1',Authorization:'Bearer '+secret},body:JSON.stringify({action})});
+  assert.equal((await call('groups')).status,403);
+  assert.equal((await call('setadmins')).status,403);
+  const restarted=await call('restart');assert.equal(restarted.status,202);assert.equal((await restarted.json() as any).restarting,true);
+ }finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));}
+});
